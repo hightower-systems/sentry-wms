@@ -95,7 +95,17 @@ docker-compose up -d
 |--------|----------|-------------|
 | POST | `/api/shipping/fulfill` | Submit shipment with tracking + carrier info |
 
-### Inventory Management *(planned)*
+### Cycle Counting
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/inventory/cycle-count/create` | Create cycle counts for bins with inventory snapshot |
+| GET | `/api/inventory/cycle-count/<count_id>` | View count with expected vs counted quantities |
+| POST | `/api/inventory/cycle-count/submit` | Submit counts, auto-adjust variances |
+
+### Bin Transfers
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/transfers/move` | Move items between bins |
 
 ## Project Status
 
@@ -108,8 +118,8 @@ docker-compose up -d
 | v0.3.0 | Receiving + put-away | ✅ Complete |
 | v0.4.0 | Batch picking with path optimization | ✅ Complete |
 | v0.5.0 | Pack + ship | ✅ Complete |
-| v0.6.0 | Inventory management (cycle counts, transfers) | 🔨 In progress |
-| v0.7.0 | Admin panel + polish | Planned |
+| v0.6.0 | Inventory management (cycle counts, transfers) | ✅ Complete |
+| v0.7.0 | Admin panel + polish | 🔨 In progress |
 | v0.8.0 | ERP integration + connectors | Planned |
 | v1.0.0 | Public release | Planned |
 

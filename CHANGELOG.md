@@ -2,6 +2,19 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.6.0] - 2026-04-02
+
+### Added
+- Cycle counting workflow: create counts, view expected vs actual, submit with variance detection
+- `POST /api/inventory/cycle-count/create` - create cycle counts for one or more bins with inventory snapshot
+- `GET /api/inventory/cycle-count/<count_id>` - view count with expected quantities and count status
+- `POST /api/inventory/cycle-count/submit` - submit physical counts, auto-create adjustments for variances
+- Inventory adjustment records with reason codes and cycle count linkage
+- General-purpose bin transfers for stock reorganization
+- `POST /api/transfers/move` - move items between any two bins with audit trail
+- Automatic inventory correction on cycle count variance (updates quantity_on_hand)
+- Last-counted-at tracking on inventory rows
+
 ## [v0.5.0] - 2026-04-02
 
 ### Added
