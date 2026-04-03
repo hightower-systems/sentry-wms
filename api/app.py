@@ -26,9 +26,13 @@ def create_app():
     # Register blueprints
     from routes.auth import auth_bp
     from routes.lookup import lookup_bp
+    from routes.receiving import receiving_bp
+    from routes.putaway import putaway_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
+    app.register_blueprint(receiving_bp, url_prefix="/api/receiving")
+    app.register_blueprint(putaway_bp, url_prefix="/api/putaway")
 
     @app.route("/api/health")
     def health():
