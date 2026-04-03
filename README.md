@@ -44,11 +44,66 @@ docker-compose up -d
 # Health check: http://localhost:5000/api/health
 ```
 
+## API Endpoints
+
+### Authentication
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/login` | Device login, returns JWT token |
+| POST | `/api/auth/refresh` | Refresh an existing token |
+
+### Lookups
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/lookup/item/<barcode>` | Scan item → details + bin locations |
+| GET | `/api/lookup/bin/<barcode>` | Scan bin → contents with quantities |
+| GET | `/api/lookup/item/search?q=` | Text search items by SKU, name, UPC |
+| GET | `/api/lookup/bin/search?q=` | Text search bins by code |
+
+### Receiving
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/receiving/po/<barcode>` | Scan PO → lines with expected items |
+| POST | `/api/receiving/receive` | Submit received items to staging bin |
+
+### Put-Away
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/putaway/pending/<warehouse_id>` | Items in staging awaiting put-away |
+| GET | `/api/putaway/suggest/<item_id>` | Suggested bin for put-away |
+| POST | `/api/putaway/confirm` | Confirm put-away to destination bin |
+
+### Picking
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/picking/create-batch` | Create pick batch with optimized walk path |
+| GET | `/api/picking/batch/<batch_id>` | Full batch with tasks in walk-path order |
+| GET | `/api/picking/batch/<batch_id>/next` | Next pending pick task |
+| POST | `/api/picking/confirm` | Confirm a pick with barcode validation |
+| POST | `/api/picking/short` | Report a short pick |
+| POST | `/api/picking/complete-batch` | Mark batch complete |
+
+### Packing *(coming next)*
+### Shipping *(coming next)*
+### Inventory Management *(planned)*
+
 ## Project Status
 
-🚧 **Phase 1 - Foundation** (in progress)
+🚧 **Active Development** - building toward v1.0.0
 
-See [CHANGELOG.md](CHANGELOG.md) for current progress.
+| Version | Milestone | Status |
+|---------|-----------|--------|
+| v0.1.0 | Foundation - project structure, schema, Docker | ✅ Complete |
+| v0.2.0 | JWT auth, item/bin lookups | ✅ Complete |
+| v0.3.0 | Receiving + put-away | ✅ Complete |
+| v0.4.0 | Batch picking with path optimization | ✅ Complete |
+| v0.5.0 | Pack + ship | 🔨 In progress |
+| v0.6.0 | Inventory management (cycle counts, transfers) | Planned |
+| v0.7.0 | Admin panel + polish | Planned |
+| v0.8.0 | ERP integration + connectors | Planned |
+| v1.0.0 | Public release | Planned |
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
 ## Contributing
 
