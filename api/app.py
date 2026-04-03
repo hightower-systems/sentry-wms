@@ -3,8 +3,12 @@ Sentry WMS - Flask API Entry Point
 """
 
 import os
+
+from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
+
+load_dotenv()
 
 
 def create_app():
@@ -19,28 +23,12 @@ def create_app():
     # CORS - allow mobile app and admin panel
     CORS(app)
 
-    # Register blueprints (uncomment as built)
-    # from routes.auth import auth_bp
-    # from routes.lookup import lookup_bp
-    # from routes.receiving import receiving_bp
-    # from routes.putaway import putaway_bp
-    # from routes.picking import picking_bp
-    # from routes.packing import packing_bp
-    # from routes.shipping import shipping_bp
-    # from routes.inventory import inventory_bp
-    # from routes.transfers import transfers_bp
-    # from routes.admin import admin_bp
+    # Register blueprints
+    from routes.auth import auth_bp
+    from routes.lookup import lookup_bp
 
-    # app.register_blueprint(auth_bp, url_prefix="/api/auth")
-    # app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
-    # app.register_blueprint(receiving_bp, url_prefix="/api/receiving")
-    # app.register_blueprint(putaway_bp, url_prefix="/api/putaway")
-    # app.register_blueprint(picking_bp, url_prefix="/api/picking")
-    # app.register_blueprint(packing_bp, url_prefix="/api/packing")
-    # app.register_blueprint(shipping_bp, url_prefix="/api/shipping")
-    # app.register_blueprint(inventory_bp, url_prefix="/api/inventory")
-    # app.register_blueprint(transfers_bp, url_prefix="/api/transfers")
-    # app.register_blueprint(admin_bp, url_prefix="/api/admin")
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
 
     @app.route("/api/health")
     def health():
