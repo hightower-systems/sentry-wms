@@ -28,11 +28,13 @@ def create_app():
     from routes.lookup import lookup_bp
     from routes.receiving import receiving_bp
     from routes.putaway import putaway_bp
+    from routes.picking import picking_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
     app.register_blueprint(receiving_bp, url_prefix="/api/receiving")
     app.register_blueprint(putaway_bp, url_prefix="/api/putaway")
+    app.register_blueprint(picking_bp, url_prefix="/api/picking")
 
     @app.route("/api/health")
     def health():
