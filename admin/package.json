@@ -1,0 +1,13 @@
+{
+  "name": "sentry-wms-admin",
+  "version": "0.1.0",
+  "description": "Sentry WMS - Admin Panel (React Web App)",
+  "main": "src/App.js",
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "private": true
+}

@@ -1,0 +1,14 @@
+{
+  "name": "sentry-wms-mobile",
+  "version": "0.1.0",
+  "description": "Sentry WMS - Mobile Scanner App (React Native / Expo)",
+  "main": "src/App.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "private": true
+}
