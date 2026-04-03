@@ -83,8 +83,18 @@ docker-compose up -d
 | POST | `/api/picking/short` | Report a short pick |
 | POST | `/api/picking/complete-batch` | Mark batch complete |
 
-### Packing *(coming next)*
-### Shipping *(coming next)*
+### Packing
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/packing/order/<barcode>` | Scan SO → picked items to verify with weight |
+| POST | `/api/packing/verify` | Scan item barcode to verify during packing |
+| POST | `/api/packing/complete` | Mark order fully packed |
+
+### Shipping
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/shipping/fulfill` | Submit shipment with tracking + carrier info |
+
 ### Inventory Management *(planned)*
 
 ## Project Status
@@ -97,8 +107,8 @@ docker-compose up -d
 | v0.2.0 | JWT auth, item/bin lookups | ✅ Complete |
 | v0.3.0 | Receiving + put-away | ✅ Complete |
 | v0.4.0 | Batch picking with path optimization | ✅ Complete |
-| v0.5.0 | Pack + ship | 🔨 In progress |
-| v0.6.0 | Inventory management (cycle counts, transfers) | Planned |
+| v0.5.0 | Pack + ship | ✅ Complete |
+| v0.6.0 | Inventory management (cycle counts, transfers) | 🔨 In progress |
 | v0.7.0 | Admin panel + polish | Planned |
 | v0.8.0 | ERP integration + connectors | Planned |
 | v1.0.0 | Public release | Planned |

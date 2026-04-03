@@ -29,12 +29,16 @@ def create_app():
     from routes.receiving import receiving_bp
     from routes.putaway import putaway_bp
     from routes.picking import picking_bp
+    from routes.packing import packing_bp
+    from routes.shipping import shipping_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
     app.register_blueprint(receiving_bp, url_prefix="/api/receiving")
     app.register_blueprint(putaway_bp, url_prefix="/api/putaway")
     app.register_blueprint(picking_bp, url_prefix="/api/picking")
+    app.register_blueprint(packing_bp, url_prefix="/api/packing")
+    app.register_blueprint(shipping_bp, url_prefix="/api/shipping")
 
     @app.route("/api/health")
     def health():

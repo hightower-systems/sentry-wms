@@ -2,6 +2,20 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.5.0] - 2026-04-02
+
+### Added
+- Packing workflow: scan-to-verify pack station with barcode validation
+- `GET /api/packing/order/<barcode>` - load order for packing with calculated weight
+- `POST /api/packing/verify` - scan item barcode to verify against picked list
+- `POST /api/packing/complete` - mark order fully packed after all items verified
+- Shipping / fulfillment workflow: record tracking info and create fulfillment records
+- `POST /api/shipping/fulfill` - submit shipment with tracking number, carrier, and ship method
+- Fulfillment line traceability (links shipped items back to source pick bins)
+- Calculated package weight from item weights × picked quantities
+- Over-pack prevention (blocks verifying more than picked quantity)
+- Status enforcement: packing requires PICKING status, shipping requires PACKED status
+
 ## [v0.4.0] - 2026-04-02
 
 ### Added
