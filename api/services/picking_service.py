@@ -240,9 +240,11 @@ def get_next_task(db, batch_id):
                    pt.tote_number, pt.status,
                    b.bin_code, b.bin_barcode, b.aisle, b.row_num, b.level_num,
                    i.sku, i.item_name, i.upc,
-                   so.so_number
+                   so.so_number,
+                   z.zone_name
             FROM pick_tasks pt
             JOIN bins b ON b.bin_id = pt.bin_id
+            LEFT JOIN zones z ON z.zone_id = b.zone_id
             JOIN items i ON i.item_id = pt.item_id
             JOIN sales_orders so ON so.so_id = pt.so_id
             WHERE pt.batch_id = :bid AND pt.status = 'PENDING'
@@ -1028,9 +1030,11 @@ def _get_tasks_for_batch(db, batch_id):
                    pt.tote_number, pt.status,
                    b.bin_code, b.bin_barcode, b.aisle, b.row_num, b.level_num,
                    i.sku, i.item_name, i.upc,
-                   so.so_number
+                   so.so_number,
+                   z.zone_name
             FROM pick_tasks pt
             JOIN bins b ON b.bin_id = pt.bin_id
+            LEFT JOIN zones z ON z.zone_id = b.zone_id
             JOIN items i ON i.item_id = pt.item_id
             JOIN sales_orders so ON so.so_id = pt.so_id
             WHERE pt.batch_id = :bid
@@ -1049,7 +1053,8 @@ def _task_row_to_dict(row):
         "pick_sequence": row.pick_sequence,
         "bin_code": row.bin_code,
         "bin_barcode": row.bin_barcode,
-        "aisle": row.aisle,
+        "zone": row.zone_name or None,
+        "aisle": row.aisle or None,
         "row_num": row.row_num,
         "level_num": row.level_num,
         "sku": row.sku,

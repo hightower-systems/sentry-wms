@@ -2,6 +2,14 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.8.2] - 2026-04-04
+
+### Changed
+- `GET /api/picking/batch/<id>/next` now includes explicit `zone` and `aisle` fields
+- Zone and aisle return as null (not empty string) when bin has no zone or aisle assignment
+- Pick task queries use LEFT JOIN on zones for bins without zone assignment
+- Added zone_name to batch task list and next-task responses
+
 ## [v0.8.1] - 2026-04-04
 
 ### Added

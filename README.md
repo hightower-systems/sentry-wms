@@ -103,7 +103,7 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 | POST | `/api/picking/wave-create` | Create wave batch with combined picks across SOs |
 | POST | `/api/picking/create-batch` | Create pick batch with optimized walk path |
 | GET | `/api/picking/batch/<batch_id>` | Full batch with tasks in walk-path order |
-| GET | `/api/picking/batch/<batch_id>/next` | Next pending pick task |
+| GET | `/api/picking/batch/<batch_id>/next` | Next pending pick task (includes zone/aisle, nullable) |
 | POST | `/api/picking/confirm` | Confirm a pick with barcode validation |
 | POST | `/api/picking/short` | Report a short pick |
 | POST | `/api/picking/complete-batch` | Mark batch complete |

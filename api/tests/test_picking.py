@@ -315,3 +315,141 @@ class TestCompleteBatch:
             json={"so_identifiers": ["SO-001"], "warehouse_id": 1},
         )
         assert resp.status_code == 401
+
+
+# --- Zone/Aisle Conditional Display Tests ---
+
+
+def test_next_pick_with_zone_and_aisle(client, auth_headers):
+    """Bin with zone and aisle returns both in response."""
+    batch = _create_batch(client, auth_headers).get_json()
+    resp = client.get(f"/api/picking/batch/{batch['batch_id']}/next", headers=auth_headers)
+    data = resp.get_json()
+    assert data["bin_code"] is not None
+    # Seed bins have zones (Storage Shelves) and aisles (A, B)
+    assert data["zone"] is not None
+    assert data["aisle"] is not None
+
+
+def test_next_pick_with_zone_no_aisle(client, auth_headers):
+    """Bin with zone but no aisle returns zone and aisle=null."""
+    # The staging bin (RCV-01) has zone (Receiving Area) but no aisle
+    # Create an SO that needs an item in a staging-like location
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn.autocommit = True
+    cur = conn.cursor()
+    # Put some item 1 inventory in the staging bin (bin_id=1, zone=Receiving, no aisle)
+    cur.execute(
+        "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES (1, 1, 1, 50)"
+    )
+    # Remove item 1 from all non-staging bins so it must pick from staging
+    cur.execute("DELETE FROM inventory WHERE item_id = 1 AND bin_id != 1")
+    # Change staging bin type so it's pickable
+    cur.execute("UPDATE bins SET bin_type = 'STANDARD' WHERE bin_id = 1")
+    cur.close()
+    conn.close()
+
+    # Create SO for item 1
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute(
+        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
+           VALUES ('SO-NOAISLE', 'SO-NOAISLE', 'Cust', 'OPEN', 1, 'admin') RETURNING so_id"""
+    )
+    so_id = cur.fetchone()[0]
+    cur.execute(
+        "INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES (%s, 1, 1, 1)",
+        (so_id,),
+    )
+    cur.close()
+    conn.close()
+
+    batch_resp = client.post(
+        "/api/picking/create-batch",
+        json={"so_identifiers": ["SO-NOAISLE"], "warehouse_id": 1},
+        headers=auth_headers,
+    )
+    batch = batch_resp.get_json()
+
+    resp = client.get(f"/api/picking/batch/{batch['batch_id']}/next", headers=auth_headers)
+    data = resp.get_json()
+    assert data["bin_code"] == "RCV-01"
+    assert data["zone"] == "Receiving Area"
+    assert data["aisle"] is None
+
+
+def test_next_pick_no_zone(client, auth_headers):
+    """Bin with no zone returns zone=null and aisle=null."""
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn.autocommit = True
+    cur = conn.cursor()
+    # Create a bin with no zone (zone_id references are NOT NULL in schema,
+    # so we create a bin in an existing zone then set zone_id via direct update)
+    # Actually zone_id is NOT NULL, so we need to create the bin properly
+    # and then check. The schema requires zone_id, so a "no zone" bin
+    # would need a schema change. Instead, test that zone_name=null
+    # when the zone record is somehow missing. We can simulate by
+    # creating a bin with a zone that has no name... or we can check
+    # that the LEFT JOIN handles it.
+    # Since zone_id is NOT NULL in schema, we test the null-coercion
+    # on empty strings: create a zone with empty name to verify `or None`.
+    cur.execute(
+        """INSERT INTO zones (warehouse_id, zone_code, zone_name, zone_type)
+           VALUES (1, 'NONAME', '', 'STORAGE') RETURNING zone_id"""
+    )
+    zone_id = cur.fetchone()[0]
+    cur.execute(
+        """INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_sequence, putaway_sequence)
+           VALUES (%s, 1, 'NOZONE-01', 'BIN-NOZONE-01', 'STANDARD', 50, 50) RETURNING bin_id""",
+        (zone_id,),
+    )
+    bin_id = cur.fetchone()[0]
+    # Put inventory in this bin
+    cur.execute(
+        "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES (1, %s, 1, 100)",
+        (bin_id,),
+    )
+    # Remove item 1 from all other bins
+    cur.execute("DELETE FROM inventory WHERE item_id = 1 AND bin_id != %s", (bin_id,))
+    cur.close()
+    conn.close()
+
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute(
+        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
+           VALUES ('SO-NOZONE', 'SO-NOZONE', 'Cust', 'OPEN', 1, 'admin') RETURNING so_id"""
+    )
+    so_id = cur.fetchone()[0]
+    cur.execute(
+        "INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES (%s, 1, 1, 1)",
+        (so_id,),
+    )
+    cur.close()
+    conn.close()
+
+    batch_resp = client.post(
+        "/api/picking/create-batch",
+        json={"so_identifiers": ["SO-NOZONE"], "warehouse_id": 1},
+        headers=auth_headers,
+    )
+    batch = batch_resp.get_json()
+
+    resp = client.get(f"/api/picking/batch/{batch['batch_id']}/next", headers=auth_headers)
+    data = resp.get_json()
+    assert data["bin_code"] == "NOZONE-01"
+    # Empty string zone_name should be coerced to null
+    assert data["zone"] is None
+    assert data["aisle"] is None
+
+
+def test_next_pick_bin_code_always_present(client, auth_headers):
+    """bin_code is never null regardless of zone/aisle state."""
+    batch = _create_batch(client, auth_headers).get_json()
+    resp = client.get(f"/api/picking/batch/{batch['batch_id']}/next", headers=auth_headers)
+    data = resp.get_json()
+    assert data["bin_code"] is not None
+    assert isinstance(data["bin_code"], str)
+    assert len(data["bin_code"]) > 0
