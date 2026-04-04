@@ -42,7 +42,30 @@ docker-compose up -d
 
 # API is now running at http://localhost:5000
 # Health check: http://localhost:5000/api/health
+
+# Start the admin panel (separate terminal)
+cd admin
+npm install
+npm run dev
+
+# Admin panel is now running at http://localhost:3000
+# Login with admin/admin
 ```
+
+## Admin Panel
+
+The admin panel is a React web app for warehouse managers to monitor operations and configure the system.
+
+- **Dashboard** - pipeline overview, open orders, low stock alerts, recent activity
+- **Inventory** - full inventory view with search and pagination
+- **Cycle Counts** - create and track bin-level counts
+- **Receiving / Put-Away / Picking / Packing / Shipping** - workflow status views
+- **Bins / Zones / Items** - warehouse setup with create, edit, and detail views
+- **Users** - user management with role assignment
+- **Audit Log** - filterable log viewer
+- **Settings** - warehouse config, CSV import, manual PO/SO entry
+
+Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 
 ## API Endpoints
 
@@ -158,7 +181,8 @@ docker-compose up -d
 | v0.5.0 | Pack + ship | ✅ Complete |
 | v0.6.0 | Inventory management (cycle counts, transfers) | ✅ Complete |
 | v0.7.0 | Admin CRUD API | ✅ Complete |
-| v0.8.0 | ERP integration + connectors | Planned |
+| v0.8.0 | React admin panel | ✅ Complete |
+| v0.9.0 | ERP integration + connectors | Planned |
 | v1.0.0 | Public release | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.

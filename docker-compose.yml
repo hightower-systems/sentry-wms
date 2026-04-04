@@ -35,5 +35,13 @@ services:
     volumes:
       - ./api:/app
 
+  admin:
+    build: ./admin
+    container_name: sentry-admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
 volumes:
   pgdata:

@@ -2,6 +2,34 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.8.0] - 2026-04-04
+
+### Added
+- React admin panel frontend (`admin/` directory) built with Vite + React Router
+- Login page with JWT authentication and token persistence
+- Dashboard with pipeline bar (To Receive, Put-away, To Pick, To Pack, To Ship, Low Stock)
+- Dashboard order table, low stock alerts, recent activity feed, and inbound PO table
+- Inventory overview page with search and pagination
+- Cycle count page with bin selection and count creation
+- Receiving page with PO list and line detail modal
+- Put-away page showing items in staging bins
+- Picking page with orders ready to pick
+- Packing page with orders waiting to pack
+- Shipping page with orders waiting to ship
+- Bin management page with create, detail view, edit, and inventory contents
+- Zone management page with create and edit
+- Item management page with search, create, detail view, edit, and soft delete
+- User management page with create, edit, role assignment, and deactivation
+- Audit log viewer with action type, user, and date range filters
+- Settings page with warehouse config, CSV/JSON import, manual PO/SO creation, and version info
+- Reusable components: DataTable (with CSV export), StatusTag, Pipeline, Modal, PageHeader
+- Sidebar navigation organized by warehouse workflow (Floor, Inbound, Outbound, Warehouse, System)
+- Sidebar count badges from dashboard stats
+- API client with JWT auto-injection and 401 redirect
+- CSS custom properties for theming with Instrument Sans and JetBrains Mono fonts
+- Docker support for admin panel in docker-compose.yml
+- Vite dev server with API proxy to Flask backend
+
 ## [v0.7.0] - 2026-04-04
 
 ### Added
