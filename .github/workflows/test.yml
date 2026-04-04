@@ -1,0 +1,48 @@
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sentry
+          POSTGRES_PASSWORD: sentry
+          POSTGRES_DB: sentry
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r api/requirements.txt
+
+      - name: Load database schema
+        env:
+          PGPASSWORD: sentry
+        run: psql -h localhost -U sentry -d sentry -f db/schema.sql
+
+      - name: Load seed data
+        env:
+          PGPASSWORD: sentry
+        run: psql -h localhost -U sentry -d sentry -f db/seed-apartment-lab.sql
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry
+          JWT_SECRET: test-secret
+        run: cd api && python -m pytest tests/ -v
