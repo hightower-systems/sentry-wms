@@ -2,6 +2,20 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.8.1] - 2026-04-04
+
+### Added
+- Wave picking workflow for combining identical items across multiple sales orders
+- `POST /api/picking/wave-validate` - lightweight SO barcode validation before adding to wave
+- `POST /api/picking/wave-create` - creates wave batch with combined picks and optimized walk path
+- `wave_pick_orders` table linking SOs to wave batches
+- `wave_pick_breakdown` table tracking per-SO contributions to combined pick tasks
+- Contributing orders shown on `GET /api/picking/batch/<id>/next` with pick_number/total_picks
+- Short pick FIFO distribution across contributing orders (fills earlier SOs first)
+- Confirm pick updates all contributing SO lines via wave breakdown records
+- ERP connector stub (`connector_stub.py`) with `enrich_order()` placeholder for future integration
+- 19 wave picking tests covering validation, creation, breakdown, short distribution, and full flow
+
 ## [v0.8.0] - 2026-04-04
 
 ### Added

@@ -99,6 +99,8 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 ### Picking
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/api/picking/wave-validate` | Validate SO barcode for wave picking |
+| POST | `/api/picking/wave-create` | Create wave batch with combined picks across SOs |
 | POST | `/api/picking/create-batch` | Create pick batch with optimized walk path |
 | GET | `/api/picking/batch/<batch_id>` | Full batch with tasks in walk-path order |
 | GET | `/api/picking/batch/<batch_id>/next` | Next pending pick task |

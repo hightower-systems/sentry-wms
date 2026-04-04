@@ -233,6 +233,30 @@ CREATE TABLE pick_tasks (
 
 CREATE INDEX ix_pick_tasks_batch_sequence ON pick_tasks(batch_id, pick_sequence);
 
+-- Wave picking: links SOs to wave batches
+CREATE TABLE wave_pick_orders (
+    id SERIAL PRIMARY KEY,
+    batch_id INTEGER NOT NULL REFERENCES pick_batches(batch_id),
+    so_id INTEGER NOT NULL REFERENCES sales_orders(so_id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(batch_id, so_id)
+);
+
+CREATE INDEX ix_wave_pick_orders_batch ON wave_pick_orders(batch_id);
+
+-- Wave picking: per-SO breakdown for combined pick tasks
+CREATE TABLE wave_pick_breakdown (
+    id SERIAL PRIMARY KEY,
+    pick_task_id INTEGER NOT NULL REFERENCES pick_tasks(pick_task_id),
+    so_id INTEGER NOT NULL REFERENCES sales_orders(so_id),
+    so_line_id INTEGER NOT NULL REFERENCES sales_order_lines(so_line_id),
+    quantity INTEGER NOT NULL,
+    quantity_picked INTEGER DEFAULT 0,
+    short_quantity INTEGER DEFAULT 0
+);
+
+CREATE INDEX ix_wave_pick_breakdown_task ON wave_pick_breakdown(pick_task_id);
+
 -- ============================================================
 -- BIN TRANSFERS (Put-away + general moves)
 -- ============================================================

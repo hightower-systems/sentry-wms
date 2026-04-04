@@ -20,6 +20,8 @@ ALL_TABLES = [
     "cycle_counts",
     "item_fulfillment_lines",
     "item_fulfillments",
+    "wave_pick_breakdown",
+    "wave_pick_orders",
     "pick_tasks",
     "pick_batch_orders",
     "pick_batches",

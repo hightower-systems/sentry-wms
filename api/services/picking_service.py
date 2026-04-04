@@ -1,5 +1,6 @@
 """
-Core picking business logic - batch creation, pick confirmation, short picks, batch completion.
+Core picking business logic - batch creation, wave picking, pick confirmation,
+short picks, batch completion.
 """
 
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from services.audit_service import write_audit_log
+from services.connector_stub import enrich_order
 
 
 def create_pick_batch(db, so_identifiers, warehouse_id, username):
@@ -254,7 +256,29 @@ def get_next_task(db, batch_id):
     if not row:
         return None
 
-    return _task_row_to_dict(row)
+    result = _task_row_to_dict(row)
+
+    # Add contributing_orders for wave picks
+    result["contributing_orders"] = _get_contributing_orders(db, row.pick_task_id)
+
+    # Add pick_number / total_picks
+    pick_number = db.execute(
+        text(
+            """
+            SELECT COUNT(*) FROM pick_tasks
+            WHERE batch_id = :bid AND status != 'PENDING'
+            """
+        ),
+        {"bid": batch_id},
+    ).scalar()
+    total_picks = db.execute(
+        text("SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid"),
+        {"bid": batch_id},
+    ).scalar()
+    result["pick_number"] = pick_number + 1
+    result["total_picks"] = total_picks
+
+    return result
 
 
 def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
@@ -298,13 +322,35 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
         {"qty": quantity_picked, "user": username, "tid": pick_task_id},
     )
 
-    # 4. Update sales_order_lines.quantity_picked
-    db.execute(
-        text(
-            "UPDATE sales_order_lines SET quantity_picked = quantity_picked + :qty WHERE so_line_id = :sol_id"
-        ),
-        {"qty": quantity_picked, "sol_id": task.so_line_id},
-    )
+    # 4. Update sales_order_lines.quantity_picked (wave or standard)
+    breakdown = db.execute(
+        text("SELECT id, so_id, so_line_id, quantity FROM wave_pick_breakdown WHERE pick_task_id = :tid ORDER BY so_id"),
+        {"tid": pick_task_id},
+    ).fetchall()
+
+    if breakdown:
+        # Wave pick - update each contributing SO line
+        for bd in breakdown:
+            db.execute(
+                text(
+                    "UPDATE wave_pick_breakdown SET quantity_picked = quantity WHERE id = :bid"
+                ),
+                {"bid": bd.id},
+            )
+            db.execute(
+                text(
+                    "UPDATE sales_order_lines SET quantity_picked = quantity_picked + :qty WHERE so_line_id = :sol_id"
+                ),
+                {"qty": bd.quantity, "sol_id": bd.so_line_id},
+            )
+    else:
+        # Standard pick - single SO line
+        db.execute(
+            text(
+                "UPDATE sales_order_lines SET quantity_picked = quantity_picked + :qty WHERE so_line_id = :sol_id"
+            ),
+            {"qty": quantity_picked, "sol_id": task.so_line_id},
+        )
 
     # 5. Update inventory
     db.execute(
@@ -417,13 +463,40 @@ def short_pick(db, pick_task_id, quantity_available, username):
         {"picked": quantity_available, "allocated": task.quantity_to_pick, "iid": task.item_id, "bid": task.bin_id},
     )
 
-    # 4. Update sales_order_lines.quantity_picked
-    db.execute(
-        text(
-            "UPDATE sales_order_lines SET quantity_picked = quantity_picked + :qty WHERE so_line_id = :sol_id"
-        ),
-        {"qty": quantity_available, "sol_id": task.so_line_id},
-    )
+    # 4. Update sales_order_lines.quantity_picked (wave or standard)
+    breakdown = db.execute(
+        text("SELECT id, so_id, so_line_id, quantity FROM wave_pick_breakdown WHERE pick_task_id = :tid ORDER BY so_id"),
+        {"tid": pick_task_id},
+    ).fetchall()
+
+    if breakdown:
+        # Wave pick - distribute available quantity FIFO by SO ID
+        remaining_to_give = quantity_available
+        for bd in breakdown:
+            give = min(remaining_to_give, bd.quantity)
+            short_qty = bd.quantity - give
+            db.execute(
+                text(
+                    "UPDATE wave_pick_breakdown SET quantity_picked = :picked, short_quantity = :short WHERE id = :bid"
+                ),
+                {"picked": give, "short": short_qty, "bid": bd.id},
+            )
+            if give > 0:
+                db.execute(
+                    text(
+                        "UPDATE sales_order_lines SET quantity_picked = quantity_picked + :qty WHERE so_line_id = :sol_id"
+                    ),
+                    {"qty": give, "sol_id": bd.so_line_id},
+                )
+            remaining_to_give -= give
+    else:
+        # Standard pick - single SO line
+        db.execute(
+            text(
+                "UPDATE sales_order_lines SET quantity_picked = quantity_picked + :qty WHERE so_line_id = :sol_id"
+            ),
+            {"qty": quantity_available, "sol_id": task.so_line_id},
+        )
 
     # 5. Audit log
     item = db.execute(
@@ -559,7 +632,393 @@ def complete_batch(db, batch_id, username):
     }
 
 
+# --- Wave Picking ---
+
+
+def wave_validate(db, so_barcode, warehouse_id):
+    """Validate an SO barcode for wave picking. Lightweight check, no allocation."""
+    so = db.execute(
+        text(
+            """
+            SELECT so_id, so_number, status, warehouse_id
+            FROM sales_orders
+            WHERE (so_number = :barcode OR so_barcode = :barcode)
+              AND warehouse_id = :wh
+            LIMIT 1
+            """
+        ),
+        {"barcode": so_barcode, "wh": warehouse_id},
+    ).fetchone()
+
+    if not so:
+        # --- FUTURE: ERP Connector Hook ---
+        # If a connector is configured, attempt to pull the SO:
+        #   result = enrich_order(so_barcode, warehouse_id)
+        #   if result: re-query DB and continue
+        # For now, return "Order not found" immediately.
+        # --- END FUTURE HOOK ---
+        return {"valid": False, "error": "Order not found"}
+
+    if so.status not in ("OPEN",):
+        # Check if already in an active pick batch
+        active_batch = db.execute(
+            text(
+                """
+                SELECT pb.batch_id
+                FROM pick_batch_orders pbo
+                JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
+                WHERE pbo.so_id = :so_id AND pb.status IN ('OPEN', 'IN_PROGRESS')
+                LIMIT 1
+                """
+            ),
+            {"so_id": so.so_id},
+        ).fetchone()
+
+        if active_batch:
+            return {"valid": False, "error": "Order already in active pick batch", "batch_id": active_batch.batch_id}
+
+        return {"valid": False, "error": f"Order status is {so.status}, must be OPEN"}
+
+    # Check if already in an active batch even if OPEN (edge case)
+    active_batch = db.execute(
+        text(
+            """
+            SELECT pb.batch_id
+            FROM pick_batch_orders pbo
+            JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
+            WHERE pbo.so_id = :so_id AND pb.status IN ('OPEN', 'IN_PROGRESS')
+            LIMIT 1
+            """
+        ),
+        {"so_id": so.so_id},
+    ).fetchone()
+
+    if active_batch:
+        return {"valid": False, "error": "Order already in active pick batch", "batch_id": active_batch.batch_id}
+
+    # Get line count and total units
+    line_stats = db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS line_count, COALESCE(SUM(quantity_ordered), 0) AS total_units
+            FROM sales_order_lines WHERE so_id = :so_id
+            """
+        ),
+        {"so_id": so.so_id},
+    ).fetchone()
+
+    if line_stats.line_count == 0:
+        return {"valid": False, "error": "Order has no items"}
+
+    return {
+        "valid": True,
+        "so_id": so.so_id,
+        "so_number": so.so_number,
+        "line_count": line_stats.line_count,
+        "total_units": line_stats.total_units,
+    }
+
+
+def wave_create(db, so_ids, warehouse_id, username):
+    """Create a wave pick batch from multiple SOs with combined item picks."""
+    if len(so_ids) != len(set(so_ids)):
+        raise ValueError("Duplicate SO IDs in request")
+
+    # 1. Validate all SOs
+    sales_orders = []
+    for so_id in so_ids:
+        so = db.execute(
+            text(
+                "SELECT so_id, so_number, status, warehouse_id FROM sales_orders WHERE so_id = :so_id"
+            ),
+            {"so_id": so_id},
+        ).fetchone()
+
+        if not so:
+            raise ValueError(f"SO not found: {so_id}")
+        if so.warehouse_id != warehouse_id:
+            raise ValueError(f"SO {so.so_number} is in a different warehouse")
+        if so.status != "OPEN":
+            raise ValueError(f"SO {so.so_number} status is {so.status}, must be OPEN")
+
+        # Check not already in active batch
+        active = db.execute(
+            text(
+                """
+                SELECT pb.batch_id FROM pick_batch_orders pbo
+                JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
+                WHERE pbo.so_id = :so_id AND pb.status IN ('OPEN', 'IN_PROGRESS')
+                LIMIT 1
+                """
+            ),
+            {"so_id": so_id},
+        ).fetchone()
+        if active:
+            raise AlreadyInBatchError(so.so_number, active.batch_id)
+
+        # Check has lines
+        line_count = db.execute(
+            text("SELECT COUNT(*) FROM sales_order_lines WHERE so_id = :so_id"),
+            {"so_id": so_id},
+        ).scalar()
+        if line_count == 0:
+            raise ValueError(f"SO {so.so_number} has no items")
+
+        sales_orders.append(so)
+
+    # 2. Generate batch
+    now = datetime.now(timezone.utc)
+    batch_number = f"WAVE-{now.strftime('%Y%m%d-%H%M%S')}"
+
+    result = db.execute(
+        text(
+            """
+            INSERT INTO pick_batches (batch_number, warehouse_id, assigned_to, status)
+            VALUES (:bn, :wh, :user, 'OPEN')
+            RETURNING batch_id
+            """
+        ),
+        {"bn": batch_number, "wh": warehouse_id, "user": username},
+    )
+    batch_id = result.fetchone()[0]
+
+    # 3. Create wave_pick_orders and pick_batch_orders
+    for idx, so in enumerate(sales_orders, 1):
+        tote = f"TOTE-{idx}"
+        db.execute(
+            text("INSERT INTO pick_batch_orders (batch_id, so_id, tote_number) VALUES (:bid, :sid, :tote)"),
+            {"bid": batch_id, "sid": so.so_id, "tote": tote},
+        )
+        db.execute(
+            text("INSERT INTO wave_pick_orders (batch_id, so_id) VALUES (:bid, :sid)"),
+            {"bid": batch_id, "sid": so.so_id},
+        )
+
+    # 4. Gather all lines across all SOs, group by item_id
+    # line_map: item_id -> [ {so_id, so_line_id, needed} ]
+    line_map = {}
+    for so in sales_orders:
+        lines = db.execute(
+            text(
+                """
+                SELECT so_line_id, item_id, quantity_ordered, quantity_allocated
+                FROM sales_order_lines
+                WHERE so_id = :so_id AND quantity_ordered > quantity_allocated
+                """
+            ),
+            {"so_id": so.so_id},
+        ).fetchall()
+        for line in lines:
+            needed = line.quantity_ordered - line.quantity_allocated
+            if needed <= 0:
+                continue
+            if line.item_id not in line_map:
+                line_map[line.item_id] = []
+            line_map[line.item_id].append({
+                "so_id": so.so_id,
+                "so_line_id": line.so_line_id,
+                "needed": needed,
+            })
+
+    # 5. For each item, allocate inventory and create combined pick tasks
+    total_units = 0
+    warnings = []
+
+    for item_id, contributions in line_map.items():
+        combined_needed = sum(c["needed"] for c in contributions)
+
+        # Find available inventory sorted by pick path
+        inv_rows = db.execute(
+            text(
+                """
+                SELECT inv.inventory_id, inv.bin_id, inv.quantity_on_hand, inv.quantity_allocated,
+                       (inv.quantity_on_hand - inv.quantity_allocated) AS available,
+                       b.pick_sequence, b.bin_type
+                FROM inventory inv
+                JOIN bins b ON b.bin_id = inv.bin_id
+                WHERE inv.item_id = :item_id
+                  AND inv.warehouse_id = :wh
+                  AND (inv.quantity_on_hand - inv.quantity_allocated) > 0
+                  AND b.bin_type NOT IN ('INBOUND_STAGING', 'OUTBOUND_STAGING')
+                ORDER BY
+                  CASE b.bin_type WHEN 'PICKING' THEN 1 WHEN 'STANDARD' THEN 2 ELSE 3 END,
+                  b.pick_sequence ASC,
+                  inv.updated_at ASC
+                """
+            ),
+            {"item_id": item_id, "wh": warehouse_id},
+        ).fetchall()
+
+        total_available = sum(r.available for r in inv_rows)
+        if total_available < combined_needed:
+            item_info = db.execute(
+                text("SELECT sku FROM items WHERE item_id = :iid"),
+                {"iid": item_id},
+            ).fetchone()
+            warnings.append({
+                "sku": item_info.sku,
+                "needed": combined_needed,
+                "available": total_available,
+            })
+
+        # Allocate from bins in order, creating one pick task per bin
+        remaining = combined_needed
+        for inv in inv_rows:
+            if remaining <= 0:
+                break
+
+            take = min(remaining, inv.available)
+
+            # Allocate inventory
+            db.execute(
+                text("UPDATE inventory SET quantity_allocated = quantity_allocated + :qty WHERE inventory_id = :inv_id"),
+                {"qty": take, "inv_id": inv.inventory_id},
+            )
+
+            # Create combined pick task - use first contributing SO as reference
+            first_contrib = contributions[0]
+            task_result = db.execute(
+                text(
+                    """
+                    INSERT INTO pick_tasks (batch_id, so_id, so_line_id, item_id, bin_id,
+                                            quantity_to_pick, pick_sequence, tote_number, status)
+                    VALUES (:bid, :so_id, :so_line_id, :item_id, :bin_id,
+                            :qty, :pick_seq, 'WAVE', 'PENDING')
+                    RETURNING pick_task_id
+                    """
+                ),
+                {
+                    "bid": batch_id,
+                    "so_id": first_contrib["so_id"],
+                    "so_line_id": first_contrib["so_line_id"],
+                    "item_id": item_id,
+                    "bin_id": inv.bin_id,
+                    "qty": take,
+                    "pick_seq": inv.pick_sequence,
+                },
+            )
+            pick_task_id = task_result.fetchone()[0]
+
+            # Create wave_pick_breakdown records - distribute this pick across SOs
+            pick_remaining = take
+            for contrib in contributions:
+                if pick_remaining <= 0:
+                    break
+                alloc = min(pick_remaining, contrib["needed"])
+                if alloc <= 0:
+                    continue
+
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO wave_pick_breakdown (pick_task_id, so_id, so_line_id, quantity)
+                        VALUES (:tid, :so_id, :sol_id, :qty)
+                        """
+                    ),
+                    {"tid": pick_task_id, "so_id": contrib["so_id"], "sol_id": contrib["so_line_id"], "qty": alloc},
+                )
+
+                # Update SO line allocation
+                db.execute(
+                    text(
+                        "UPDATE sales_order_lines SET quantity_allocated = quantity_allocated + :qty WHERE so_line_id = :sol_id"
+                    ),
+                    {"qty": alloc, "sol_id": contrib["so_line_id"]},
+                )
+
+                contrib["needed"] -= alloc
+                pick_remaining -= alloc
+
+            total_units += take
+            remaining -= take
+
+    # 6. Update SO statuses to ALLOCATED
+    for so in sales_orders:
+        db.execute(
+            text("UPDATE sales_orders SET status = 'ALLOCATED' WHERE so_id = :so_id"),
+            {"so_id": so.so_id},
+        )
+
+    # 7. Update batch totals
+    total_picks = db.execute(
+        text("SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid"),
+        {"bid": batch_id},
+    ).scalar()
+
+    db.execute(
+        text("UPDATE pick_batches SET total_orders = :orders, total_items = :items WHERE batch_id = :bid"),
+        {"orders": len(sales_orders), "items": total_units, "bid": batch_id},
+    )
+
+    # 8. Audit log
+    write_audit_log(
+        db,
+        action_type="PICK",
+        entity_type="BATCH",
+        entity_id=batch_id,
+        user_id=username,
+        warehouse_id=warehouse_id,
+        details={
+            "batch_number": batch_number,
+            "type": "WAVE_CREATE",
+            "so_count": len(sales_orders),
+            "total_picks": total_picks,
+            "total_units": total_units,
+        },
+    )
+
+    # 9. Get first pick for response
+    first_pick = get_next_task(db, batch_id)
+
+    db.commit()
+
+    response = {
+        "batch_id": batch_id,
+        "batch_number": batch_number,
+        "total_orders": len(sales_orders),
+        "total_picks": total_picks,
+        "total_units": total_units,
+        "orders": [
+            {"so_id": so.so_id, "so_number": so.so_number, "line_count": sum(1 for c in line_map.values() for item in c if item["so_id"] == so.so_id)}
+            for so in sales_orders
+        ],
+    }
+
+    if first_pick:
+        response["first_pick"] = first_pick
+
+    if warnings:
+        response["warnings"] = warnings
+
+    return response
+
+
+class AlreadyInBatchError(Exception):
+    """Raised when an SO is already in an active pick batch."""
+    def __init__(self, so_number, batch_id):
+        self.so_number = so_number
+        self.batch_id = batch_id
+        super().__init__(f"SO {so_number} already in active pick batch {batch_id}")
+
+
 # --- Helpers ---
+
+def _get_contributing_orders(db, pick_task_id):
+    """Get contributing orders for a wave pick task."""
+    rows = db.execute(
+        text(
+            """
+            SELECT wpb.so_id, so.so_number, wpb.quantity
+            FROM wave_pick_breakdown wpb
+            JOIN sales_orders so ON so.so_id = wpb.so_id
+            WHERE wpb.pick_task_id = :tid
+            ORDER BY wpb.so_id
+            """
+        ),
+        {"tid": pick_task_id},
+    ).fetchall()
+    return [{"so_number": r.so_number, "quantity": r.quantity} for r in rows]
+
 
 def _get_tasks_for_batch(db, batch_id):
     rows = db.execute(
