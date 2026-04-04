@@ -107,6 +107,44 @@ docker-compose up -d
 |--------|----------|-------------|
 | POST | `/api/transfers/move` | Move items between bins |
 
+### Admin CRUD
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/warehouses` | List warehouses |
+| GET | `/api/admin/warehouses/<id>` | Get warehouse with zones |
+| POST | `/api/admin/warehouses` | Create warehouse |
+| PUT | `/api/admin/warehouses/<id>` | Update warehouse |
+| GET | `/api/admin/zones` | List zones (filter by warehouse) |
+| POST | `/api/admin/zones` | Create zone |
+| PUT | `/api/admin/zones/<id>` | Update zone |
+| GET | `/api/admin/bins` | List bins (filter by warehouse/zone) |
+| GET | `/api/admin/bins/<id>` | Get bin with inventory |
+| POST | `/api/admin/bins` | Create bin |
+| PUT | `/api/admin/bins/<id>` | Update bin |
+| GET | `/api/admin/items` | List items (paginated, filter by category/active) |
+| GET | `/api/admin/items/<id>` | Get item with inventory locations |
+| POST | `/api/admin/items` | Create item |
+| PUT | `/api/admin/items/<id>` | Update item |
+| DELETE | `/api/admin/items/<id>` | Deactivate item (soft delete) |
+| GET | `/api/admin/purchase-orders` | List POs (paginated, filter by status) |
+| GET | `/api/admin/purchase-orders/<id>` | Get PO with lines |
+| POST | `/api/admin/purchase-orders` | Create PO with lines |
+| PUT | `/api/admin/purchase-orders/<id>` | Update PO (OPEN only) |
+| POST | `/api/admin/purchase-orders/<id>/close` | Close PO |
+| GET | `/api/admin/sales-orders` | List SOs (paginated, filter by status) |
+| GET | `/api/admin/sales-orders/<id>` | Get SO with lines |
+| POST | `/api/admin/sales-orders` | Create SO with lines |
+| PUT | `/api/admin/sales-orders/<id>` | Update SO (OPEN only) |
+| POST | `/api/admin/sales-orders/<id>/cancel` | Cancel SO (releases inventory) |
+| GET | `/api/admin/users` | List users |
+| POST | `/api/admin/users` | Create user |
+| PUT | `/api/admin/users/<id>` | Update user |
+| DELETE | `/api/admin/users/<id>` | Deactivate user (soft delete) |
+| GET | `/api/admin/audit-log` | Audit log (paginated, filterable) |
+| GET | `/api/admin/inventory` | Inventory overview (paginated) |
+| POST | `/api/admin/import/<type>` | Bulk import items or bins |
+| GET | `/api/admin/dashboard` | Dashboard stats and counts |
+
 ## Project Status
 
 🚧 **Active Development** - building toward v1.0.0
@@ -119,7 +157,7 @@ docker-compose up -d
 | v0.4.0 | Batch picking with path optimization | ✅ Complete |
 | v0.5.0 | Pack + ship | ✅ Complete |
 | v0.6.0 | Inventory management (cycle counts, transfers) | ✅ Complete |
-| v0.7.0 | Admin panel + polish | 🔨 In progress |
+| v0.7.0 | Admin CRUD API | ✅ Complete |
 | v0.8.0 | ERP integration + connectors | Planned |
 | v1.0.0 | Public release | Planned |
 

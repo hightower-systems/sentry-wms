@@ -2,6 +2,23 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.7.0] - 2026-04-04
+
+### Added
+- Full admin CRUD API for the web admin panel (`/api/admin` blueprint)
+- Warehouse management: list, get (with zones), create, update
+- Zone management: list (filter by warehouse), create with type validation, update
+- Bin management: list (filter by warehouse/zone), get (with inventory), create with type validation, update
+- Item management: list with pagination and category/active filters, get (with inventory locations), create with SKU/UPC uniqueness, update, soft delete (blocks if inventory exists)
+- Purchase order management: list with pagination and status/warehouse filters, get (with lines), create with lines, update (OPEN only), close
+- Sales order management: list with pagination and status/warehouse filters, get (with lines), create with lines, update (OPEN only), cancel (releases allocated inventory if ALLOCATED)
+- User management: list (excludes password_hash), create with bcrypt hashing and role validation, update (including password change), soft delete (blocks self-deactivation)
+- Audit log viewer: paginated list with action_type, user_id, date range filters
+- Inventory overview: paginated list with warehouse/item filters, joins item and bin details
+- CSV/JSON bulk import for items and bins with per-row validation and error reporting
+- Dashboard stats endpoint: open POs, pending receipts, putaway queue, order pipeline counts, total SKUs/bins, low stock alerts, recent activity feed
+- Role enforcement: write operations require ADMIN or MANAGER role, read operations open to all authenticated users
+
 ## [v0.6.0] - 2026-04-02
 
 ### Added

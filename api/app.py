@@ -33,6 +33,7 @@ def create_app():
     from routes.shipping import shipping_bp
     from routes.inventory import inventory_bp
     from routes.transfers import transfers_bp
+    from routes.admin import admin_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
@@ -43,6 +44,7 @@ def create_app():
     app.register_blueprint(shipping_bp, url_prefix="/api/shipping")
     app.register_blueprint(inventory_bp, url_prefix="/api/inventory")
     app.register_blueprint(transfers_bp, url_prefix="/api/transfers")
+    app.register_blueprint(admin_bp, url_prefix="/api/admin")
 
     @app.route("/api/health")
     def health():
