@@ -62,8 +62,11 @@ INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES
 
 -- Default admin user (password: 'admin' - change in production)
 -- Password hash is bcrypt of 'admin'
-INSERT INTO users (username, password_hash, full_name, role, warehouse_id)
-VALUES ('admin', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK', 'Admin User', 'ADMIN', 1);
+INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions)
+VALUES ('admin', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK', 'Admin User', 'ADMIN', 1, '{}');
+
+-- App settings defaults
+INSERT INTO app_settings (key, value) VALUES ('session_timeout_hours', '8');
 
 -- Sample Purchase Order
 INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, status, expected_date, warehouse_id, created_by) VALUES

@@ -3,10 +3,13 @@ Auth endpoints: login and token refresh.
 """
 
 from flask import Blueprint, g, jsonify, request
+from sqlalchemy import text
 
 from middleware.auth_middleware import require_auth
 from models.database import get_db
 from services.auth_service import authenticate_user, generate_token
+
+ALL_FUNCTIONS = ["receive", "pick", "pack_ship", "count", "transfer"]
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -28,6 +31,36 @@ def login():
 
     token = generate_token(user)
     return jsonify({"token": token, "user": user})
+
+
+@auth_bp.route("/me")
+@require_auth
+def me():
+    user_id = g.current_user["user_id"]
+    db = next(get_db())
+    try:
+        row = db.execute(
+            text("SELECT user_id, username, full_name, role, warehouse_id, allowed_functions FROM users WHERE user_id = :uid"),
+            {"uid": user_id},
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "User not found"}), 404
+
+        if row.role == "ADMIN":
+            functions = ALL_FUNCTIONS
+        else:
+            functions = list(row.allowed_functions) if row.allowed_functions else []
+
+        return jsonify({
+            "user_id": row.user_id,
+            "username": row.username,
+            "full_name": row.full_name,
+            "role": row.role,
+            "warehouse_id": row.warehouse_id,
+            "allowed_functions": functions,
+        })
+    finally:
+        db.close()
 
 
 @auth_bp.route("/refresh", methods=["POST"])
