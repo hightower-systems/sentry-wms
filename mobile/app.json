@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Sentry WMS",
+    "slug": "sentry-wms",
+    "version": "0.9.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sentrywms.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.sentrywms.mobile"
+    }
+  }
+}

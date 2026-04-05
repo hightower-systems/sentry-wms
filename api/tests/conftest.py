@@ -14,6 +14,7 @@ from app import create_app
 SEED_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "db", "seed-apartment-lab.sql")
 
 ALL_TABLES = [
+    "app_settings",
     "audit_log",
     "inventory_adjustments",
     "cycle_count_lines",

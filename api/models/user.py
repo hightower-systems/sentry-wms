@@ -4,6 +4,7 @@ User ORM model mapped to the existing users table.
 
 import bcrypt
 from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -18,6 +19,7 @@ class User(Base):
     full_name = Column(String(100), nullable=False)
     role = Column(String(20), nullable=False, default="PICKER")
     warehouse_id = Column(Integer)
+    allowed_functions = Column(ARRAY(String), default=[])
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
@@ -29,6 +31,7 @@ class User(Base):
             "full_name": self.full_name,
             "role": self.role,
             "warehouse_id": self.warehouse_id,
+            "allowed_functions": list(self.allowed_functions) if self.allowed_functions else [],
             "is_active": self.is_active,
         }
 

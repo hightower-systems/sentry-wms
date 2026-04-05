@@ -375,7 +375,19 @@ CREATE TABLE users (
     full_name VARCHAR(100) NOT NULL,
     role VARCHAR(20) NOT NULL DEFAULT 'PICKER',  -- 'ADMIN', 'MANAGER', 'PICKER', 'RECEIVER', 'PACKER'
     warehouse_id INT REFERENCES warehouses(warehouse_id),
+    allowed_functions TEXT[] DEFAULT '{}',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_login TIMESTAMPTZ
+);
+
+-- ============================================================
+-- APP SETTINGS (Configurable system settings)
+-- ============================================================
+
+CREATE TABLE app_settings (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(100) UNIQUE NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );

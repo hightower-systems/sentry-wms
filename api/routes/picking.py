@@ -3,6 +3,7 @@ Picking endpoints: batch creation, task management, pick confirmation, batch com
 """
 
 from flask import Blueprint, g, jsonify, request
+from sqlalchemy import text
 
 from middleware.auth_middleware import require_auth
 from models.database import get_db
@@ -20,6 +21,50 @@ from services.picking_service import (
 )
 
 picking_bp = Blueprint("picking", __name__)
+
+
+@picking_bp.route("/active-batch")
+@require_auth
+def active_batch():
+    username = g.current_user["username"]
+    db = next(get_db())
+    try:
+        batch = db.execute(
+            text("""
+                SELECT batch_id, total_orders, created_at
+                FROM pick_batches
+                WHERE assigned_to = :username
+                  AND status IN ('OPEN', 'IN_PROGRESS')
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"username": username},
+        ).fetchone()
+
+        if not batch:
+            return jsonify({"active": False})
+
+        counts = db.execute(
+            text("""
+                SELECT
+                    COUNT(*) AS total_picks,
+                    COUNT(*) FILTER (WHERE status IN ('PICKED', 'SHORT')) AS completed_picks
+                FROM pick_tasks
+                WHERE batch_id = :batch_id
+            """),
+            {"batch_id": batch.batch_id},
+        ).fetchone()
+
+        return jsonify({
+            "active": True,
+            "batch_id": batch.batch_id,
+            "total_picks": counts.total_picks,
+            "completed_picks": counts.completed_picks,
+            "total_orders": batch.total_orders,
+            "created_at": batch.created_at.isoformat() if batch.created_at else None,
+        })
+    finally:
+        db.close()
 
 
 @picking_bp.route("/create-batch", methods=["POST"])
