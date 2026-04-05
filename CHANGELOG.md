@@ -2,6 +2,35 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.0] - 2026-04-04
+
+### Added
+- React Native / Expo mobile scanner app (`mobile/` directory) for warehouse floor operations
+- 10 screens: Login, Home, Receive, Put-Away, Pick Scan (wave), Pick Walk, Pick Complete, Pack/Ship, Cycle Count, Transfer
+- 5 shared components: ScanInput (keyboard wedge), ErrorPopup (blocking modal), ActiveBatchBanner, WarehouseSelector, PagedList
+- Hardware barcode scanner support via keyboard wedge (TextInput capture on Enter key)
+- JWT auth context with session timeout (8-hour default), auto-logout on app foreground
+- API client (Axios) with JWT interceptor and 401 auto-logout
+- Stack navigation (React Navigation) with auth-gated routing
+- Universal scan bar on home screen (item/bin lookup from any barcode)
+- Role-based function visibility on home screen (ADMIN sees all, others see allowed_functions)
+- Active batch resume banner on home screen
+- Warehouse switching from header tap
+- Wave picking: scan SOs, build batch, walk pick path with zone/aisle display
+- Short pick modal with quantity input
+- Contributing orders collapsible section on pick walk
+- Pack verification: scan-to-verify each item, then ship with carrier/tracking
+- Cycle count: scan bin, enter counts, auto-variance detection
+- Transfer: 3-step scan flow (item, from bin, to bin) with quantity input
+- Brand theme: Accent Red (#8e2715), Copper (#c4722a), Cream (#FCF4E3), monospace typography, 48dp tap targets
+- `GET /api/picking/active-batch` — returns user's incomplete pick batch for resume
+- `GET /api/warehouses/list` — public endpoint (no auth) for login screen warehouse selector
+- `GET /api/auth/me` — returns user info with role-based allowed_functions
+- `app_settings` table for configurable session timeout
+- `allowed_functions` column on users table for per-user function visibility
+- Migration: `db/migrations/009_mobile_app.sql`
+- 9 new API tests in `test_mobile_endpoints.py` (warehouse list, auth/me, active batch, session settings)
+
 ## [v0.8.2] - 2026-04-04
 
 ### Changed
