@@ -42,6 +42,9 @@ services:
       - "3000:3000"
     depends_on:
       - api
+    volumes:
+      - ./admin:/app
+      - /app/node_modules
 
 volumes:
   pgdata:

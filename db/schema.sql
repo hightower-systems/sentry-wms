@@ -162,7 +162,7 @@ CREATE TABLE sales_orders (
     so_barcode VARCHAR(100),               -- scannable pick ticket barcode
     customer_name VARCHAR(200),
     customer_id VARCHAR(50),
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'ALLOCATED', 'PICKING', 'PACKED', 'SHIPPED', 'CANCELLED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'
     priority INT DEFAULT 0,                -- higher = pick first
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
@@ -391,3 +391,20 @@ CREATE TABLE app_settings (
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================================
+-- PREFERRED BINS (Priority-ranked bin assignments per item)
+-- ============================================================
+
+CREATE TABLE preferred_bins (
+    preferred_bin_id SERIAL PRIMARY KEY,
+    item_id INT NOT NULL REFERENCES items(item_id),
+    bin_id INT NOT NULL REFERENCES bins(bin_id),
+    priority INT NOT NULL DEFAULT 1,
+    notes VARCHAR(500),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(item_id, bin_id)
+);
+
+CREATE INDEX ix_preferred_bins_item_priority ON preferred_bins(item_id, priority);

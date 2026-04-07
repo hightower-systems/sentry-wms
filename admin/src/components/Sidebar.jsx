@@ -32,6 +32,7 @@ const NAV = [
       { to: '/bins', label: 'Bins' },
       { to: '/zones', label: 'Zones' },
       { to: '/items', label: 'Items' },
+      { to: '/preferred-bins', label: 'Preferred Bins' },
     ],
   },
   {

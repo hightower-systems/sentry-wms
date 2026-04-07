@@ -15,6 +15,7 @@ export default function Settings() {
   const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', warehouse_id: 1, lines: [{ item_id: '', quantity: '' }] });
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
+  const [countShowExpected, setCountShowExpected] = useState(true);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -25,6 +26,12 @@ export default function Settings() {
         setWhForm(data);
       }
     });
+    api.get('/admin/settings/count_show_expected').then(async (res) => {
+      if (res?.ok) {
+        const data = await res.json();
+        setCountShowExpected(data.value !== 'false' && data.value !== false);
+      }
+    }).catch(() => {});
   }, []);
 
   async function saveWarehouse() {
@@ -191,6 +198,26 @@ export default function Settings() {
           <button className="btn" onClick={() => { setShowPO(true); setFormError(''); }}>Create Purchase Order</button>
           <button className="btn" onClick={() => { setShowSO(true); setFormError(''); }}>Create Sales Order</button>
         </div>
+      </div>
+
+      {/* Mobile App Settings */}
+      <div className="settings-section">
+        <h3>Mobile App</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={countShowExpected}
+              onChange={async (e) => {
+                const val = e.target.checked;
+                setCountShowExpected(val);
+                await api.put('/admin/settings', { key: 'count_show_expected', value: String(val) });
+              }}
+            />
+            Show expected quantities during cycle counts
+          </label>
+        </div>
+        <p className="settings-note">When disabled, counters won't see expected quantities - useful for blind counts.</p>
       </div>
 
       {/* Connector config placeholder */}

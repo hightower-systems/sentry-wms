@@ -464,8 +464,14 @@ def list_items():
         params["offset"] = (page - 1) * per_page
         rows = db.execute(
             text(f"""
-                SELECT item_id, sku, item_name, upc, category, weight_lbs, default_bin_id, is_active, created_at
-                FROM items {where_sql} ORDER BY item_id LIMIT :limit OFFSET :offset
+                SELECT i.item_id, i.sku, i.item_name, i.upc, i.category, i.weight_lbs,
+                       i.default_bin_id, i.is_active, i.created_at,
+                       b.bin_code AS default_bin_code
+                FROM items i
+                LEFT JOIN preferred_bins pb ON pb.item_id = i.item_id AND pb.priority = 1
+                LEFT JOIN bins b ON b.bin_id = COALESCE(pb.bin_id, i.default_bin_id)
+                {where_sql.replace("category", "i.category").replace("is_active", "i.is_active")}
+                ORDER BY i.item_id LIMIT :limit OFFSET :offset
             """),
             params,
         ).fetchall()
@@ -474,7 +480,8 @@ def list_items():
             "items": [
                 {"item_id": r.item_id, "sku": r.sku, "item_name": r.item_name, "upc": r.upc,
                  "category": r.category, "weight_lbs": float(r.weight_lbs) if r.weight_lbs else None,
-                 "default_bin_id": r.default_bin_id, "is_active": r.is_active,
+                 "default_bin_id": r.default_bin_id, "default_bin_code": r.default_bin_code,
+                 "is_active": r.is_active,
                  "created_at": r.created_at.isoformat() if r.created_at else None}
                 for r in rows
             ],
@@ -1060,11 +1067,11 @@ def cancel_sales_order(so_id):
         so = db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
         if not so:
             return jsonify({"error": "Sales order not found"}), 404
-        if so.status not in ("OPEN", "ALLOCATED"):
-            return jsonify({"error": f"Can only cancel OPEN or ALLOCATED orders. Current: {so.status}"}), 400
+        if so.status not in ("OPEN", "ALLOCATED", "PICKING"):
+            return jsonify({"error": f"Can only cancel OPEN, ALLOCATED, or PICKING orders. Current: {so.status}"}), 400
 
-        # If ALLOCATED, release allocated inventory
-        if so.status == "ALLOCATED":
+        # If ALLOCATED or PICKING, release allocated inventory
+        if so.status in ("ALLOCATED", "PICKING"):
             lines = db.execute(
                 text("SELECT so_line_id, item_id, quantity_allocated FROM sales_order_lines WHERE so_id = :sid AND quantity_allocated > 0"),
                 {"sid": so_id},
@@ -1488,8 +1495,8 @@ def dashboard():
 
         open_sos = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'OPEN' {wh_filter}"), wh_params).scalar()
         ready_to_pick = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN ('OPEN') {wh_filter}"), wh_params).scalar()
-        in_picking = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN ('ALLOCATED') {wh_filter}"), wh_params).scalar()
-        ready_to_pack = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKING' {wh_filter}"), wh_params).scalar()
+        in_picking = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKING' {wh_filter}"), wh_params).scalar()
+        ready_to_pack = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKED' {wh_filter}"), wh_params).scalar()
         ready_to_ship = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PACKED' {wh_filter}"), wh_params).scalar()
 
         total_skus = db.execute(text("SELECT COUNT(*) FROM items WHERE is_active = TRUE")).scalar()
@@ -1532,5 +1539,271 @@ def dashboard():
                 for r in recent
             ],
         })
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/settings", methods=["GET"])
+@require_auth
+def get_settings():
+    db = next(get_db())
+    try:
+        rows = db.execute(text("SELECT id, key, value, updated_at FROM app_settings ORDER BY key")).fetchall()
+        return jsonify({
+            "settings": [
+                {"id": r.id, "key": r.key, "value": r.value,
+                 "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+                for r in rows
+            ]
+        })
+    finally:
+        db.close()
+
+
+@admin_bp.route("/settings/<setting_key>", methods=["GET"])
+@require_auth
+def get_setting(setting_key):
+    db = next(get_db())
+    try:
+        row = db.execute(
+            text("SELECT id, key, value FROM app_settings WHERE key = :key"),
+            {"key": setting_key},
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Setting not found"}), 404
+        return jsonify({"key": row.key, "value": row.value})
+    finally:
+        db.close()
+
+
+@admin_bp.route("/settings", methods=["PUT"])
+@require_auth
+@require_role("ADMIN")
+def update_settings():
+    data = request.get_json()
+    if not data or not data.get("settings"):
+        return jsonify({"error": "settings object is required"}), 400
+
+    db = next(get_db())
+    try:
+        for key, value in data["settings"].items():
+            db.execute(
+                text(
+                    """
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (:key, :value, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = :value, updated_at = NOW()
+                    """
+                ),
+                {"key": key, "value": str(value)},
+            )
+        db.commit()
+        return jsonify({"message": "Settings updated"})
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Cycle Counts (admin view)
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/cycle-counts", methods=["GET"])
+@require_auth
+def list_cycle_counts():
+    db = next(get_db())
+    try:
+        rows = db.execute(
+            text(
+                """
+                SELECT cc.count_id, cc.status, cc.assigned_to, cc.created_at,
+                       cc.completed_at, b.bin_code, b.bin_id
+                FROM cycle_counts cc
+                JOIN bins b ON b.bin_id = cc.bin_id
+                ORDER BY cc.created_at DESC
+                LIMIT 200
+                """
+            )
+        ).fetchall()
+
+        counts = []
+        for r in rows:
+            lines = db.execute(
+                text(
+                    """
+                    SELECT ccl.count_line_id, i.sku, i.item_name,
+                           ccl.expected_quantity, ccl.counted_quantity, ccl.variance
+                    FROM cycle_count_lines ccl
+                    JOIN items i ON i.item_id = ccl.item_id
+                    WHERE ccl.count_id = :cid
+                    ORDER BY i.sku
+                    """
+                ),
+                {"cid": r.count_id},
+            ).fetchall()
+
+            counts.append({
+                "count_id": r.count_id,
+                "bin_code": r.bin_code,
+                "status": r.status,
+                "assigned_to": r.assigned_to,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "lines": [
+                    {
+                        "count_line_id": l.count_line_id,
+                        "sku": l.sku,
+                        "item_name": l.item_name,
+                        "expected_quantity": l.expected_quantity,
+                        "counted_quantity": l.counted_quantity,
+                        "variance": l.variance,
+                    }
+                    for l in lines
+                ],
+            })
+
+        return jsonify({"counts": counts})
+    finally:
+        db.close()
+
+
+@admin_bp.route("/preferred-bins", methods=["GET"])
+@require_auth
+def list_preferred_bins():
+    db = next(get_db())
+    try:
+        item_id = request.args.get("item_id", type=int)
+        bin_id = request.args.get("bin_id", type=int)
+        search = request.args.get("q", "")
+
+        where_clauses = []
+        params = {}
+        if item_id:
+            where_clauses.append("pb.item_id = :item_id")
+            params["item_id"] = item_id
+        if bin_id:
+            where_clauses.append("pb.bin_id = :bin_id")
+            params["bin_id"] = bin_id
+        if search:
+            where_clauses.append("(i.sku ILIKE :search OR i.item_name ILIKE :search)")
+            params["search"] = f"%{search}%"
+
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        rows = db.execute(
+            text(f"""
+                SELECT pb.preferred_bin_id, pb.item_id, pb.bin_id, pb.priority, pb.notes,
+                       pb.updated_at,
+                       i.sku, i.item_name,
+                       b.bin_code, z.zone_name
+                FROM preferred_bins pb
+                JOIN items i ON i.item_id = pb.item_id
+                JOIN bins b ON b.bin_id = pb.bin_id
+                LEFT JOIN zones z ON z.zone_id = b.zone_id
+                {where_sql}
+                ORDER BY i.sku, pb.priority
+            """),
+            params,
+        ).fetchall()
+
+        return jsonify({
+            "preferred_bins": [
+                {
+                    "preferred_bin_id": r.preferred_bin_id,
+                    "item_id": r.item_id,
+                    "bin_id": r.bin_id,
+                    "priority": r.priority,
+                    "notes": r.notes,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                    "sku": r.sku,
+                    "item_name": r.item_name,
+                    "bin_code": r.bin_code,
+                    "zone_name": r.zone_name,
+                }
+                for r in rows
+            ]
+        })
+    finally:
+        db.close()
+
+
+@admin_bp.route("/preferred-bins", methods=["POST"])
+@require_auth
+def create_preferred_bin():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    item_id = data.get("item_id")
+    bin_id = data.get("bin_id")
+    priority = data.get("priority", 1)
+
+    if not item_id or not bin_id:
+        return jsonify({"error": "item_id and bin_id are required"}), 400
+
+    db = next(get_db())
+    try:
+        db.execute(
+            text(
+                """
+                INSERT INTO preferred_bins (item_id, bin_id, priority)
+                VALUES (:item_id, :bin_id, :priority)
+                ON CONFLICT (item_id, bin_id) DO UPDATE SET priority = :priority, updated_at = NOW()
+                """
+            ),
+            {"item_id": item_id, "bin_id": bin_id, "priority": priority},
+        )
+        db.commit()
+        return jsonify({"message": "Preferred bin saved"})
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["PUT"])
+@require_auth
+def update_preferred_bin(preferred_bin_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    priority = data.get("priority")
+    if priority is None:
+        return jsonify({"error": "priority is required"}), 400
+
+    db = next(get_db())
+    try:
+        db.execute(
+            text("UPDATE preferred_bins SET priority = :priority, updated_at = NOW() WHERE preferred_bin_id = :pbid"),
+            {"priority": priority, "pbid": preferred_bin_id},
+        )
+        db.commit()
+        return jsonify({"message": "Priority updated"})
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["DELETE"])
+@require_auth
+def delete_preferred_bin(preferred_bin_id):
+    db = next(get_db())
+    try:
+        db.execute(
+            text("DELETE FROM preferred_bins WHERE preferred_bin_id = :pbid"),
+            {"pbid": preferred_bin_id},
+        )
+        db.commit()
+        return jsonify({"message": "Preferred bin deleted"})
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

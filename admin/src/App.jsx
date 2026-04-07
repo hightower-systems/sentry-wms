@@ -15,6 +15,7 @@ import Zones from './pages/Zones.jsx';
 import Items from './pages/Items.jsx';
 import Users from './pages/Users.jsx';
 import AuditLog from './pages/AuditLog.jsx';
+import PreferredBins from './pages/PreferredBins.jsx';
 import Settings from './pages/Settings.jsx';
 
 function ProtectedRoute({ children }) {
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/bins" element={<Bins />} />
         <Route path="/zones" element={<Zones />} />
         <Route path="/items" element={<Items />} />
+        <Route path="/preferred-bins" element={<PreferredBins />} />
         <Route path="/users" element={<Users />} />
         <Route path="/audit-log" element={<AuditLog />} />
         <Route path="/settings" element={<Settings />} />

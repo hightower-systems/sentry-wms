@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, StyleSheet, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../auth/AuthContext';
 import ScanInput from '../components/ScanInput';
@@ -10,11 +10,12 @@ import client from '../api/client';
 import { colors, fonts } from '../theme/styles';
 
 const FUNCTIONS = [
-  { key: 'receive', label: 'RECEIVE', screen: 'Receive', accent: 'red' },
   { key: 'pick', label: 'PICK', screen: 'PickScan', accent: 'red' },
+  { key: 'receive', label: 'RECEIVE', screen: 'Receive', accent: 'red' },
+  { key: 'putaway', label: 'PUT-AWAY', screen: 'PutAway', accent: 'red' },
+  { key: 'transfer', label: 'TRANSFER', screen: 'Transfer', accent: 'copper' },
   { key: 'pack_ship', label: 'PACK / SHIP', screen: 'PackShip', accent: 'copper' },
-  { key: 'count', label: 'COUNT', screen: 'Count', accent: 'copper' },
-  { key: 'transfer', label: 'TRANSFER', screen: 'Transfer', accent: 'gray' },
+  { key: 'count', label: 'COUNT', screen: 'Count', accent: 'gray' },
 ];
 
 export default function HomeScreen({ navigation }) {
@@ -29,6 +30,7 @@ export default function HomeScreen({ navigation }) {
   const [showWarehousePicker, setShowWarehousePicker] = useState(false);
   const [error, setError] = useState('');
   const [scanDisabled, setScanDisabled] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!warehouseId) return;
@@ -65,7 +67,7 @@ export default function HomeScreen({ navigation }) {
         setWarehouseName(current.name);
       }
     } catch {
-      // Silent fail on refresh — data shows stale
+      // Silent fail on refresh - data shows stale
     }
   }, [warehouseId, batchDismissed]);
 
@@ -124,12 +126,30 @@ export default function HomeScreen({ navigation }) {
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.headerLogo}>SENTRY</Text>
-        <TouchableOpacity onPress={() => setShowWarehousePicker(true)}>
-          <Text style={styles.headerWarehouse}>{warehouseCode || '---'}</Text>
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <TouchableOpacity onPress={() => setShowWarehousePicker(true)}>
+            <Text style={styles.headerWarehouse}>{warehouseCode || '---'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.userBtn} onPress={() => setShowUserMenu(true)}>
+            <Text style={styles.userIcon}>{'\u2630'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      <Modal visible={showUserMenu} transparent animationType="fade">
+        <Pressable style={styles.menuOverlay} onPress={() => setShowUserMenu(false)}>
+          <View style={styles.menuCard}>
+            <Text style={styles.menuUser}>{user?.full_name || user?.username || 'User'}</Text>
+            <Text style={styles.menuRole}>{user?.role}</Text>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={() => { setShowUserMenu(false); logout(); }}>
+              <Text style={styles.menuItemTextDanger}>LOGOUT</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
         <ScanInput
           placeholder="SCAN BARCODE"
           onScan={handleScan}
@@ -166,7 +186,7 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>v0.9.0 — {warehouseName}</Text>
+        <Text style={styles.footerText}>v0.9.0 - {warehouseName}</Text>
       </View>
 
       <ErrorPopup
@@ -213,11 +233,75 @@ const styles = StyleSheet.create({
     color: colors.accentRed,
     letterSpacing: 2,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   headerWarehouse: {
     fontFamily: fonts.mono,
     fontSize: 13,
     fontWeight: '600',
     color: colors.textPrimary,
+    letterSpacing: 0.3,
+  },
+  userBtn: {
+    padding: 4,
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userIcon: {
+    fontSize: 18,
+    color: colors.textPrimary,
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay || 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 100,
+    paddingRight: 16,
+  },
+  menuCard: {
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    padding: 16,
+    minWidth: 180,
+    borderWidth: 1,
+    borderColor: colors.border,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  menuUser: {
+    fontFamily: fonts.mono,
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  menuRole: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 12,
+  },
+  menuItem: {
+    paddingVertical: 8,
+  },
+  menuItemTextDanger: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accentRed,
     letterSpacing: 0.3,
   },
   content: {

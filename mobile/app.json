@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sentry WMS",
     "slug": "sentry-wms",
-    "version": "0.9.0",
+    "version": "0.9.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -21,6 +21,10 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.sentrywms.mobile"
-    }
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-secure-store"
+    ]
   }
 }

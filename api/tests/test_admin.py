@@ -331,11 +331,11 @@ class TestSalesOrders:
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
         assert status == "CANCELLED"
 
-    def test_cancel_allocated_releases_inventory(self, client, auth_headers):
-        # Allocate SO-001 via picking
+    def test_cancel_picking_releases_inventory(self, client, auth_headers):
+        # Create batch sets SO-001 to PICKING
         client.post("/api/picking/create-batch", json={"so_identifiers": ["SO-001"], "warehouse_id": 1}, headers=auth_headers)
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
-        assert status == "ALLOCATED"
+        assert status == "PICKING"
 
         # Cancel should release allocation
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
@@ -566,3 +566,146 @@ class TestRoleEnforcement:
             "username": "x", "password": "x", "full_name": "x", "role": "PICKER"
         }, headers=headers)
         assert resp.status_code == 403
+
+
+# -- Items default_bin_code --------------------------------------------------
+
+class TestItemsDefaultBin:
+    def test_items_list_includes_default_bin_code(self, client, auth_headers):
+        resp = client.get("/api/admin/items", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        # Item 1 (WIDGET-BLU) has default_bin_id = 2 (A-01-01)
+        item1 = next(i for i in data["items"] if i["sku"] == "WIDGET-BLU")
+        assert "default_bin_code" in item1
+        assert item1["default_bin_code"] == "A-01-01"
+
+    def test_items_preferred_bin_overrides_default(self, client, auth_headers):
+        # Insert preferred bin pointing to bin 3 (A-01-02)
+        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("INSERT INTO preferred_bins (item_id, bin_id, priority) VALUES (1, 3, 1)")
+        cur.close()
+        conn.close()
+
+        resp = client.get("/api/admin/items", headers=auth_headers)
+        data = resp.get_json()
+        item1 = next(i for i in data["items"] if i["sku"] == "WIDGET-BLU")
+        assert item1["default_bin_code"] == "A-01-02"
+
+
+# -- Settings ----------------------------------------------------------------
+
+class TestSettings:
+    def test_get_settings(self, client, auth_headers):
+        resp = client.get("/api/admin/settings", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "settings" in data
+
+    def test_update_settings(self, client, auth_headers):
+        resp = client.put("/api/admin/settings", json={
+            "settings": {"count_show_expected": "false"}
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+
+        # Verify it was saved
+        resp = client.get("/api/admin/settings", headers=auth_headers)
+        settings = {s["key"]: s["value"] for s in resp.get_json()["settings"]}
+        assert settings.get("count_show_expected") == "false"
+
+    def test_update_settings_missing_body(self, client, auth_headers):
+        resp = client.put("/api/admin/settings", json={}, headers=auth_headers)
+        assert resp.status_code == 400
+
+
+# -- Cycle Counts ------------------------------------------------------------
+
+class TestCycleCounts:
+    def test_list_cycle_counts_empty(self, client, auth_headers):
+        resp = client.get("/api/admin/cycle-counts", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "cycle_counts" in data
+        assert isinstance(data["cycle_counts"], list)
+
+    def test_list_cycle_counts_after_creation(self, client, auth_headers):
+        # Create a cycle count via the inventory endpoint
+        client.post("/api/inventory/cycle-count/create", json={
+            "bin_ids": [2], "warehouse_id": 1,
+        }, headers=auth_headers)
+
+        resp = client.get("/api/admin/cycle-counts", headers=auth_headers)
+        data = resp.get_json()
+        assert len(data["cycle_counts"]) >= 1
+        cc = data["cycle_counts"][0]
+        assert "count_id" in cc
+        assert "bin_code" in cc
+        assert "status" in cc
+
+
+# -- Preferred Bins CRUD ----------------------------------------------------
+
+class TestPreferredBinsCRUD:
+    def test_list_preferred_bins_empty(self, client, auth_headers):
+        resp = client.get("/api/admin/preferred-bins", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["preferred_bins"] == []
+
+    def test_create_preferred_bin(self, client, auth_headers):
+        resp = client.post("/api/admin/preferred-bins", json={
+            "item_id": 1, "bin_id": 2, "priority": 1,
+        }, headers=auth_headers)
+        assert resp.status_code == 201 or resp.status_code == 200
+
+    def test_list_preferred_bins_after_create(self, client, auth_headers):
+        client.post("/api/admin/preferred-bins", json={
+            "item_id": 1, "bin_id": 2, "priority": 1,
+        }, headers=auth_headers)
+
+        resp = client.get("/api/admin/preferred-bins", headers=auth_headers)
+        data = resp.get_json()
+        assert len(data["preferred_bins"]) >= 1
+        pb = data["preferred_bins"][0]
+        assert pb["item_id"] == 1
+        assert pb["bin_id"] == 2
+        assert pb["priority"] == 1
+        assert "sku" in pb
+        assert "bin_code" in pb
+
+    def test_list_preferred_bins_filter_item(self, client, auth_headers):
+        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 2, "priority": 1}, headers=auth_headers)
+        client.post("/api/admin/preferred-bins", json={"item_id": 2, "bin_id": 3, "priority": 1}, headers=auth_headers)
+
+        resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
+        data = resp.get_json()
+        assert all(pb["item_id"] == 1 for pb in data["preferred_bins"])
+
+    def test_update_preferred_bin_priority(self, client, auth_headers):
+        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 2, "priority": 1}, headers=auth_headers)
+
+        # Get the preferred_bin_id
+        resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
+        pb_id = resp.get_json()["preferred_bins"][0]["preferred_bin_id"]
+
+        resp = client.put(f"/api/admin/preferred-bins/{pb_id}", json={"priority": 5}, headers=auth_headers)
+        assert resp.status_code == 200
+
+        # Verify updated
+        resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
+        assert resp.get_json()["preferred_bins"][0]["priority"] == 5
+
+    def test_delete_preferred_bin(self, client, auth_headers):
+        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 2, "priority": 1}, headers=auth_headers)
+
+        resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
+        pb_id = resp.get_json()["preferred_bins"][0]["preferred_bin_id"]
+
+        resp = client.delete(f"/api/admin/preferred-bins/{pb_id}", headers=auth_headers)
+        assert resp.status_code == 200
+
+        # Verify deleted
+        resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
+        assert len(resp.get_json()["preferred_bins"]) == 0

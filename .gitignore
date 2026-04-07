@@ -29,3 +29,8 @@ pgdata/
 dist/
 build/
 *.egg
+
+# Expo / React Native
+mobile/.expo/web/
+mobile/android/
+mobile/ios/

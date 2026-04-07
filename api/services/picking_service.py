@@ -161,10 +161,10 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                 total_items += take
                 remaining -= take
 
-    # 6. Update each SO status to ALLOCATED
+    # 6. Update each SO status to PICKING
     for order in orders_info:
         db.execute(
-            text("UPDATE sales_orders SET status = 'ALLOCATED' WHERE so_id = :so_id"),
+            text("UPDATE sales_orders SET status = 'PICKING' WHERE so_id = :so_id"),
             {"so_id": order["so_id"]},
         )
 
@@ -593,7 +593,7 @@ def complete_batch(db, batch_id, username):
 
     for so in so_rows:
         db.execute(
-            text("UPDATE sales_orders SET status = 'PICKING', picked_at = NOW() WHERE so_id = :so_id"),
+            text("UPDATE sales_orders SET status = 'PICKED', picked_at = NOW() WHERE so_id = :so_id"),
             {"so_id": so.so_id},
         )
 
@@ -629,7 +629,7 @@ def complete_batch(db, batch_id, username):
             "total_orders": len(so_rows),
             "total_items_picked": task_stats.total_picked,
             "total_shorts": task_stats.total_shorts,
-            "orders": [{"so_number": so.so_number, "status": "PICKING"} for so in so_rows],
+            "orders": [{"so_number": so.so_number, "status": "PICKED"} for so in so_rows],
         },
     }
 
@@ -934,10 +934,10 @@ def wave_create(db, so_ids, warehouse_id, username):
             total_units += take
             remaining -= take
 
-    # 6. Update SO statuses to ALLOCATED
+    # 6. Update SO statuses to PICKING
     for so in sales_orders:
         db.execute(
-            text("UPDATE sales_orders SET status = 'ALLOCATED' WHERE so_id = :so_id"),
+            text("UPDATE sales_orders SET status = 'PICKING' WHERE so_id = :so_id"),
             {"so_id": so.so_id},
         )
 

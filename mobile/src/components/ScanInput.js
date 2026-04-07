@@ -1,9 +1,10 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, TextInput, StyleSheet } from 'react-native';
 import { colors, fonts } from '../theme/styles';
 
 export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabled = false, autoFocus = true }) {
   const inputRef = useRef(null);
+  const [value, setValue] = useState('');
 
   useEffect(() => {
     if (autoFocus && !disabled) {
@@ -12,15 +13,13 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
     }
   }, [autoFocus, disabled]);
 
-  const handleSubmit = (e) => {
-    const value = e.nativeEvent.text?.trim();
-    if (value && onScan) {
-      onScan(value);
+  const handleSubmit = () => {
+    const trimmed = value.trim();
+    if (trimmed && onScan) {
+      onScan(trimmed);
     }
-    if (inputRef.current) {
-      inputRef.current.clear();
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
+    setValue('');
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   return (
@@ -30,6 +29,8 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
         style={styles.input}
         placeholder={placeholder}
         placeholderTextColor={colors.textSecondary}
+        value={value}
+        onChangeText={setValue}
         onSubmitEditing={handleSubmit}
         editable={!disabled}
         autoFocus={autoFocus && !disabled}
@@ -37,6 +38,7 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
         autoCorrect={false}
         blurOnSubmit={false}
         returnKeyType="done"
+        showSoftInputOnFocus={false}
       />
     </View>
   );

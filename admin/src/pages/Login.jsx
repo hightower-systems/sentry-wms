@@ -20,7 +20,8 @@ export default function Login() {
       await login(username, password);
       navigate('/');
     } catch (err) {
-      setError(err.message);
+      setPassword('');
+      setError('Wrong Username/Password');
     } finally {
       setLoading(false);
     }

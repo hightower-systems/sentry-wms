@@ -1,25 +1,26 @@
 {
   "name": "sentry-wms-mobile",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Sentry WMS - Mobile Scanner App",
   "main": "expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web"
   },
   "dependencies": {
-    "expo": "~52.0.0",
-    "expo-status-bar": "~2.0.0",
-    "react": "18.3.1",
-    "react-native": "0.76.7",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^7.0.0",
     "@react-navigation/native-stack": "^7.0.0",
-    "react-native-screens": "~4.4.0",
-    "react-native-safe-area-context": "~5.0.0",
-    "@react-native-async-storage/async-storage": "2.1.0",
-    "expo-secure-store": "~14.0.0"
+    "expo": "^54.0.0",
+    "expo-asset": "~12.0.12",
+    "expo-secure-store": "~15.0.8",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.0"

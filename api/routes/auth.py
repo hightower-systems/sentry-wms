@@ -9,7 +9,7 @@ from middleware.auth_middleware import require_auth
 from models.database import get_db
 from services.auth_service import authenticate_user, generate_token
 
-ALL_FUNCTIONS = ["receive", "pick", "pack_ship", "count", "transfer"]
+ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack_ship", "count", "transfer"]
 
 auth_bp = Blueprint("auth", __name__)
 

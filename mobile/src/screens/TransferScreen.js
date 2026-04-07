@@ -120,7 +120,7 @@ export default function TransferScreen({ navigation }) {
         <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
         {success ? (
           <View style={styles.successSection}>
             <Text style={styles.successText}>Transfer complete</Text>

@@ -2,6 +2,47 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.1] - 2026-04-06
+
+### Fixed
+- Put-Away missing from home screen (allowed_functions didn't include 'putaway')
+- Receiving confirm fails with PO_id error
+- Cycle count "Failed to create count" (FK constraint on inventory_adjustments)
+- ScanInput doesn't clear after scan
+- Double-tap required on home screen buttons
+- One scan confirms entire pick quantity (now one scan = one unit)
+- Pick quantities showing zeros (field mapping for line_count/total_units)
+- End-of-batch flow redesign with Submit/Cancel
+- Admin login shows no error on wrong password
+- SO status lifecycle (removed ALLOCATED, added proper PICKING/PICKED statuses)
+
+### Added
+- Two receiving modes: Standard (manual qty entry) and Turbo (each scan = 1 unit)
+- User icon dropdown menu with Logout
+- Second warehouse for testing
+- Preferred bins system with put-away suggestions (`preferred_bins` table)
+- SKU display on pick walk screen
+- Admin preferred bins page with full CRUD, inline priority editing, CSV export
+- Admin cycle counts page with detail modal (expected/counted/variance breakdown)
+- `count_show_expected` app setting for hiding expected quantities during counts
+- `useScanQueue` hook for sequential barcode processing in turbo mode
+- `POST /api/putaway/update-preferred` - set/change preferred bin from mobile
+- `GET/POST/PUT/DELETE /api/admin/preferred-bins` - admin CRUD for preferred bins
+- `GET /api/admin/cycle-counts` - cycle count list with line details
+- `GET/PUT /api/admin/settings` - app settings management
+
+### Changed
+- Put-away flow redesigned: scan item → see preferred bin suggestion → scan destination → optional preferred bin prompt
+- Receiving screen restructured to match pick scan pattern (PO queue → work through items)
+- Count screen supports Standard/Turbo modes with AsyncStorage persistence
+- Suggest bin endpoint queries `preferred_bins` table first, falls back to `default_bin_id`
+- Items admin page shows default bin column from preferred bins
+
+### Database
+- New `preferred_bins` table with priority ranking and UNIQUE(item_id, bin_id)
+- Seed data reset to match printed Zebra labels (fly fishing catalog)
+- PO quantities reduced to 5–10, SO quantities reduced to 1–2 for lab testing
+
 ## [v0.9.0] - 2026-04-04
 
 ### Added
@@ -23,9 +64,9 @@ All notable changes to Sentry WMS will be documented in this file.
 - Cycle count: scan bin, enter counts, auto-variance detection
 - Transfer: 3-step scan flow (item, from bin, to bin) with quantity input
 - Brand theme: Accent Red (#8e2715), Copper (#c4722a), Cream (#FCF4E3), monospace typography, 48dp tap targets
-- `GET /api/picking/active-batch` — returns user's incomplete pick batch for resume
-- `GET /api/warehouses/list` — public endpoint (no auth) for login screen warehouse selector
-- `GET /api/auth/me` — returns user info with role-based allowed_functions
+- `GET /api/picking/active-batch` - returns user's incomplete pick batch for resume
+- `GET /api/warehouses/list` - public endpoint (no auth) for login screen warehouse selector
+- `GET /api/auth/me` - returns user info with role-based allowed_functions
 - `app_settings` table for configurable session timeout
 - `allowed_functions` column on users table for per-user function visibility
 - Migration: `db/migrations/009_mobile_app.sql`

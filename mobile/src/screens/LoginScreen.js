@@ -22,7 +22,7 @@ export default function LoginScreen() {
         setWarehouses(list);
         if (list.length === 1) setSelectedWarehouse(list[0].id);
       })
-      .catch(() => setError('Could not load warehouses — check connection'));
+      .catch(() => setError('Could not load warehouses - check connection'));
   }, []);
 
   const selectedName = warehouses.find((w) => w.id === selectedWarehouse);
@@ -44,7 +44,7 @@ export default function LoginScreen() {
       if (err.response?.status === 401) {
         setError('Invalid credentials');
       } else {
-        setError('Connection error — check WiFi');
+        setError('Connection error - check WiFi');
       }
     } finally {
       setLoading(false);
@@ -87,7 +87,7 @@ export default function LoginScreen() {
           >
             <Text style={styles.warehouseLabel}>WAREHOUSE</Text>
             <Text style={styles.warehouseValue}>
-              {selectedName ? `${selectedName.code} — ${selectedName.name}` : 'Select warehouse...'}
+              {selectedName ? `${selectedName.code} - ${selectedName.name}` : 'Select warehouse...'}
             </Text>
           </TouchableOpacity>
 

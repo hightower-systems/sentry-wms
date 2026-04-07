@@ -98,7 +98,7 @@ export default function PackShipScreen({ navigation }) {
         <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
         {phase === 'scan_order' && (
           <ScanInput placeholder="SCAN ORDER" onScan={handleScanOrder} disabled={scanDisabled} />
         )}
@@ -144,7 +144,7 @@ export default function PackShipScreen({ navigation }) {
           <>
             <View style={styles.orderInfo}>
               <Text style={styles.soNumber}>{order.so_number}</Text>
-              <Text style={styles.packedLabel}>PACKED — READY TO SHIP</Text>
+              <Text style={styles.packedLabel}>PACKED - READY TO SHIP</Text>
             </View>
 
             <Text style={styles.fieldLabel}>CARRIER</Text>

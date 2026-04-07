@@ -55,7 +55,7 @@ class TestCreateBatch:
     def test_create_batch_updates_so_status(self, client, auth_headers):
         _create_batch(client, auth_headers)
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
-        assert status == "ALLOCATED"
+        assert status == "PICKING"
 
     def test_create_batch_assigns_totes(self, client, auth_headers):
         resp = _create_batch(client, auth_headers)
@@ -72,10 +72,10 @@ class TestCreateBatch:
         )
         assert resp.status_code == 400
 
-    def test_create_batch_already_allocated_so(self, client, auth_headers):
-        # First batch allocates the SOs
+    def test_create_batch_already_picking_so(self, client, auth_headers):
+        # First batch sets SOs to PICKING
         _create_batch(client, auth_headers)
-        # Second attempt should fail because SOs are now ALLOCATED, not OPEN
+        # Second attempt should fail because SOs are now PICKING, not OPEN
         resp = _create_batch(client, auth_headers)
         assert resp.status_code == 400
 
@@ -274,9 +274,9 @@ class TestCompleteBatch:
         data = resp.get_json()
         assert data["batch_number"] is not None
 
-        # Check SOs moved to PICKING
+        # Check SOs moved to PICKED
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
-        assert status == "PICKING"
+        assert status == "PICKED"
 
     def test_complete_batch_with_pending_tasks(self, client, auth_headers):
         create_resp = _create_batch(client, auth_headers)

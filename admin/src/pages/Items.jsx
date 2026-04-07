@@ -80,6 +80,7 @@ export default function Items() {
     { key: 'sku', label: 'SKU', mono: true },
     { key: 'item_name', label: 'Item Name' },
     { key: 'upc', label: 'UPC', mono: true, render: (r) => r.upc || '-' },
+    { key: 'default_bin_code', label: 'Default Bin', mono: true, render: (r) => r.default_bin_code || '\u2013' },
     { key: 'category', label: 'Category', render: (r) => r.category || '-' },
     { key: 'weight', label: 'Weight', render: (r) => r.weight ? `${r.weight} lb` : '-' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },

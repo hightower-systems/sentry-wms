@@ -1,5 +1,6 @@
 """
-Put-away endpoints: pending items, bin suggestion, and confirm transfer.
+Put-away endpoints: pending items, preferred bin suggestion, confirm transfer,
+and preferred bin management.
 """
 
 from flask import Blueprint, g, jsonify, request
@@ -26,7 +27,7 @@ def pending_putaway(warehouse_id):
                 FROM inventory inv
                 JOIN items i ON i.item_id = inv.item_id
                 JOIN bins b ON b.bin_id = inv.bin_id
-                WHERE b.bin_type = 'INBOUND_STAGING'
+                WHERE b.bin_type IN ('INBOUND_STAGING', 'RECEIVING')
                   AND inv.quantity_on_hand > 0
                   AND inv.warehouse_id = :warehouse_id
                 """
@@ -59,7 +60,6 @@ def pending_putaway(warehouse_id):
 def suggest_bin(item_id):
     db = next(get_db())
     try:
-        # Get item info
         item = db.execute(
             text("SELECT item_id, sku, item_name, default_bin_id FROM items WHERE item_id = :item_id"),
             {"item_id": item_id},
@@ -68,78 +68,62 @@ def suggest_bin(item_id):
         if not item:
             return jsonify({"error": "Item not found"}), 404
 
-        suggested_bin = None
-        alternative_bins = []
-
-        # Check for existing stock in non-staging bins
-        stock_bins = db.execute(
+        # Query preferred_bins table for priority 1
+        preferred = db.execute(
             text(
                 """
-                SELECT inv.bin_id, b.bin_code, b.bin_barcode, z.zone_name,
-                       inv.quantity_on_hand AS current_quantity
-                FROM inventory inv
-                JOIN bins b ON b.bin_id = inv.bin_id
-                JOIN zones z ON z.zone_id = b.zone_id
-                WHERE inv.item_id = :item_id
-                  AND b.bin_type NOT IN ('INBOUND_STAGING', 'OUTBOUND_STAGING')
-                  AND inv.quantity_on_hand > 0
-                ORDER BY inv.quantity_on_hand DESC
+                SELECT pb.preferred_bin_id, pb.bin_id, pb.priority, pb.notes,
+                       b.bin_code, b.bin_barcode, z.zone_name
+                FROM preferred_bins pb
+                JOIN bins b ON b.bin_id = pb.bin_id
+                LEFT JOIN zones z ON z.zone_id = b.zone_id
+                WHERE pb.item_id = :item_id
+                ORDER BY pb.priority ASC
+                LIMIT 1
                 """
             ),
             {"item_id": item_id},
-        ).fetchall()
+        ).fetchone()
 
-        alternative_bins = [
-            {
-                "bin_id": r.bin_id,
-                "bin_code": r.bin_code,
-                "bin_barcode": r.bin_barcode,
-                "zone_name": r.zone_name,
-                "current_quantity": r.current_quantity,
-                "reason": "Existing stock",
+        preferred_bin = None
+        if preferred:
+            preferred_bin = {
+                "bin_id": preferred.bin_id,
+                "bin_code": preferred.bin_code,
+                "bin_barcode": preferred.bin_barcode,
+                "zone_name": preferred.zone_name,
+                "priority": preferred.priority,
             }
-            for r in stock_bins
-        ]
 
-        # Priority 1: default bin
-        if item.default_bin_id:
+        # Fallback: if no preferred bin, check default_bin_id on items table
+        if not preferred_bin and item.default_bin_id:
             default = db.execute(
                 text(
                     """
                     SELECT b.bin_id, b.bin_code, b.bin_barcode, z.zone_name
                     FROM bins b
-                    JOIN zones z ON z.zone_id = b.zone_id
+                    LEFT JOIN zones z ON z.zone_id = b.zone_id
                     WHERE b.bin_id = :bin_id
                     """
                 ),
                 {"bin_id": item.default_bin_id},
             ).fetchone()
-
             if default:
-                suggested_bin = {
+                preferred_bin = {
                     "bin_id": default.bin_id,
                     "bin_code": default.bin_code,
                     "bin_barcode": default.bin_barcode,
                     "zone_name": default.zone_name,
-                    "reason": "Default bin assignment",
+                    "priority": 1,
                 }
-        # Priority 2: bin with most existing stock
-        elif stock_bins:
-            top = stock_bins[0]
-            suggested_bin = {
-                "bin_id": top.bin_id,
-                "bin_code": top.bin_code,
-                "bin_barcode": top.bin_barcode,
-                "zone_name": top.zone_name,
-                "reason": "Existing stock - consolidate",
-            }
 
         return jsonify({
             "item_id": item.item_id,
             "sku": item.sku,
             "item_name": item.item_name,
-            "suggested_bin": suggested_bin,
-            "alternative_bins": alternative_bins,
+            "preferred_bin": preferred_bin,
+            # Keep backward-compat key
+            "suggested_bin": preferred_bin,
         })
     finally:
         db.close()
@@ -169,7 +153,6 @@ def confirm_putaway():
 
     db = next(get_db())
     try:
-        # Validate item exists
         item = db.execute(
             text("SELECT item_id, sku FROM items WHERE item_id = :item_id"),
             {"item_id": item_id},
@@ -177,7 +160,6 @@ def confirm_putaway():
         if not item:
             return jsonify({"error": "Item not found"}), 404
 
-        # Validate bins exist
         from_bin = db.execute(
             text("SELECT bin_id, bin_code, warehouse_id FROM bins WHERE bin_id = :bin_id"),
             {"bin_id": from_bin_id},
@@ -192,7 +174,6 @@ def confirm_putaway():
         if not to_bin:
             return jsonify({"error": "Destination bin not found"}), 404
 
-        # Validate source inventory
         source_inv = db.execute(
             text(
                 """
@@ -212,7 +193,7 @@ def confirm_putaway():
         username = g.current_user["username"]
         warehouse_id = from_bin.warehouse_id
 
-        # 1. Decrement source inventory
+        # 1. Decrement source
         new_qty = source_inv.quantity_on_hand - quantity
         if new_qty == 0:
             db.execute(
@@ -225,7 +206,7 @@ def confirm_putaway():
                 {"qty": new_qty, "inv_id": source_inv.inventory_id},
             )
 
-        # 2. Create or update destination inventory
+        # 2. Upsert destination
         dest_inv = db.execute(
             text(
                 """
@@ -254,7 +235,7 @@ def confirm_putaway():
                 {"item_id": item_id, "bin_id": to_bin_id, "warehouse_id": warehouse_id, "qty": quantity, "lot_number": lot_number},
             )
 
-        # 3. Create bin_transfers record
+        # 3. Transfer record
         result = db.execute(
             text(
                 """
@@ -277,7 +258,7 @@ def confirm_putaway():
         )
         transfer_id = result.fetchone()[0]
 
-        # 4. Audit log
+        # 4. Audit
         write_audit_log(
             db,
             action_type="PUTAWAY",
@@ -293,7 +274,6 @@ def confirm_putaway():
             },
         )
 
-        # 5. Commit
         db.commit()
 
         return jsonify({
@@ -303,6 +283,125 @@ def confirm_putaway():
             "from_bin": from_bin.bin_code,
             "to_bin": to_bin.bin_code,
             "quantity": quantity,
+        })
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@putaway_bp.route("/update-preferred", methods=["POST"])
+@require_auth
+def update_preferred():
+    """Create or update a preferred bin for an item."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    item_id = data.get("item_id")
+    bin_id = data.get("bin_id")
+    set_as_primary = data.get("set_as_primary", True)
+
+    if not item_id or not bin_id:
+        return jsonify({"error": "item_id and bin_id are required"}), 400
+
+    db = next(get_db())
+    try:
+        item = db.execute(
+            text("SELECT item_id, sku FROM items WHERE item_id = :item_id"),
+            {"item_id": item_id},
+        ).fetchone()
+        if not item:
+            return jsonify({"error": "Item not found"}), 404
+
+        bin_row = db.execute(
+            text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bin_id"),
+            {"bin_id": bin_id},
+        ).fetchone()
+        if not bin_row:
+            return jsonify({"error": "Bin not found"}), 404
+
+        username = g.current_user["username"]
+
+        # Get current priority-1 bin for audit log
+        old_preferred = db.execute(
+            text(
+                """
+                SELECT pb.bin_id, b.bin_code
+                FROM preferred_bins pb
+                JOIN bins b ON b.bin_id = pb.bin_id
+                WHERE pb.item_id = :item_id AND pb.priority = 1
+                """
+            ),
+            {"item_id": item_id},
+        ).fetchone()
+
+        old_bin_code = old_preferred.bin_code if old_preferred else None
+
+        if set_as_primary:
+            # Bump all existing priorities down by 1
+            db.execute(
+                text("UPDATE preferred_bins SET priority = priority + 1, updated_at = NOW() WHERE item_id = :item_id"),
+                {"item_id": item_id},
+            )
+
+            # Upsert the new bin as priority 1
+            existing = db.execute(
+                text("SELECT preferred_bin_id FROM preferred_bins WHERE item_id = :item_id AND bin_id = :bin_id"),
+                {"item_id": item_id, "bin_id": bin_id},
+            ).fetchone()
+
+            if existing:
+                db.execute(
+                    text("UPDATE preferred_bins SET priority = 1, updated_at = NOW() WHERE preferred_bin_id = :pbid"),
+                    {"pbid": existing.preferred_bin_id},
+                )
+            else:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO preferred_bins (item_id, bin_id, priority, notes)
+                        VALUES (:item_id, :bin_id, 1, 'Set via put-away')
+                        """
+                    ),
+                    {"item_id": item_id, "bin_id": bin_id},
+                )
+
+            # Update items.default_bin_id for backward compat
+            db.execute(
+                text("UPDATE items SET default_bin_id = :bin_id, updated_at = NOW() WHERE item_id = :item_id"),
+                {"bin_id": bin_id, "item_id": item_id},
+            )
+
+        # Audit log
+        warehouse_id = db.execute(
+            text("SELECT warehouse_id FROM bins WHERE bin_id = :bin_id"),
+            {"bin_id": bin_id},
+        ).scalar()
+
+        write_audit_log(
+            db,
+            action_type="PREFERRED_BIN_UPDATE",
+            entity_type="ITEM",
+            entity_id=item_id,
+            user_id=username,
+            warehouse_id=warehouse_id,
+            details={
+                "sku": item.sku,
+                "old_bin": old_bin_code,
+                "new_bin": bin_row.bin_code,
+                "set_as_primary": set_as_primary,
+            },
+        )
+
+        db.commit()
+
+        return jsonify({
+            "message": f"Preferred bin for {item.sku} {'set to' if not old_bin_code else 'changed to'} {bin_row.bin_code}",
+            "item_id": item_id,
+            "bin_id": bin_id,
+            "bin_code": bin_row.bin_code,
         })
     except Exception:
         db.rollback()

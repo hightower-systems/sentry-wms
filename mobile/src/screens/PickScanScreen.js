@@ -32,8 +32,8 @@ export default function PickScanScreen({ navigation }) {
           so_id: resp.data.so_id,
           so_number: resp.data.so_number,
           so_barcode: barcode,
-          item_count: resp.data.item_count || 0,
-          unit_count: resp.data.unit_count || 0,
+          item_count: resp.data.line_count || resp.data.item_count || 0,
+          unit_count: resp.data.total_units || resp.data.unit_count || 0,
         }]);
       }
     } catch (err) {

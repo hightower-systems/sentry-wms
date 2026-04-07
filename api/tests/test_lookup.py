@@ -17,9 +17,12 @@ class TestItemLookup:
         loc = data["locations"][0]
         assert "bin_id" in loc
         assert "bin_code" in loc
+        assert "bin_type" in loc
         assert "quantity_on_hand" in loc
         assert "quantity_available" in loc
+        assert "lot_number" in loc
         assert loc["quantity_on_hand"] == 25, "WIDGET-BLU should have 25 in bin A-01-01"
+        assert loc["bin_type"] == "STANDARD"
 
     def test_lookup_requires_auth(self, client):
         resp = client.get("/api/lookup/item/100000000001")

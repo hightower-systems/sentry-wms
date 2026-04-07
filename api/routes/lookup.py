@@ -46,12 +46,13 @@ def lookup_item(barcode):
         location_rows = db.execute(
             text(
                 """
-                SELECT i.bin_id, b.bin_code, z.zone_name,
+                SELECT i.bin_id, b.bin_code, b.bin_type, z.zone_name,
                        i.quantity_on_hand, i.quantity_allocated,
-                       (i.quantity_on_hand - i.quantity_allocated) AS quantity_available
+                       (i.quantity_on_hand - i.quantity_allocated) AS quantity_available,
+                       i.lot_number
                 FROM inventory i
                 JOIN bins b ON b.bin_id = i.bin_id
-                JOIN zones z ON z.zone_id = b.zone_id
+                LEFT JOIN zones z ON z.zone_id = b.zone_id
                 WHERE i.item_id = :item_id
                 """
             ),
@@ -62,10 +63,12 @@ def lookup_item(barcode):
             {
                 "bin_id": r.bin_id,
                 "bin_code": r.bin_code,
+                "bin_type": r.bin_type,
                 "zone_name": r.zone_name,
                 "quantity_on_hand": r.quantity_on_hand,
                 "quantity_allocated": r.quantity_allocated,
                 "quantity_available": r.quantity_available,
+                "lot_number": r.lot_number,
             }
             for r in location_rows
         ]
