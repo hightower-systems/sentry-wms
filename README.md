@@ -1,3 +1,17 @@
+<div align="center">
+  <img src="docs/assets/sentry-banner.png" alt="Sentry WMS" width="100%">
+  
+  <p><em>Open-source warehouse management system built for barcode scanners</em></p>
+
+  ![Version](https://img.shields.io/badge/version-0.9.2-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-261%20passing-34a853)
+  ![License](https://img.shields.io/badge/license-MIT-blue)
+
+  <img src="docs/assets/sentry-preview.png" alt="Sentry WMS Screenshots" width="100%">
+</div>
+
+---
+
 # Sentry WMS
 
 **Open-source warehouse management system built for e-commerce.**
