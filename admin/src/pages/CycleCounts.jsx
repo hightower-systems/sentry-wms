@@ -21,7 +21,7 @@ export default function CycleCounts() {
     const res = await api.get('/admin/cycle-counts');
     if (res?.ok) {
       const data = await res.json();
-      setCounts(data.counts || []);
+      setCounts(data.cycle_counts || []);
     }
   }
 

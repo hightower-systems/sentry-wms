@@ -14,7 +14,8 @@ const FUNCTIONS = [
   { key: 'receive', label: 'RECEIVE', screen: 'Receive', accent: 'red' },
   { key: 'putaway', label: 'PUT-AWAY', screen: 'PutAway', accent: 'red' },
   { key: 'transfer', label: 'TRANSFER', screen: 'Transfer', accent: 'copper' },
-  { key: 'pack_ship', label: 'PACK / SHIP', screen: 'PackShip', accent: 'copper' },
+  { key: 'pack', label: 'PACK', screen: 'Pack', accent: 'copper' },
+  { key: 'ship', label: 'SHIP', screen: 'Ship', accent: 'copper' },
   { key: 'count', label: 'COUNT', screen: 'Count', accent: 'gray' },
 ];
 
@@ -28,6 +29,7 @@ export default function HomeScreen({ navigation }) {
   const [warehouseCode, setWarehouseCode] = useState('');
   const [warehouseName, setWarehouseName] = useState('');
   const [showWarehousePicker, setShowWarehousePicker] = useState(false);
+  const [requirePacking, setRequirePacking] = useState(true);
   const [error, setError] = useState('');
   const [scanDisabled, setScanDisabled] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -44,12 +46,15 @@ export default function HomeScreen({ navigation }) {
       ]);
 
       setAllowedFunctions(meResp.data.allowed_functions || []);
+      setRequirePacking(meResp.data.require_packing !== false);
 
       const stats = dashResp.data;
       setBadges({
-        receive: stats.to_receive || 0,
-        pick: stats.to_pick || 0,
-        pack_ship: stats.to_pack || 0,
+        receive: stats.pending_receipts || 0,
+        putaway: stats.items_awaiting_putaway || 0,
+        pick: stats.orders_ready_to_pick || 0,
+        pack: stats.ready_to_pack || 0,
+        ship: stats.ready_to_ship || 0,
         count: 0,
       });
 
@@ -73,6 +78,7 @@ export default function HomeScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
+      setBatchDismissed(false);
       loadData();
     }, [loadData])
   );
@@ -99,7 +105,7 @@ export default function HomeScreen({ navigation }) {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (binResp.data && binResp.data.bin) {
         const bin = binResp.data.bin;
-        const contents = (binResp.data.contents || [])
+        const contents = (binResp.data.items || [])
           .map((c) => `${c.sku}: ${c.quantity_on_hand}`)
           .join('\n');
         Alert.alert(
@@ -160,7 +166,16 @@ export default function HomeScreen({ navigation }) {
           <ActiveBatchBanner
             batch={activeBatch}
             onResume={() => navigation.navigate('PickWalk', { batch_id: activeBatch.batch_id })}
-            onDismiss={() => setBatchDismissed(true)}
+            onDismiss={() => {
+              Alert.alert(
+                'Dismiss Batch',
+                'This batch will reappear next time you return to this screen. Resume it later from here.',
+                [
+                  { text: 'Keep', style: 'cancel' },
+                  { text: 'Dismiss', onPress: () => setBatchDismissed(true) },
+                ]
+              );
+            }}
           />
         )}
 

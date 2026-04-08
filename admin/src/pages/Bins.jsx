@@ -4,7 +4,7 @@ import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
-const BIN_TYPES = ['STORAGE', 'STAGING', 'RECEIVING', 'SHIPPING', 'OUTBOUND_STAGING', 'QUALITY', 'DAMAGE'];
+const BIN_TYPES = ['Staging', 'PickableStaging', 'Pickable'];
 
 export default function Bins() {
   const [bins, setBins] = useState([]);

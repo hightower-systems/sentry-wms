@@ -100,13 +100,9 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                     WHERE inv.item_id = :item_id
                       AND inv.warehouse_id = :wh
                       AND (inv.quantity_on_hand - inv.quantity_allocated) > 0
-                      AND b.bin_type NOT IN ('INBOUND_STAGING', 'OUTBOUND_STAGING')
+                      AND b.bin_type IN ('Pickable', 'PickableStaging')
                     ORDER BY
-                      CASE b.bin_type
-                        WHEN 'PICKING' THEN 1
-                        WHEN 'STANDARD' THEN 2
-                        ELSE 3
-                      END,
+                      b.pick_sequence ASC,
                       inv.updated_at ASC
                     """
                 ),
@@ -841,9 +837,8 @@ def wave_create(db, so_ids, warehouse_id, username):
                 WHERE inv.item_id = :item_id
                   AND inv.warehouse_id = :wh
                   AND (inv.quantity_on_hand - inv.quantity_allocated) > 0
-                  AND b.bin_type NOT IN ('INBOUND_STAGING', 'OUTBOUND_STAGING')
+                  AND b.bin_type IN ('Pickable', 'PickableStaging')
                 ORDER BY
-                  CASE b.bin_type WHEN 'PICKING' THEN 1 WHEN 'STANDARD' THEN 2 ELSE 3 END,
                   b.pick_sequence ASC,
                   inv.updated_at ASC
                 """

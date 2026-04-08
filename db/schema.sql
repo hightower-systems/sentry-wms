@@ -34,7 +34,7 @@ CREATE TABLE bins (
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     bin_code VARCHAR(50) NOT NULL,         -- e.g. 'A-01-03-02' (Aisle-Row-Level-Position)
     bin_barcode VARCHAR(100) NOT NULL,     -- scannable barcode value
-    bin_type VARCHAR(50) NOT NULL,         -- 'STANDARD', 'INBOUND_STAGING', 'OUTBOUND_STAGING', 'PICKING', 'BULK'
+    bin_type VARCHAR(50) NOT NULL DEFAULT 'Pickable',  -- 'Staging', 'PickableStaging', 'Pickable'
     aisle VARCHAR(10),
     row_num VARCHAR(10),
     level_num VARCHAR(10),
@@ -43,6 +43,7 @@ CREATE TABLE bins (
     putaway_sequence INT NOT NULL DEFAULT 0,
     max_weight_lbs DECIMAL(10,2),
     max_volume_cuft DECIMAL(10,2),
+    description VARCHAR(200),
     is_active BOOLEAN DEFAULT TRUE,
     UNIQUE(warehouse_id, bin_code)
 );
@@ -173,6 +174,8 @@ CREATE TABLE sales_orders (
     picked_at TIMESTAMPTZ,
     packed_at TIMESTAMPTZ,
     shipped_at TIMESTAMPTZ,
+    carrier VARCHAR(100),
+    tracking_number VARCHAR(255),
     created_by VARCHAR(100)
 );
 

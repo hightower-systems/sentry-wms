@@ -1,23 +1,22 @@
-import psycopg2
-import os
 import jwt
+import pytest
 from datetime import datetime, timezone, timedelta
+
+from db_test_context import get_raw_connection
 
 
 def _query_val(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row[0] if row else None
 
 
 def _picker_headers(client):
     """Create a PICKER user and return auth headers for role enforcement tests."""
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     # bcrypt hash of 'picker123'
     import bcrypt
@@ -27,7 +26,6 @@ def _picker_headers(client):
         (pw_hash,),
     )
     cur.close()
-    conn.close()
 
     resp = client.post("/api/auth/login", json={"username": "picker1", "password": "picker123"})
     token = resp.get_json()["token"]
@@ -49,7 +47,7 @@ class TestWarehouses:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["warehouse"]["warehouse_code"] == "APT-LAB"
-        assert len(data["zones"]) == 5
+        assert len(data["zones"]) == 6
 
     def test_get_warehouse_not_found(self, client, auth_headers):
         resp = client.get("/api/admin/warehouses/9999", headers=auth_headers)
@@ -83,7 +81,7 @@ class TestZones:
     def test_list_zones(self, client, auth_headers):
         resp = client.get("/api/admin/zones?warehouse_id=1", headers=auth_headers)
         assert resp.status_code == 200
-        assert len(resp.get_json()["zones"]) == 5
+        assert len(resp.get_json()["zones"]) == 6
 
     def test_create_zone(self, client, auth_headers):
         resp = client.post("/api/admin/zones", json={
@@ -117,17 +115,17 @@ class TestBins:
         resp = client.get("/api/admin/bins?warehouse_id=1", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert len(data["bins"]) == 9
+        assert len(data["bins"]) == 16
         assert "zone_name" in data["bins"][0]
 
     def test_list_bins_filter_zone(self, client, auth_headers):
-        # Zone 2 is STOR with 6 bins
+        # Zone 2 is PICK with 9 bins
         resp = client.get("/api/admin/bins?zone_id=2", headers=auth_headers)
         assert resp.status_code == 200
-        assert len(resp.get_json()["bins"]) == 6
+        assert len(resp.get_json()["bins"]) == 9
 
     def test_get_bin_with_inventory(self, client, auth_headers):
-        resp = client.get("/api/admin/bins/2", headers=auth_headers)
+        resp = client.get("/api/admin/bins/3", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["bin"]["bin_code"] == "A-01-01"
@@ -136,7 +134,7 @@ class TestBins:
     def test_create_bin(self, client, auth_headers):
         resp = client.post("/api/admin/bins", json={
             "zone_id": 2, "warehouse_id": 1, "bin_code": "C-01-01", "bin_barcode": "BIN-C-01-01",
-            "bin_type": "STANDARD", "aisle": "C", "row_num": "01", "level_num": "01",
+            "bin_type": "Pickable", "aisle": "C", "row_num": "01", "level_num": "01",
             "pick_sequence": 1000,
         }, headers=auth_headers)
         assert resp.status_code == 201
@@ -149,7 +147,7 @@ class TestBins:
         assert resp.status_code == 400
 
     def test_update_bin_pick_sequence(self, client, auth_headers):
-        resp = client.put("/api/admin/bins/2", json={"pick_sequence": 999}, headers=auth_headers)
+        resp = client.put("/api/admin/bins/3", json={"pick_sequence": 999}, headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["pick_sequence"] == 999
 
@@ -162,21 +160,21 @@ class TestItems:
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["items"]) == 3
-        assert data["total"] == 10
-        assert data["pages"] == 4
+        assert data["total"] == 20
+        assert data["pages"] == 7
         assert data["page"] == 1
 
     def test_list_items_filter_category(self, client, auth_headers):
-        resp = client.get("/api/admin/items?category=Widgets", headers=auth_headers)
+        resp = client.get("/api/admin/items?category=Flies", headers=auth_headers)
         data = resp.get_json()
-        assert data["total"] == 3
-        assert all(i["category"] == "Widgets" for i in data["items"])
+        assert data["total"] == 9
+        assert all(i["category"] == "Flies" for i in data["items"])
 
     def test_get_item_with_inventory(self, client, auth_headers):
         resp = client.get("/api/admin/items/1", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["item"]["sku"] == "WIDGET-BLU"
+        assert data["item"]["sku"] == "TST-001"
         assert len(data["inventory"]) >= 1
 
     def test_get_item_not_found(self, client, auth_headers):
@@ -192,7 +190,7 @@ class TestItems:
 
     def test_create_item_duplicate_sku(self, client, auth_headers):
         resp = client.post("/api/admin/items", json={
-            "sku": "WIDGET-BLU", "item_name": "Dupe"
+            "sku": "TST-001", "item_name": "Dupe"
         }, headers=auth_headers)
         assert resp.status_code == 400
         assert "Duplicate SKU" in resp.get_json()["error"]
@@ -247,12 +245,12 @@ class TestPurchaseOrders:
         resp = client.get("/api/admin/purchase-orders/1", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["purchase_order"]["po_number"] == "PO-001"
-        assert len(data["lines"]) == 3
+        assert data["purchase_order"]["po_number"] == "PO-2026-001"
+        assert len(data["lines"]) == 10
 
     def test_create_purchase_order(self, client, auth_headers):
         resp = client.post("/api/admin/purchase-orders", json={
-            "po_number": "PO-002", "po_barcode": "PO-002", "vendor_name": "Acme",
+            "po_number": "PO-2026-006", "po_barcode": "PO-2026-006", "vendor_name": "Acme",
             "warehouse_id": 1, "lines": [
                 {"item_id": 1, "quantity_ordered": 100, "unit_cost": 5.00, "line_number": 1},
                 {"item_id": 2, "quantity_ordered": 50, "line_number": 2},
@@ -260,12 +258,12 @@ class TestPurchaseOrders:
         }, headers=auth_headers)
         assert resp.status_code == 200  # returns via get_purchase_order
         data = resp.get_json()
-        assert data["purchase_order"]["po_number"] == "PO-002"
+        assert data["purchase_order"]["po_number"] == "PO-2026-006"
         assert len(data["lines"]) == 2
 
     def test_create_purchase_order_duplicate(self, client, auth_headers):
         resp = client.post("/api/admin/purchase-orders", json={
-            "po_number": "PO-001", "warehouse_id": 1, "lines": [{"item_id": 1, "quantity_ordered": 10, "line_number": 1}]
+            "po_number": "PO-2026-001", "warehouse_id": 1, "lines": [{"item_id": 1, "quantity_ordered": 10, "line_number": 1}]
         }, headers=auth_headers)
         assert resp.status_code == 400
 
@@ -293,29 +291,37 @@ class TestSalesOrders:
         resp = client.get("/api/admin/sales-orders", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["total"] >= 2
+        assert data["total"] >= 20
+
+    def test_list_sales_orders_includes_shipping_fields(self, client, auth_headers):
+        resp = client.get("/api/admin/sales-orders", headers=auth_headers)
+        assert resp.status_code == 200
+        so = resp.get_json()["sales_orders"][0]
+        assert "carrier" in so
+        assert "tracking_number" in so
+        assert "shipped_at" in so
 
     def test_get_sales_order(self, client, auth_headers):
         resp = client.get("/api/admin/sales-orders/1", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["sales_order"]["so_number"] == "SO-001"
-        assert len(data["lines"]) == 2
+        assert data["sales_order"]["so_number"] == "SO-2026-001"
+        assert len(data["lines"]) == 1
 
     def test_create_sales_order(self, client, auth_headers):
         resp = client.post("/api/admin/sales-orders", json={
-            "so_number": "SO-003", "customer_name": "New Customer", "warehouse_id": 1,
+            "so_number": "SO-2026-021", "customer_name": "New Customer", "warehouse_id": 1,
             "ship_method": "GROUND", "lines": [
                 {"item_id": 1, "quantity_ordered": 5, "line_number": 1},
             ]
         }, headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["sales_order"]["so_number"] == "SO-003"
+        assert data["sales_order"]["so_number"] == "SO-2026-021"
 
     def test_create_sales_order_duplicate(self, client, auth_headers):
         resp = client.post("/api/admin/sales-orders", json={
-            "so_number": "SO-001", "warehouse_id": 1, "lines": [{"item_id": 1, "quantity_ordered": 1, "line_number": 1}]
+            "so_number": "SO-2026-001", "warehouse_id": 1, "lines": [{"item_id": 1, "quantity_ordered": 1, "line_number": 1}]
         }, headers=auth_headers)
         assert resp.status_code == 400
 
@@ -332,8 +338,8 @@ class TestSalesOrders:
         assert status == "CANCELLED"
 
     def test_cancel_picking_releases_inventory(self, client, auth_headers):
-        # Create batch sets SO-001 to PICKING
-        client.post("/api/picking/create-batch", json={"so_identifiers": ["SO-001"], "warehouse_id": 1}, headers=auth_headers)
+        # Create batch sets SO-2026-001 to PICKING
+        client.post("/api/picking/create-batch", json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1}, headers=auth_headers)
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
         assert status == "PICKING"
 
@@ -341,18 +347,16 @@ class TestSalesOrders:
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         assert resp.status_code == 200
 
-        # Inventory allocated should be back to 0 for item 1 bin 2
-        allocated = _query_val("SELECT quantity_allocated FROM inventory WHERE item_id = 1 AND bin_id = 2")
+        # Inventory allocated should be back to 0 for item 1 bin 3
+        allocated = _query_val("SELECT quantity_allocated FROM inventory WHERE item_id = 1 AND bin_id = 3")
         assert allocated == 0
 
     def test_cancel_shipped_fails(self, client, auth_headers):
         # Set SO to SHIPPED status directly
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
-        conn.autocommit = True
+        conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute("UPDATE sales_orders SET status = 'SHIPPED' WHERE so_id = 1")
         cur.close()
-        conn.close()
 
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         assert resp.status_code == 400
@@ -435,7 +439,7 @@ class TestAuditLog:
     def test_list_audit_log(self, client, auth_headers):
         # Generate an audit entry by doing a transfer
         client.post("/api/transfers/move", json={
-            "item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 1
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1
         }, headers=auth_headers)
 
         resp = client.get("/api/admin/audit-log", headers=auth_headers)
@@ -446,7 +450,7 @@ class TestAuditLog:
 
     def test_audit_log_filter_action_type(self, client, auth_headers):
         client.post("/api/transfers/move", json={
-            "item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 1
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1
         }, headers=auth_headers)
 
         resp = client.get("/api/admin/audit-log?action_type=TRANSFER", headers=auth_headers)
@@ -461,7 +465,7 @@ class TestInventoryOverview:
         resp = client.get("/api/admin/inventory?warehouse_id=1", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["total"] == 10
+        assert data["total"] == 20
         assert "sku" in data["inventory"][0]
         assert "bin_code" in data["inventory"][0]
         assert "quantity_available" in data["inventory"][0]
@@ -470,14 +474,14 @@ class TestInventoryOverview:
         resp = client.get("/api/admin/inventory?item_id=1", headers=auth_headers)
         data = resp.get_json()
         assert data["total"] == 1
-        assert data["inventory"][0]["sku"] == "WIDGET-BLU"
+        assert data["inventory"][0]["sku"] == "TST-001"
 
     def test_inventory_pagination(self, client, auth_headers):
         resp = client.get("/api/admin/inventory?per_page=3&page=1", headers=auth_headers)
         data = resp.get_json()
         assert len(data["inventory"]) == 3
-        assert data["total"] == 10
-        assert data["pages"] == 4
+        assert data["total"] == 20
+        assert data["pages"] == 7
 
 
 # ── CSV Import ────────────────────────────────────────────────────────────────
@@ -499,7 +503,7 @@ class TestCsvImport:
     def test_import_items_with_errors(self, client, auth_headers):
         resp = client.post("/api/admin/import/items", json={
             "records": [
-                {"sku": "WIDGET-BLU", "item_name": "Dupe"},  # duplicate SKU
+                {"sku": "TST-001", "item_name": "Dupe"},  # duplicate SKU
                 {"sku": "IMP-OK", "item_name": "Good Item"},
                 {"item_name": "No SKU"},  # missing sku
             ]
@@ -513,7 +517,7 @@ class TestCsvImport:
     def test_import_bins_success(self, client, auth_headers):
         resp = client.post("/api/admin/import/bins", json={
             "records": [
-                {"bin_code": "D-01-01", "bin_barcode": "BIN-D-01-01", "bin_type": "STANDARD",
+                {"bin_code": "D-01-01", "bin_barcode": "BIN-D-01-01", "bin_type": "Pickable",
                  "zone_id": 2, "warehouse_id": 1, "pick_sequence": 1100},
             ]
         }, headers=auth_headers)
@@ -534,15 +538,94 @@ class TestDashboard:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["open_pos"] >= 1
-        assert data["open_sos"] >= 2
-        assert data["total_skus"] == 10
-        assert data["total_bins"] == 9
+        assert data["open_sos"] >= 20
+        assert data["total_skus"] == 20
+        assert data["total_bins"] == 16
         assert isinstance(data["recent_activity"], list)
+        # Toggle-aware fields (packing ON by default)
+        assert "require_packing" in data
+        assert data["require_packing"] is True
+        assert "ready_to_pack" in data
+        assert "orders_packed" in data
+        assert "ready_to_ship" in data
 
     def test_dashboard_without_warehouse_filter(self, client, auth_headers):
         resp = client.get("/api/admin/dashboard", headers=auth_headers)
         assert resp.status_code == 200
         assert "total_skus" in resp.get_json()
+
+    def test_dashboard_packed_count(self, client, auth_headers):
+        """orders_packed should reflect PACKED orders."""
+        resp = client.get("/api/admin/dashboard?warehouse_id=1", headers=auth_headers)
+        initial_packed = resp.get_json()["orders_packed"]
+        assert initial_packed == 0
+
+        # Advance SO-2026-001 through picking
+        create_resp = client.post(
+            "/api/picking/create-batch",
+            json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1},
+            headers=auth_headers,
+        )
+        batch_id = create_resp.get_json()["batch_id"]
+        while True:
+            next_resp = client.get(f"/api/picking/batch/{batch_id}/next", headers=auth_headers)
+            data = next_resp.get_json()
+            if "message" in data:
+                break
+            client.post("/api/picking/confirm", json={
+                "pick_task_id": data["pick_task_id"],
+                "scanned_barcode": data["upc"],
+                "quantity_picked": data["quantity_to_pick"],
+            }, headers=auth_headers)
+        client.post("/api/picking/complete-batch", json={"batch_id": batch_id}, headers=auth_headers)
+
+        # Pack all items
+        order_resp = client.get("/api/packing/order/SO-2026-001", headers=auth_headers)
+        for line in order_resp.get_json()["lines"]:
+            remaining = line["quantity_picked"] - line["quantity_packed"]
+            if remaining > 0:
+                client.post("/api/packing/verify", json={
+                    "so_id": 1, "scanned_barcode": line["upc"], "quantity": remaining,
+                }, headers=auth_headers)
+        client.post("/api/packing/complete", json={"so_id": 1}, headers=auth_headers)
+
+        resp = client.get("/api/admin/dashboard?warehouse_id=1", headers=auth_headers)
+        assert resp.get_json()["orders_packed"] == 1
+
+    def test_dashboard_packing_off_hides_pack_fields(self, client, auth_headers):
+        """When packing is OFF, dashboard omits ready_to_pack and orders_packed."""
+        from db_test_context import get_raw_connection
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('require_packing_before_shipping', 'false') "
+            "ON CONFLICT (key) DO UPDATE SET value = 'false'"
+        )
+        cur.close()
+
+        resp = client.get("/api/admin/dashboard?warehouse_id=1", headers=auth_headers)
+        data = resp.get_json()
+        assert data["require_packing"] is False
+        assert "ready_to_pack" not in data
+        assert "orders_packed" not in data
+        assert "ready_to_ship" in data
+
+    def test_dashboard_packing_off_ready_to_ship_includes_picked(self, client, auth_headers):
+        """When packing is OFF, ready_to_ship includes PICKED orders."""
+        from test_shipping import _advance_so_to_picked
+        from db_test_context import get_raw_connection
+        _advance_so_to_picked(client, auth_headers, "SO-2026-001")
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('require_packing_before_shipping', 'false') "
+            "ON CONFLICT (key) DO UPDATE SET value = 'false'"
+        )
+        cur.close()
+
+        resp = client.get("/api/admin/dashboard?warehouse_id=1", headers=auth_headers)
+        assert resp.get_json()["ready_to_ship"] >= 1
 
 
 # ── Role Enforcement ──────────────────────────────────────────────────────────
@@ -575,23 +658,21 @@ class TestItemsDefaultBin:
         resp = client.get("/api/admin/items", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        # Item 1 (WIDGET-BLU) has default_bin_id = 2 (A-01-01)
-        item1 = next(i for i in data["items"] if i["sku"] == "WIDGET-BLU")
+        # Item 1 (TST-001) has default_bin_id = 3 (A-01-01)
+        item1 = next(i for i in data["items"] if i["sku"] == "TST-001")
         assert "default_bin_code" in item1
         assert item1["default_bin_code"] == "A-01-01"
 
     def test_items_preferred_bin_overrides_default(self, client, auth_headers):
-        # Insert preferred bin pointing to bin 3 (A-01-02)
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
-        conn.autocommit = True
+        # Insert preferred bin pointing to bin 4 (A-01-02)
+        conn = get_raw_connection()
         cur = conn.cursor()
-        cur.execute("INSERT INTO preferred_bins (item_id, bin_id, priority) VALUES (1, 3, 1)")
+        cur.execute("INSERT INTO preferred_bins (item_id, bin_id, priority) VALUES (1, 4, 1)")
         cur.close()
-        conn.close()
 
         resp = client.get("/api/admin/items", headers=auth_headers)
         data = resp.get_json()
-        item1 = next(i for i in data["items"] if i["sku"] == "WIDGET-BLU")
+        item1 = next(i for i in data["items"] if i["sku"] == "TST-001")
         assert item1["default_bin_code"] == "A-01-02"
 
 
@@ -615,6 +696,35 @@ class TestSettings:
         settings = {s["key"]: s["value"] for s in resp.get_json()["settings"]}
         assert settings.get("count_show_expected") == "false"
 
+    def test_update_packing_toggle(self, client, auth_headers):
+        resp = client.put("/api/admin/settings", json={
+            "settings": {"require_packing_before_shipping": "false"}
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+
+        resp = client.get("/api/admin/settings/require_packing_before_shipping", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["value"] == "false"
+
+    def test_toggle_off_rejected_when_packed_orders_exist(self, client, auth_headers):
+        """Cannot disable packing when PACKED orders exist."""
+        # Advance SO-2026-001 to PACKED
+        from test_shipping import _advance_so_to_packed
+        _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+
+        resp = client.put("/api/admin/settings", json={
+            "settings": {"require_packing_before_shipping": "false"}
+        }, headers=auth_headers)
+        assert resp.status_code == 400
+        assert "PACKED" in resp.get_json()["error"]
+
+    def test_toggle_on_always_allowed(self, client, auth_headers):
+        """Enabling packing is always allowed."""
+        resp = client.put("/api/admin/settings", json={
+            "settings": {"require_packing_before_shipping": "true"}
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+
     def test_update_settings_missing_body(self, client, auth_headers):
         resp = client.put("/api/admin/settings", json={}, headers=auth_headers)
         assert resp.status_code == 400
@@ -633,7 +743,7 @@ class TestCycleCounts:
     def test_list_cycle_counts_after_creation(self, client, auth_headers):
         # Create a cycle count via the inventory endpoint
         client.post("/api/inventory/cycle-count/create", json={
-            "bin_ids": [2], "warehouse_id": 1,
+            "bin_ids": [3], "warehouse_id": 1,
         }, headers=auth_headers)
 
         resp = client.get("/api/admin/cycle-counts", headers=auth_headers)
@@ -656,13 +766,13 @@ class TestPreferredBinsCRUD:
 
     def test_create_preferred_bin(self, client, auth_headers):
         resp = client.post("/api/admin/preferred-bins", json={
-            "item_id": 1, "bin_id": 2, "priority": 1,
+            "item_id": 1, "bin_id": 3, "priority": 1,
         }, headers=auth_headers)
         assert resp.status_code == 201 or resp.status_code == 200
 
     def test_list_preferred_bins_after_create(self, client, auth_headers):
         client.post("/api/admin/preferred-bins", json={
-            "item_id": 1, "bin_id": 2, "priority": 1,
+            "item_id": 1, "bin_id": 3, "priority": 1,
         }, headers=auth_headers)
 
         resp = client.get("/api/admin/preferred-bins", headers=auth_headers)
@@ -670,21 +780,21 @@ class TestPreferredBinsCRUD:
         assert len(data["preferred_bins"]) >= 1
         pb = data["preferred_bins"][0]
         assert pb["item_id"] == 1
-        assert pb["bin_id"] == 2
+        assert pb["bin_id"] == 3
         assert pb["priority"] == 1
         assert "sku" in pb
         assert "bin_code" in pb
 
     def test_list_preferred_bins_filter_item(self, client, auth_headers):
-        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 2, "priority": 1}, headers=auth_headers)
-        client.post("/api/admin/preferred-bins", json={"item_id": 2, "bin_id": 3, "priority": 1}, headers=auth_headers)
+        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 3, "priority": 1}, headers=auth_headers)
+        client.post("/api/admin/preferred-bins", json={"item_id": 2, "bin_id": 4, "priority": 1}, headers=auth_headers)
 
         resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
         data = resp.get_json()
         assert all(pb["item_id"] == 1 for pb in data["preferred_bins"])
 
     def test_update_preferred_bin_priority(self, client, auth_headers):
-        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 2, "priority": 1}, headers=auth_headers)
+        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 3, "priority": 1}, headers=auth_headers)
 
         # Get the preferred_bin_id
         resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
@@ -698,7 +808,7 @@ class TestPreferredBinsCRUD:
         assert resp.get_json()["preferred_bins"][0]["priority"] == 5
 
     def test_delete_preferred_bin(self, client, auth_headers):
-        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 2, "priority": 1}, headers=auth_headers)
+        client.post("/api/admin/preferred-bins", json={"item_id": 1, "bin_id": 3, "priority": 1}, headers=auth_headers)
 
         resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
         pb_id = resp.get_json()["preferred_bins"][0]["preferred_bin_id"]

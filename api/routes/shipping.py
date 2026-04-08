@@ -12,6 +12,97 @@ from services.audit_service import write_audit_log
 shipping_bp = Blueprint("shipping", __name__)
 
 
+def _require_packing(db):
+    """Check if packing is required before shipping."""
+    row = db.execute(
+        text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")
+    ).fetchone()
+    return not row or row.value != "false"
+
+
+@shipping_bp.route("/order/<barcode>")
+@require_auth
+def get_order(barcode):
+    """Look up an order for shipping. Respects the require_packing setting."""
+    if not barcode or not barcode.strip():
+        return jsonify({"error": "Barcode is required"}), 400
+    if len(barcode) > 100:
+        return jsonify({"error": "Barcode too long (max 100 characters)"}), 400
+
+    db = next(get_db())
+    try:
+        so = db.execute(
+            text(
+                """
+                SELECT so_id, so_number, so_barcode, customer_name, status,
+                       ship_method, ship_address, warehouse_id
+                FROM sales_orders
+                WHERE so_barcode = :barcode OR so_number = :barcode
+                LIMIT 1
+                """
+            ),
+            {"barcode": barcode},
+        ).fetchone()
+
+        if not so:
+            return jsonify({"error": "Order not found"}), 404
+
+        packing_required = _require_packing(db)
+        allowed_statuses = ["PACKED"] if packing_required else ["PICKED", "PACKED"]
+
+        if so.status not in allowed_statuses:
+            if packing_required and so.status == "PICKED":
+                return jsonify({"error": "Order must be packed before shipping"}), 400
+            return jsonify({"error": f"Order is not ready for shipping. Current status: {so.status}"}), 400
+
+        # Get item summary
+        lines = db.execute(
+            text(
+                """
+                SELECT sol.so_line_id, sol.line_number, sol.item_id,
+                       i.sku, i.item_name,
+                       sol.quantity_ordered, sol.quantity_picked, sol.quantity_packed
+                FROM sales_order_lines sol
+                JOIN items i ON i.item_id = sol.item_id
+                WHERE sol.so_id = :so_id
+                ORDER BY sol.line_number
+                """
+            ),
+            {"so_id": so.so_id},
+        ).fetchall()
+
+        total_items = sum(l.quantity_picked for l in lines)
+
+        return jsonify({
+            "sales_order": {
+                "so_id": so.so_id,
+                "so_number": so.so_number,
+                "so_barcode": so.so_barcode,
+                "customer_name": so.customer_name,
+                "status": so.status,
+                "ship_method": so.ship_method,
+                "ship_address": so.ship_address,
+                "warehouse_id": so.warehouse_id,
+            },
+            "lines": [
+                {
+                    "so_line_id": l.so_line_id,
+                    "line_number": l.line_number,
+                    "item_id": l.item_id,
+                    "sku": l.sku,
+                    "item_name": l.item_name,
+                    "quantity_ordered": l.quantity_ordered,
+                    "quantity_picked": l.quantity_picked,
+                }
+                for l in lines
+            ],
+            "total_items": total_items,
+            "total_lines": len(lines),
+        })
+    finally:
+        db.close()
+
+
 @shipping_bp.route("/fulfill", methods=["POST"])
 @require_auth
 def fulfill():
@@ -23,9 +114,24 @@ def fulfill():
     if not data.get("carrier"):
         return jsonify({"error": "carrier is required"}), 400
 
+    if not isinstance(data["carrier"], str):
+        return jsonify({"error": "carrier must be a string"}), 400
+    if not isinstance(data["tracking_number"], str):
+        return jsonify({"error": "tracking_number must be a string"}), 400
+
+    carrier = data["carrier"].strip()
+    tracking_number = data["tracking_number"].strip()
+
+    if not carrier:
+        return jsonify({"error": "carrier is required"}), 400
+    if not tracking_number:
+        return jsonify({"error": "tracking_number is required"}), 400
+    if len(carrier) > 100:
+        return jsonify({"error": "carrier too long (max 100 characters)"}), 400
+    if len(tracking_number) > 255:
+        return jsonify({"error": "tracking_number too long (max 255 characters)"}), 400
+
     so_id = data["so_id"]
-    tracking_number = data["tracking_number"]
-    carrier = data["carrier"]
     ship_method = data.get("ship_method")
     username = g.current_user["username"]
 
@@ -41,8 +147,14 @@ def fulfill():
 
         if not so:
             return jsonify({"error": "Order not found"}), 404
-        if so.status != "PACKED":
-            return jsonify({"error": f"Order must be packed before shipping. Current status: {so.status}"}), 400
+
+        packing_required = _require_packing(db)
+        allowed_statuses = ["PACKED"] if packing_required else ["PICKED", "PACKED"]
+
+        if so.status not in allowed_statuses:
+            if packing_required:
+                return jsonify({"error": f"Order must be packed before shipping. Current status: {so.status}"}), 400
+            return jsonify({"error": f"Order is not ready for shipping. Current status: {so.status}"}), 400
 
         # 1. Create item_fulfillments record
         result = db.execute(
@@ -122,10 +234,16 @@ def fulfill():
             lines_shipped += 1
             total_quantity += line.quantity_picked
 
-        # 4. Update SO status
+        # 4. Update SO status with carrier and tracking
         db.execute(
-            text("UPDATE sales_orders SET status = 'SHIPPED', shipped_at = NOW() WHERE so_id = :so_id"),
-            {"so_id": so_id},
+            text(
+                """
+                UPDATE sales_orders
+                SET status = 'SHIPPED', shipped_at = NOW(), carrier = :carrier, tracking_number = :tracking
+                WHERE so_id = :so_id
+                """
+            ),
+            {"so_id": so_id, "carrier": carrier, "tracking": tracking_number},
         )
 
         # 5. Audit log

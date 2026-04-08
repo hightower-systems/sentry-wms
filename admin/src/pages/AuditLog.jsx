@@ -20,7 +20,7 @@ export default function AuditLog() {
     const res = await api.get(`/admin/audit-log?${params}`);
     if (res?.ok) {
       const data = await res.json();
-      setLogs(data.audit_log || []);
+      setLogs(data.entries || []);
       setPagination({ page: data.page, pages: data.pages, total: data.total, per_page: data.per_page });
     }
   }

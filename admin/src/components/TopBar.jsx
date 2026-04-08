@@ -1,11 +1,24 @@
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../auth.jsx';
 
 export default function TopBar() {
   const { user, logout } = useAuth();
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef(null);
 
   const initials = user?.full_name
     ? user.full_name.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.username?.[0]?.toUpperCase() || '?';
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setShowMenu(false);
+      }
+    }
+    if (showMenu) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMenu]);
 
   return (
     <div className="topbar">
@@ -29,8 +42,22 @@ export default function TopBar() {
       <div className="topbar-search">
         <input type="text" placeholder="Search items, bins, orders..." />
       </div>
-      <div className="topbar-avatar" onClick={logout} title="Sign out">
-        {initials}
+      <div className="topbar-user" ref={menuRef} style={{ position: 'relative' }}>
+        <div className="topbar-avatar" onClick={() => setShowMenu(!showMenu)} title={user?.full_name || user?.username}>
+          {initials}
+        </div>
+        {showMenu && (
+          <div className="topbar-dropdown">
+            <div className="topbar-dropdown-header">
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{user?.full_name || user?.username}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{user?.role}</div>
+            </div>
+            <div className="topbar-dropdown-divider" />
+            <button className="topbar-dropdown-item" onClick={logout}>
+              Logout
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

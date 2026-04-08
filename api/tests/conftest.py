@@ -4,14 +4,23 @@ import sys
 os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+_tests_dir = os.path.dirname(os.path.abspath(__file__))
+_api_dir = os.path.join(_tests_dir, "..")
+sys.path.insert(0, os.path.abspath(_api_dir))
+sys.path.insert(0, _tests_dir)
 
 import psycopg2
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from app import create_app
+import models.database as db
+
+import db_test_context
 
 SEED_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "db", "seed-apartment-lab.sql")
+if not os.path.exists(SEED_PATH):
+    SEED_PATH = "/db/seed-apartment-lab.sql"
 
 ALL_TABLES = [
     "preferred_bins",
@@ -41,8 +50,10 @@ ALL_TABLES = [
     "warehouses",
 ]
 
+_ORIGINAL_SESSION_LOCAL = db.SessionLocal
 
-def _reset_database():
+
+def _seed_database():
     conn = psycopg2.connect(os.environ["DATABASE_URL"])
     conn.autocommit = True
     cur = conn.cursor()
@@ -53,8 +64,20 @@ def _reset_database():
     conn.close()
 
 
+def _driver_connection(sa_conn):
+    if hasattr(sa_conn, "get_driver_connection"):
+        return sa_conn.get_driver_connection()
+    return sa_conn.connection.dbapi_connection
+
+
 @pytest.fixture(scope="session")
-def app():
+def _seed_session_database():
+    _seed_database()
+    yield
+
+
+@pytest.fixture(scope="session")
+def app(_seed_session_database):
     app = create_app()
     app.config["TESTING"] = True
     return app
@@ -66,14 +89,27 @@ def client(app):
 
 
 @pytest.fixture(autouse=True)
-def reset_db():
-    _reset_database()
-    yield
+def _db_transaction(_seed_session_database):
+    # Each test holds an open transaction until teardown. Another process using the same
+    # database (e.g. the Flask API container) can block or deadlock with these transactions;
+    # run the suite with exclusive DB access (CI does this by default).
+    conn = db.engine.connect()
+    trans = conn.begin()
+    db.SessionLocal = sessionmaker(
+        bind=conn,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
+    db_test_context.set_raw_connection(_driver_connection(conn))
+    yield conn
+    db_test_context.clear_raw_connection()
+    db.SessionLocal = _ORIGINAL_SESSION_LOCAL
+    trans.rollback()
+    conn.close()
 
 
 @pytest.fixture(scope="session")
 def auth_headers(client):
-    _reset_database()
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
     data = resp.get_json()
     return {"Authorization": f"Bearer {data['token']}"}
@@ -84,10 +120,10 @@ def seed_data():
     return {
         "warehouse_id": 1,
         "staging_bin_id": 1,
-        "storage_bin_ids": [2, 3, 4, 5, 6, 7],
-        "outbound_staging_bin_id": 8,
-        "shipping_bin_id": 9,
-        "item_ids": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "storage_bin_ids": [3, 4, 5, 6, 7, 8, 9, 10, 11],
+        "outbound_staging_bin_id": 14,
+        "shipping_bin_id": 15,
+        "item_ids": list(range(1, 21)),
         "po_id": 1,
         "so_ids": [1, 2],
     }

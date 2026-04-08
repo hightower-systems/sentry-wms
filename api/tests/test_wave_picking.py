@@ -3,16 +3,16 @@ Tests for wave picking workflow: validate, create wave batch, combined picks,
 short pick distribution, and full wave-to-pack integration.
 """
 
-import psycopg2
-import os
+import pytest
+
+from db_test_context import get_raw_connection
 
 
 # --- Helpers ---
 
 def _create_extra_so(so_number, customer, items_qty, warehouse_id=1):
     """Create an SO with lines directly in the DB for testing."""
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
@@ -27,21 +27,18 @@ def _create_extra_so(so_number, customer, items_qty, warehouse_id=1):
             (so_id, item_id, qty, idx),
         )
     cur.close()
-    conn.close()
     return so_id
 
 
 def _set_so_status(so_id, status):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute("UPDATE sales_orders SET status = %s WHERE so_id = %s", (status, so_id))
     cur.close()
-    conn.close()
 
 
 def _get_inventory(item_id, bin_id):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
         "SELECT quantity_on_hand, quantity_allocated FROM inventory WHERE item_id = %s AND bin_id = %s",
@@ -49,12 +46,11 @@ def _get_inventory(item_id, bin_id):
     )
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row
 
 
 def _get_wave_breakdowns(pick_task_id):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
         "SELECT so_id, so_line_id, quantity, quantity_picked, short_quantity FROM wave_pick_breakdown WHERE pick_task_id = %s ORDER BY so_id",
@@ -62,7 +58,6 @@ def _get_wave_breakdowns(pick_task_id):
     )
     rows = cur.fetchall()
     cur.close()
-    conn.close()
     return rows
 
 
@@ -73,15 +68,15 @@ def test_validate_valid_so(client, auth_headers):
     """Valid SO returns valid=true with line count and units."""
     resp = client.post(
         "/api/picking/wave-validate",
-        json={"so_barcode": "SO-001", "warehouse_id": 1},
+        json={"so_barcode": "SO-2026-001", "warehouse_id": 1},
         headers=auth_headers,
     )
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["valid"] is True
-    assert data["so_number"] == "SO-001"
-    assert data["line_count"] == 2
-    assert data["total_units"] == 3  # 2 + 1
+    assert data["so_number"] == "SO-2026-001"
+    assert data["line_count"] == 1
+    assert data["total_units"] == 2  # item 1 qty 2
 
 
 def test_validate_unknown_so(client, auth_headers):
@@ -99,16 +94,16 @@ def test_validate_unknown_so(client, auth_headers):
 
 def test_validate_so_in_active_batch(client, auth_headers):
     """SO already in an active batch returns valid=false with batch_id."""
-    # Create a batch with SO-001
+    # Create a batch with SO-2026-001
     client.post(
         "/api/picking/create-batch",
-        json={"so_identifiers": ["SO-001"], "warehouse_id": 1},
+        json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1},
         headers=auth_headers,
     )
-    # Now try to validate SO-001 again
+    # Now try to validate SO-2026-001 again
     resp = client.post(
         "/api/picking/wave-validate",
-        json={"so_barcode": "SO-001", "warehouse_id": 1},
+        json={"so_barcode": "SO-2026-001", "warehouse_id": 1},
         headers=auth_headers,
     )
     assert resp.status_code == 409
@@ -120,15 +115,13 @@ def test_validate_so_in_active_batch(client, auth_headers):
 
 def test_validate_so_no_items(client, auth_headers):
     """SO with no line items returns valid=false."""
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
            VALUES ('SO-EMPTY', 'SO-EMPTY', 'Empty Customer', 'OPEN', 1, 'admin')"""
     )
     cur.close()
-    conn.close()
 
     resp = client.post(
         "/api/picking/wave-validate",
@@ -162,8 +155,8 @@ def test_wave_create_single_order(client, auth_headers, seed_data):
 
 def test_wave_create_multiple_orders(client, auth_headers, seed_data):
     """Wave create combines identical SKUs across orders."""
-    # SO-001 has item 1 (qty 2) and item 6 (qty 1)
-    # SO-002 has item 3 (qty 3) and item 10 (qty 1)
+    # SO-2026-001 has item 1 (qty 2)
+    # SO-2026-002 has item 5 (qty 1)
     resp = client.post(
         "/api/picking/wave-create",
         json={"so_ids": seed_data["so_ids"], "warehouse_id": 1},
@@ -173,7 +166,7 @@ def test_wave_create_multiple_orders(client, auth_headers, seed_data):
     data = resp.get_json()
     assert data["total_orders"] == 2
     assert data["total_picks"] > 0
-    assert data["total_units"] == 7  # 2 + 1 + 3 + 1
+    assert data["total_units"] == 3  # 2 + 1
     assert len(data["orders"]) == 2
 
 
@@ -199,7 +192,7 @@ def test_wave_create_pick_path_order(client, auth_headers, seed_data):
 def test_wave_create_allocation(client, auth_headers, seed_data):
     """Inventory is allocated at wave creation time."""
     # Check inventory before
-    before = _get_inventory(1, 2)  # item 1 in bin 2
+    before = _get_inventory(1, 3)  # item 1 in bin 2
     assert before[1] == 0  # no allocation
 
     resp = client.post(
@@ -210,14 +203,14 @@ def test_wave_create_allocation(client, auth_headers, seed_data):
     assert resp.status_code == 200
 
     # Check inventory after - should be allocated
-    after = _get_inventory(1, 2)
+    after = _get_inventory(1, 3)
     assert after[1] > 0  # allocation increased
 
 
 def test_wave_create_partial_inventory(client, auth_headers):
     """Insufficient inventory creates warning but batch still proceeds."""
     # Create SO needing more than available
-    so_id = _create_extra_so("SO-BIG", "Big Customer", [(5, 999)])  # item 5 only has 10 in stock
+    so_id = _create_extra_so("SO-BIG", "Big Customer", [(5, 999)])  # item 5 only has 25 in stock
 
     resp = client.post(
         "/api/picking/wave-create",
@@ -341,7 +334,7 @@ def test_next_task_has_contributing_orders(client, auth_headers, seed_data):
 
 def test_short_pick_fifo_distribution(client, auth_headers):
     """Short pick distributes shortage to later SOs (FIFO by SO ID)."""
-    # Create two SOs that share item 1 (Blue Widget, 25 in stock)
+    # Create two SOs that share item 1 (TST-001, 50 in stock)
     so_a = _create_extra_so("SO-SHORT-A", "Customer A", [(1, 3)])
     so_b = _create_extra_so("SO-SHORT-B", "Customer B", [(1, 5)])
 
@@ -356,7 +349,7 @@ def test_short_pick_fifo_distribution(client, auth_headers):
     # Get the pick task for item 1
     batch_resp = client.get(f"/api/picking/batch/{batch_id}", headers=auth_headers)
     tasks = batch_resp.get_json()["tasks"]
-    item1_task = [t for t in tasks if t["sku"] == "WIDGET-BLU"][0]
+    item1_task = [t for t in tasks if t["sku"] == "TST-001"][0]
 
     # Short pick: only 5 available out of 8 needed (3+5)
     resp = client.post(
@@ -428,7 +421,7 @@ def test_confirm_wave_pick_updates_all_so_lines(client, auth_headers):
 
     batch_resp = client.get(f"/api/picking/batch/{batch_id}", headers=auth_headers)
     tasks = batch_resp.get_json()["tasks"]
-    task = [t for t in tasks if t["sku"] == "WIDGET-BLU"][0]
+    task = [t for t in tasks if t["sku"] == "TST-001"][0]
 
     # Confirm pick with barcode
     resp = client.post(
@@ -448,14 +441,13 @@ def test_confirm_wave_pick_updates_all_so_lines(client, auth_headers):
     assert total_picked == 6
 
     # Check SO lines are updated
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute("SELECT quantity_picked FROM sales_order_lines WHERE so_id = %s", (so_a,))
     assert cur.fetchone()[0] == 2
     cur.execute("SELECT quantity_picked FROM sales_order_lines WHERE so_id = %s", (so_b,))
     assert cur.fetchone()[0] == 4
     cur.close()
-    conn.close()
 
 
 # --- Integration Tests ---
@@ -525,8 +517,8 @@ def test_wave_pick_to_pack_flow(client, auth_headers):
 
 def test_wave_pick_with_shorts_to_pack(client, auth_headers):
     """Wave pick with short picks still allows packing with adjusted quantities."""
-    so1 = _create_extra_so("SO-SHRT-1", "Cust 1", [(5, 3)])  # Large Gadget, only 10 in stock
-    so2 = _create_extra_so("SO-SHRT-2", "Cust 2", [(5, 9)])  # needs 9 more, total 12 > 10
+    so1 = _create_extra_so("SO-SHRT-1", "Cust 1", [(5, 10)])  # item 5, only 25 in stock
+    so2 = _create_extra_so("SO-SHRT-2", "Cust 2", [(5, 20)])  # needs 20 more, total 30 > 25
 
     resp = client.post(
         "/api/picking/wave-create",
@@ -565,12 +557,11 @@ def test_wave_pick_with_shorts_to_pack(client, auth_headers):
     )
     assert resp.status_code == 200
 
-    # Both SOs should be PICKING status
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    # Both SOs should be PICKED status (ready for packing)
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute("SELECT status FROM sales_orders WHERE so_id = %s", (so1,))
-    assert cur.fetchone()[0] == "PICKING"
+    assert cur.fetchone()[0] == "PICKED"
     cur.execute("SELECT status FROM sales_orders WHERE so_id = %s", (so2,))
-    assert cur.fetchone()[0] == "PICKING"
+    assert cur.fetchone()[0] == "PICKED"
     cur.close()
-    conn.close()

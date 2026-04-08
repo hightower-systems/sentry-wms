@@ -33,7 +33,7 @@ def get_order(barcode):
         if not so:
             return jsonify({"error": "Order not found"}), 404
 
-        if so.status != "PICKING":
+        if so.status != "PICKED":
             return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
         lines = db.execute(
@@ -119,7 +119,7 @@ def verify_item():
 
         if not so:
             return jsonify({"error": "Order not found"}), 404
-        if so.status != "PICKING":
+        if so.status != "PICKED":
             return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
         # Find matching item on this SO by barcode
@@ -222,7 +222,7 @@ def complete_packing():
 
         if not so:
             return jsonify({"error": "Order not found"}), 404
-        if so.status != "PICKING":
+        if so.status != "PICKED":
             return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
         # Check all lines verified

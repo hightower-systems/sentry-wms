@@ -1,17 +1,22 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useState } from 'react';
 
 /**
  * Queue for turbo-mode fast scanning.
  * Enqueues barcodes and processes them sequentially so rapid scans
  * don't race or get dropped while an API call is in-flight.
+ *
+ * Returns [enqueue, isProcessing] — use isProcessing to disable
+ * the scan input while an API call is in-flight.
  */
 export default function useScanQueue(processFn) {
   const queue = useRef([]);
-  const processing = useRef(false);
+  const processingRef = useRef(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const processQueue = useCallback(async () => {
-    if (processing.current) return;
-    processing.current = true;
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setIsProcessing(true);
 
     while (queue.current.length > 0) {
       const barcode = queue.current.shift();
@@ -22,7 +27,8 @@ export default function useScanQueue(processFn) {
       }
     }
 
-    processing.current = false;
+    processingRef.current = false;
+    setIsProcessing(false);
   }, [processFn]);
 
   const enqueue = useCallback((barcode) => {
@@ -30,5 +36,5 @@ export default function useScanQueue(processFn) {
     processQueue();
   }, [processQueue]);
 
-  return enqueue;
+  return [enqueue, isProcessing];
 }

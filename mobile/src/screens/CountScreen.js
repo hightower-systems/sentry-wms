@@ -20,7 +20,7 @@ export default function CountScreen({ navigation }) {
   const [submitted, setSubmitted] = useState(false);
   const [mode, setMode] = useState('standard');
   const [showModeMenu, setShowModeMenu] = useState(false);
-  const [showExpected, setShowExpected] = useState(true);
+  const [showExpected, setShowExpected] = useState(false);
   const [turboStatus, setTurboStatus] = useState('');
 
   useEffect(() => {
@@ -28,11 +28,11 @@ export default function CountScreen({ navigation }) {
       if (saved === 'turbo' || saved === 'standard') setMode(saved);
     }).catch(() => {});
 
-    // Load show_expected setting
+    // Load show_expected setting (default is hidden for blind counts)
     client.get('/api/admin/settings/count_show_expected')
       .then((resp) => {
         const val = resp.data?.value;
-        if (val === 'false' || val === false) setShowExpected(false);
+        if (val === 'true' || val === true) setShowExpected(true);
       })
       .catch(() => {});
   }, []);
@@ -107,7 +107,7 @@ export default function CountScreen({ navigation }) {
     });
   }, [lines]);
 
-  const enqueueTurbo = useScanQueue(processTurboScan);
+  const [enqueueTurbo] = useScanQueue(processTurboScan);
 
   const handleScanItem = mode === 'turbo' ? enqueueTurbo : undefined;
 

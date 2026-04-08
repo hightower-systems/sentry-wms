@@ -80,7 +80,7 @@ export default function PreferredBins() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'preferred_bins.csv';
+    a.download = `${new Date().toISOString().slice(0, 10)}PreferredBins.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }

@@ -17,7 +17,7 @@ from models.database import get_db
 admin_bp = Blueprint("admin", __name__)
 
 VALID_ZONE_TYPES = ("RECEIVING", "STORAGE", "PICKING", "STAGING", "SHIPPING")
-VALID_BIN_TYPES = ("STANDARD", "INBOUND_STAGING", "OUTBOUND_STAGING", "PICKING", "BULK")
+VALID_BIN_TYPES = ("Staging", "PickableStaging", "Pickable")
 VALID_ROLES = ("ADMIN", "MANAGER", "PICKER", "RECEIVER", "PACKER")
 
 
@@ -512,6 +512,15 @@ def get_item(item_id):
             {"iid": item_id},
         ).fetchall()
 
+        pref_rows = db.execute(
+            text("""
+                SELECT pb.preferred_bin_id, pb.bin_id, b.bin_code, z.zone_name, pb.priority
+                FROM preferred_bins pb JOIN bins b ON b.bin_id = pb.bin_id JOIN zones z ON z.zone_id = b.zone_id
+                WHERE pb.item_id = :iid ORDER BY pb.priority
+            """),
+            {"iid": item_id},
+        ).fetchall()
+
         return jsonify({
             "item": {
                 "item_id": item.item_id, "sku": item.sku, "item_name": item.item_name,
@@ -530,6 +539,11 @@ def get_item(item_id):
                 {"bin_id": r.bin_id, "bin_code": r.bin_code, "zone_name": r.zone_name,
                  "quantity_on_hand": r.quantity_on_hand, "quantity_allocated": r.quantity_allocated}
                 for r in inv_rows
+            ],
+            "preferred_bins": [
+                {"preferred_bin_id": r.preferred_bin_id, "bin_id": r.bin_id, "bin_code": r.bin_code,
+                 "zone_name": r.zone_name, "priority": r.priority}
+                for r in pref_rows
             ],
         })
     finally:
@@ -897,7 +911,8 @@ def list_sales_orders():
         rows = db.execute(
             text(f"""
                 SELECT so_id, so_number, so_barcode, customer_name, status, priority, warehouse_id,
-                       ship_method, ship_address, order_date, ship_by_date, created_at, created_by
+                       ship_method, ship_address, order_date, ship_by_date, created_at, created_by,
+                       carrier, tracking_number, shipped_at
                 FROM sales_orders {where_sql} ORDER BY so_id DESC LIMIT :limit OFFSET :offset
             """),
             params,
@@ -910,7 +925,9 @@ def list_sales_orders():
                  "warehouse_id": r.warehouse_id, "ship_method": r.ship_method, "ship_address": r.ship_address,
                  "order_date": r.order_date.isoformat() if r.order_date else None,
                  "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,
-                 "created_at": r.created_at.isoformat() if r.created_at else None, "created_by": r.created_by}
+                 "created_at": r.created_at.isoformat() if r.created_at else None, "created_by": r.created_by,
+                 "carrier": r.carrier, "tracking_number": r.tracking_number,
+                 "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None}
                 for r in rows
             ],
             "total": total, "page": page, "per_page": per_page, "pages": pages,
@@ -1481,7 +1498,7 @@ def dashboard():
         wh_filter = "AND warehouse_id = :wid" if warehouse_id else ""
         wh_params = {"wid": warehouse_id} if warehouse_id else {}
 
-        open_pos = db.execute(text(f"SELECT COUNT(*) FROM purchase_orders WHERE status = 'OPEN' {wh_filter}"), wh_params).scalar()
+        open_pos = db.execute(text(f"SELECT COUNT(*) FROM purchase_orders WHERE status IN ('OPEN', 'PARTIAL') {wh_filter}"), wh_params).scalar()
 
         pending_receipts = db.execute(
             text(f"SELECT COALESCE(SUM(pol.quantity_ordered - pol.quantity_received), 0) FROM purchase_order_lines pol JOIN purchase_orders po ON po.po_id = pol.po_id WHERE po.status IN ('OPEN', 'PARTIAL') {wh_filter.replace('warehouse_id', 'po.warehouse_id')}"),
@@ -1489,15 +1506,30 @@ def dashboard():
         ).scalar()
 
         items_awaiting_putaway = db.execute(
-            text(f"SELECT COALESCE(SUM(inv.quantity_on_hand), 0) FROM inventory inv JOIN bins b ON b.bin_id = inv.bin_id WHERE b.bin_type = 'INBOUND_STAGING' {wh_filter.replace('warehouse_id', 'inv.warehouse_id')}"),
+            text(f"SELECT COALESCE(SUM(inv.quantity_on_hand), 0) FROM inventory inv JOIN bins b ON b.bin_id = inv.bin_id WHERE b.bin_type = 'Staging' {wh_filter.replace('warehouse_id', 'inv.warehouse_id')}"),
             wh_params,
         ).scalar()
 
         open_sos = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'OPEN' {wh_filter}"), wh_params).scalar()
         ready_to_pick = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN ('OPEN') {wh_filter}"), wh_params).scalar()
         in_picking = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKING' {wh_filter}"), wh_params).scalar()
-        ready_to_pack = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKED' {wh_filter}"), wh_params).scalar()
-        ready_to_ship = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PACKED' {wh_filter}"), wh_params).scalar()
+        # Toggle-aware pack/ship counts
+        packing_row = db.execute(
+            text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")
+        ).fetchone()
+        require_packing = not packing_row or packing_row.value != "false"
+
+        picked_count = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKED' {wh_filter}"), wh_params).scalar()
+        packed_count = db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PACKED' {wh_filter}"), wh_params).scalar()
+
+        if require_packing:
+            ready_to_pack = picked_count
+            orders_packed = packed_count
+            ready_to_ship = packed_count
+        else:
+            ready_to_pack = 0
+            orders_packed = 0
+            ready_to_ship = picked_count + packed_count
 
         total_skus = db.execute(text("SELECT COUNT(*) FROM items WHERE is_active = TRUE")).scalar()
         total_bins = db.execute(text(f"SELECT COUNT(*) FROM bins WHERE is_active = TRUE {wh_filter}"), wh_params).scalar()
@@ -1520,17 +1552,24 @@ def dashboard():
             wh_params,
         ).fetchall()
 
-        return jsonify({
+        # Short picks in last 7 days
+        short_pick_count = db.execute(
+            text(f"SELECT COUNT(*) FROM audit_log WHERE action_type = 'PICK' AND details->>'type' = 'SHORT_PICK' AND created_at >= NOW() - INTERVAL '7 days' {('AND warehouse_id = :wid' if warehouse_id else '')}"),
+            wh_params,
+        ).scalar()
+
+        result = {
             "open_pos": open_pos,
             "pending_receipts": int(pending_receipts),
             "items_awaiting_putaway": int(items_awaiting_putaway),
             "open_sos": open_sos,
             "orders_ready_to_pick": ready_to_pick,
             "orders_in_picking": in_picking,
-            "orders_ready_to_pack": ready_to_pack,
-            "orders_ready_to_ship": ready_to_ship,
+            "ready_to_ship": ready_to_ship,
+            "require_packing": require_packing,
             "total_skus": total_skus,
             "total_bins": total_bins,
+            "short_picks_7d": short_pick_count,
             "low_stock_items": low_stock,
             "recent_activity": [
                 {"action": r.action_type, "user": r.user_id,
@@ -1538,7 +1577,13 @@ def dashboard():
                  "time": r.created_at.isoformat() if r.created_at else None}
                 for r in recent
             ],
-        })
+        }
+
+        if require_packing:
+            result["ready_to_pack"] = ready_to_pack
+            result["orders_packed"] = orders_packed
+
+        return jsonify(result)
     finally:
         db.close()
 
@@ -1590,6 +1635,16 @@ def update_settings():
 
     db = next(get_db())
     try:
+        # Toggle protection: reject disabling packing when PACKED orders exist
+        if data["settings"].get("require_packing_before_shipping") == "false":
+            packed_count = db.execute(
+                text("SELECT COUNT(*) FROM sales_orders WHERE status = 'PACKED'")
+            ).scalar()
+            if packed_count > 0:
+                return jsonify({
+                    "error": f"Cannot disable packing. {packed_count} order{'s' if packed_count != 1 else ''} in PACKED status. Ship them before disabling."
+                }), 400
+
         for key, value in data["settings"].items():
             db.execute(
                 text(
@@ -1635,7 +1690,8 @@ def list_cycle_counts():
                 text(
                     """
                     SELECT ccl.count_line_id, i.sku, i.item_name,
-                           ccl.expected_quantity, ccl.counted_quantity, ccl.variance
+                           ccl.expected_quantity, ccl.counted_quantity,
+                           (ccl.counted_quantity - ccl.expected_quantity) AS variance
                     FROM cycle_count_lines ccl
                     JOIN items i ON i.item_id = ccl.item_id
                     WHERE ccl.count_id = :cid
@@ -1665,7 +1721,7 @@ def list_cycle_counts():
                 ],
             })
 
-        return jsonify({"counts": counts})
+        return jsonify({"cycle_counts": counts})
     finally:
         db.close()
 
@@ -1805,5 +1861,65 @@ def delete_preferred_bin(preferred_bin_id):
     except Exception:
         db.rollback()
         raise
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Short Picks Report
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/short-picks", methods=["GET"])
+@require_auth
+@require_role("ADMIN", "MANAGER")
+def get_short_picks():
+    """Return recent short pick events from the audit log."""
+    db = get_db()
+    try:
+        days = request.args.get("days", 30, type=int)
+        warehouse_id = request.args.get("warehouse_id", type=int)
+        wh_clause = "AND a.warehouse_id = :wid" if warehouse_id else ""
+        params = {"days": days}
+        if warehouse_id:
+            params["wid"] = warehouse_id
+
+        rows = db.execute(
+            text(f"""
+                SELECT a.log_id, a.user_id, a.created_at,
+                       a.details->>'sku' AS sku,
+                       (a.details->>'quantity_to_pick')::int AS qty_expected,
+                       (a.details->>'quantity_picked')::int AS qty_picked,
+                       (a.details->>'shortage')::int AS shortage,
+                       b.bin_code,
+                       a.details->>'batch_id' AS batch_id
+                FROM audit_log a
+                LEFT JOIN bins b ON b.bin_id = (a.details->>'bin_id')::int
+                WHERE a.action_type = 'PICK'
+                  AND a.details->>'type' = 'SHORT_PICK'
+                  AND a.created_at >= NOW() - make_interval(days => :days)
+                  {wh_clause}
+                ORDER BY a.created_at DESC
+                LIMIT 100
+            """),
+            params,
+        ).fetchall()
+
+        return jsonify({
+            "short_picks": [
+                {
+                    "log_id": r.log_id,
+                    "user": r.user_id,
+                    "sku": r.sku,
+                    "qty_expected": r.qty_expected,
+                    "qty_picked": r.qty_picked,
+                    "shortage": r.shortage,
+                    "bin_code": r.bin_code,
+                    "batch_id": r.batch_id,
+                    "timestamp": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ],
+            "total": len(rows),
+        })
     finally:
         db.close()

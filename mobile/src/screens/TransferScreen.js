@@ -127,8 +127,11 @@ export default function TransferScreen({ navigation }) {
             <Text style={styles.successDetail}>
               {quantity}x {item?.sku} moved from {fromBin?.bin_code} to {toBin?.bin_code}
             </Text>
-            <TouchableOpacity style={styles.buttonPrimary} onPress={resetAll}>
+            <TouchableOpacity style={[styles.buttonPrimary, { width: '100%' }]} onPress={resetAll}>
               <Text style={styles.buttonPrimaryText}>NEW TRANSFER</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.buttonSecondary, { width: '100%', marginTop: 8 }]} onPress={() => navigation.goBack()}>
+              <Text style={styles.buttonSecondaryText}>DONE</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -258,6 +261,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
+  successSection: { alignItems: 'center', paddingVertical: 32 },
+  buttonSecondary: {
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
+    paddingVertical: 14, alignItems: 'center', minHeight: 48,
+  },
+  buttonSecondaryText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
   successSection: { alignItems: 'center', paddingVertical: 32 },
   successText: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.success, marginBottom: 8 },
   successDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24, textAlign: 'center' },

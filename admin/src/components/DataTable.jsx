@@ -20,7 +20,7 @@ export default function DataTable({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'export.csv';
+    a.download = `${new Date().toISOString().slice(0, 10)}InvExport.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }

@@ -9,8 +9,8 @@ Sentry is the link between the warehouse floor and your system of record. It con
 - **Receiving** - Scan PO barcodes, verify items, stage for put-away
 - **Put-Away** - Suggested bin placement, scan-to-confirm storage
 - **Picking** - Multi-order batch picking with optimized walk paths
-- **Packing** - Scan-to-verify pack workflows
-- **Shipping** - Carrier integration, label printing, tracking
+- **Packing** - Scan-to-verify pack station (separate screen from shipping)
+- **Shipping** - Carrier/tracking entry, fulfillment recording (separate screen from packing)
 - **Cycle Counting** - Bin-level counts with variance detection
 - **Bin Transfers** - Move inventory between locations
 
@@ -24,7 +24,7 @@ Sentry is not an ERP. It does not manage orders, products, or customers. It conn
 |-------|-----------|
 | Mobile App | React Native (Expo) |
 | API | Python / Flask |
-| Database | PostgreSQL (dev) · Fabric SQL / PostgreSQL Cloud (prod) |
+| Database | PostgreSQL 16 (dev Docker) · PostgreSQL Cloud (prod) |
 | Admin Panel | React Web App |
 
 ## Quick Start
@@ -50,6 +50,12 @@ npm run dev
 
 # Admin panel is now running at http://localhost:3000
 # Login with admin/admin
+
+# Start the mobile app (separate terminal)
+cd mobile
+cp .env.example .env    # Set EXPO_PUBLIC_API_URL to your machine's IP
+npm install
+npx expo start
 ```
 
 ## Admin Panel
@@ -169,6 +175,36 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 | GET | `/api/admin/inventory` | Inventory overview (paginated) |
 | POST | `/api/admin/import/<type>` | Bulk import items or bins |
 | GET | `/api/admin/dashboard` | Dashboard stats and counts |
+| GET | `/api/admin/short-picks` | Short pick report (filter by days, warehouse) |
+
+## Database
+
+### Bin Types
+
+Sentry uses 3 bin types that control whether the pick algorithm can pull inventory:
+
+| Type | Pickable? | Purpose |
+|------|-----------|---------|
+| `Staging` | No | Inbound dock, QC hold. Inventory lands here on receipt. Put-away moves it out. |
+| `PickableStaging` | Yes | Staging area where admin allows pickers to pull fresh inventory before formal put-away. |
+| `Pickable` | Yes | Standard shelf bins, bulk storage, shipping desk. Default for most bins. |
+
+### Test Lab Seed Data
+
+The apartment lab seed (`db/seed-apartment-lab.sql`) matches 61 printed Zebra barcode labels:
+
+- 2 warehouses, 6 zones, 16 bins
+- 20 items (fly fishing catalog, TST-001 through TST-020)
+- 5 purchase orders (10/3/8/5/1 lines)
+- 20 sales orders (single-item, multi-item, contention, serpentine walk, short pick test)
+
+### Testing
+
+261 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~4.3 seconds.
+
+```bash
+docker compose exec api python -m pytest tests/ -v --tb=short
+```
 
 ## Project Status
 
@@ -180,12 +216,15 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 | v0.2.0 | JWT auth, item/bin lookups | ✅ Complete |
 | v0.3.0 | Receiving + put-away | ✅ Complete |
 | v0.4.0 | Batch picking with path optimization | ✅ Complete |
-| v0.5.0 | Pack + ship | ✅ Complete |
+| v0.5.0 | Pack + ship (separate screens) | ✅ Complete |
 | v0.6.0 | Inventory management (cycle counts, transfers) | ✅ Complete |
 | v0.7.0 | Admin CRUD API | ✅ Complete |
 | v0.8.0 | React admin panel | ✅ Complete |
-| v0.9.0 | ERP integration + connectors | Planned |
-| v1.0.0 | Public release | Planned |
+| v0.8.1 | Wave picking with combined SO batches | ✅ Complete |
+| v0.9.0 | Mobile scanner app (10 screens, C6000 support) | ✅ Complete |
+| v0.9.1 | Apartment lab testing, preferred bins, bug fixes | ✅ Complete |
+| v0.9.2 | Test infrastructure, bin type simplification, short pick reporting | ✅ Complete |
+| v1.0.0 | ERP integration + public release | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
@@ -197,4 +236,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems)
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.2

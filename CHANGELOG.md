@@ -2,6 +2,27 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.2] - 2026-04-08
+
+### Fixed
+- Test suite refactored from per-test TRUNCATE+reseed to transaction rollback (261 tests in ~4.3s, fixes 365-min CI deadlock)
+- ScanInput auto-refocus every 500ms and auto-submit after 100ms pause for C6000 hardware scanner
+- Expanded ignored keys in ScanInput (F1-F12, Tab, Escape, GoBack)
+
+### Added
+- Short pick admin reporting endpoint (GET /api/admin/short-picks) with SKU, bin, expected/picked/shortage, picker, timestamp
+- Short pick count on dashboard pipeline (7d rolling, red when > 0)
+- Pick walk item detail modal — tap any item card for SKU, UPC, bin, zone, qty, contributing orders
+- `count_show_expected` setting enforced (hides expected qty for blind counts)
+
+### Changed
+- Bin types simplified from 6 (RECEIVING, PICKING, BULK, STAGING, SHIPPING, QC) to 3 (Staging, PickableStaging, Pickable)
+- Migration: db/migrations/011_bin_type_qc_used.sql
+- Updated across: schema.sql, seed data, admin.py, picking_service.py, putaway.py, PutAwayScreen.js, Settings.jsx, Bins.jsx
+- Seed data fully rewritten to match 61 printed Zebra barcode labels (20 items, 16 bins, 5 POs, 20 SOs)
+- All 12 test files rewritten for new seed data
+- 49 files changed, +2,089 / -665 lines
+
 ## [v0.9.1] - 2026-04-06
 
 ### Fixed

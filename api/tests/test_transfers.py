@@ -1,46 +1,43 @@
-import psycopg2
-import os
+from db_test_context import get_raw_connection
 
 
 def _query_val(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row[0] if row else None
 
 
 def _query_one(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row
 
 
 class TestTransferMove:
     def test_transfer_success(self, client, auth_headers):
-        # Item 1 in bin 2 has 25 units. Move 5 to bin 3.
+        # Item 1 in bin 3 has 50 units. Move 5 to bin 4.
         resp = client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 5},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 5},
             headers=auth_headers,
         )
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["transfer_id"] is not None
         assert data["quantity_moved"] == 5
-        assert data["from_bin"]["remaining_quantity"] == 20
-        assert data["to_bin"]["new_quantity"] == 5  # New inventory row for item 1 in bin 3
+        assert data["from_bin"]["remaining_quantity"] == 45
+        assert data["to_bin"]["new_quantity"] == 5  # New inventory row for item 1 in bin 4
 
     def test_transfer_creates_record(self, client, auth_headers):
         client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 5},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 5},
             headers=auth_headers,
         )
 
@@ -53,7 +50,7 @@ class TestTransferMove:
     def test_transfer_creates_audit_log(self, client, auth_headers):
         client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 5},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 5},
             headers=auth_headers,
         )
 
@@ -61,10 +58,10 @@ class TestTransferMove:
         assert row is not None
 
     def test_transfer_insufficient_quantity(self, client, auth_headers):
-        # Item 1 in bin 2 has 25. Try to move 100.
+        # Item 1 in bin 3 has 50. Try to move 100.
         resp = client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 100},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 100},
             headers=auth_headers,
         )
         assert resp.status_code == 400
@@ -73,7 +70,7 @@ class TestTransferMove:
     def test_transfer_same_bin(self, client, auth_headers):
         resp = client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 2, "quantity": 5},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 3, "quantity": 5},
             headers=auth_headers,
         )
         assert resp.status_code == 400
@@ -82,7 +79,7 @@ class TestTransferMove:
     def test_transfer_invalid_item(self, client, auth_headers):
         resp = client.post(
             "/api/transfers/move",
-            json={"item_id": 9999, "from_bin_id": 2, "to_bin_id": 3, "quantity": 5},
+            json={"item_id": 9999, "from_bin_id": 3, "to_bin_id": 4, "quantity": 5},
             headers=auth_headers,
         )
         assert resp.status_code == 404
@@ -90,13 +87,13 @@ class TestTransferMove:
     def test_transfer_invalid_bin(self, client, auth_headers):
         resp = client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 9999, "to_bin_id": 3, "quantity": 5},
+            json={"item_id": 1, "from_bin_id": 9999, "to_bin_id": 4, "quantity": 5},
             headers=auth_headers,
         )
         assert resp.status_code == 404
 
     def test_transfer_creates_new_inventory_row(self, client, auth_headers):
-        # Item 1 is not in bin 5. Transfer from bin 2 to bin 5 should create new row.
+        # Item 1 is not in bin 5. Transfer from bin 3 to bin 5 should create new row.
         before = _query_val(
             "SELECT quantity_on_hand FROM inventory WHERE item_id = 1 AND bin_id = 5"
         )
@@ -104,7 +101,7 @@ class TestTransferMove:
 
         client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 5, "quantity": 3},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 5, "quantity": 3},
             headers=auth_headers,
         )
 
@@ -114,21 +111,21 @@ class TestTransferMove:
         assert after == 3
 
     def test_transfer_deletes_empty_inventory(self, client, auth_headers):
-        # Move ALL of item 1 from bin 2 (25 units)
+        # Move ALL of item 1 from bin 3 (50 units)
         client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 25},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 50},
             headers=auth_headers,
         )
 
         remaining = _query_val(
-            "SELECT quantity_on_hand FROM inventory WHERE item_id = 1 AND bin_id = 2"
+            "SELECT quantity_on_hand FROM inventory WHERE item_id = 1 AND bin_id = 3"
         )
         assert remaining is None, "Inventory row should be deleted when qty reaches 0"
 
     def test_transfers_requires_auth(self, client):
         resp = client.post(
             "/api/transfers/move",
-            json={"item_id": 1, "from_bin_id": 2, "to_bin_id": 3, "quantity": 5},
+            json={"item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 5},
         )
         assert resp.status_code == 401

@@ -27,7 +27,7 @@ def pending_putaway(warehouse_id):
                 FROM inventory inv
                 JOIN items i ON i.item_id = inv.item_id
                 JOIN bins b ON b.bin_id = inv.bin_id
-                WHERE b.bin_type IN ('INBOUND_STAGING', 'RECEIVING')
+                WHERE b.bin_type = 'Staging'
                   AND inv.quantity_on_hand > 0
                   AND inv.warehouse_id = :warehouse_id
                 """

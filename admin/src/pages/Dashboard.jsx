@@ -9,6 +9,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState([]);
   const [pos, setPos] = useState([]);
+  const [shortPicks, setShortPicks] = useState([]);
 
   useEffect(() => {
     api.get('/admin/dashboard?warehouse_id=1').then(async (res) => {
@@ -31,6 +32,13 @@ export default function Dashboard() {
       setOrders(all);
     });
 
+    api.get('/admin/short-picks?warehouse_id=1&days=7').then(async (res) => {
+      if (res?.ok) {
+        const data = await res.json();
+        setShortPicks(data.short_picks || []);
+      }
+    }).catch(() => {});
+
     Promise.all([
       api.get('/admin/purchase-orders?status=OPEN&warehouse_id=1&per_page=50'),
       api.get('/admin/purchase-orders?status=PARTIAL&warehouse_id=1&per_page=50'),
@@ -50,10 +58,14 @@ export default function Dashboard() {
     ? [
         { label: 'To Receive', count: stats.open_pos || 0, color: 'blue' },
         { label: 'Put-away', count: stats.pending_putaway || 0, color: '' },
-        { label: 'To Pick', count: stats.orders_to_pick || 0, color: 'green' },
-        { label: 'To Pack', count: stats.orders_to_pack || 0, color: '' },
-        { label: 'To Ship', count: stats.orders_to_ship || 0, color: 'purple' },
-        { label: 'Low Stock', count: stats.low_stock_count || 0, color: 'red' },
+        { label: 'To Pick', count: stats.orders_ready_to_pick || 0, color: 'green' },
+        ...(stats.require_packing ? [
+          { label: 'To Pack', count: stats.ready_to_pack || 0, color: '' },
+          { label: 'Packed', count: stats.orders_packed || 0, color: 'purple' },
+        ] : []),
+        { label: 'To Ship', count: stats.ready_to_ship || 0, color: 'purple' },
+        { label: 'Low Stock', count: stats.low_stock_items || 0, color: 'red' },
+        { label: 'Short Picks (7d)', count: stats.short_picks_7d || 0, color: stats.short_picks_7d > 0 ? 'red' : '' },
       ]
     : [];
 
@@ -120,6 +132,21 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {shortPicks.length > 0 && (
+        <div className="section">
+          <div className="section-title">Short picks (last 7 days)</div>
+          <DataTable columns={[
+            { key: 'sku', label: 'SKU', mono: true },
+            { key: 'bin_code', label: 'Bin', mono: true },
+            { key: 'qty_expected', label: 'Expected' },
+            { key: 'qty_picked', label: 'Picked' },
+            { key: 'shortage', label: 'Short', render: (r) => <span style={{ color: 'var(--accent-red)' }}>{r.shortage}</span> },
+            { key: 'user', label: 'Picker' },
+            { key: 'timestamp', label: 'When', mono: true, render: (r) => r.timestamp ? new Date(r.timestamp).toLocaleString() : '-' },
+          ]} data={shortPicks} />
+        </div>
+      )}
 
       <div className="section">
         <div className="section-title">Inbound expected</div>

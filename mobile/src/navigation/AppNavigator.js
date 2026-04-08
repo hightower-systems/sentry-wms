@@ -13,6 +13,8 @@ import PickScanScreen from '../screens/PickScanScreen';
 import PickWalkScreen from '../screens/PickWalkScreen';
 import PickCompleteScreen from '../screens/PickCompleteScreen';
 import PackShipScreen from '../screens/PackShipScreen';
+import PackScreen from '../screens/PackScreen';
+import ShipScreen from '../screens/ShipScreen';
 import CountScreen from '../screens/CountScreen';
 import TransferScreen from '../screens/TransferScreen';
 
@@ -41,6 +43,8 @@ export default function AppNavigator() {
             <Stack.Screen name="PickWalk" component={PickWalkScreen} />
             <Stack.Screen name="PickComplete" component={PickCompleteScreen} />
             <Stack.Screen name="PackShip" component={PackShipScreen} />
+            <Stack.Screen name="Pack" component={PackScreen} />
+            <Stack.Screen name="Ship" component={ShipScreen} />
             <Stack.Screen name="Count" component={CountScreen} />
             <Stack.Screen name="Transfer" component={TransferScreen} />
           </>

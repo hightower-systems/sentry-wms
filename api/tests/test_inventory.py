@@ -1,24 +1,21 @@
-import psycopg2
-import os
+from db_test_context import get_raw_connection
 
 
 def _query_val(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row[0] if row else None
 
 
 def _query_one(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row
 
 
@@ -26,7 +23,7 @@ class TestCreateCycleCount:
     def test_create_cycle_count(self, client, auth_headers):
         resp = client.post(
             "/api/inventory/cycle-count/create",
-            json={"warehouse_id": 1, "bin_ids": [2]},
+            json={"warehouse_id": 1, "bin_ids": [3]},
             headers=auth_headers,
         )
         assert resp.status_code == 200
@@ -38,7 +35,7 @@ class TestCreateCycleCount:
     def test_create_count_multiple_bins(self, client, auth_headers):
         resp = client.post(
             "/api/inventory/cycle-count/create",
-            json={"warehouse_id": 1, "bin_ids": [2, 3, 4]},
+            json={"warehouse_id": 1, "bin_ids": [3, 4, 5]},
             headers=auth_headers,
         )
         assert resp.status_code == 200
@@ -46,10 +43,10 @@ class TestCreateCycleCount:
         assert len(data["counts"]) == 3
 
     def test_create_count_empty_bin(self, client, auth_headers):
-        # Bin 8 (STG-01) has no inventory in seed data
+        # Bin 16 (QC-01) has no inventory in seed data
         resp = client.post(
             "/api/inventory/cycle-count/create",
-            json={"warehouse_id": 1, "bin_ids": [8]},
+            json={"warehouse_id": 1, "bin_ids": [16]},
             headers=auth_headers,
         )
         assert resp.status_code == 200
@@ -59,7 +56,7 @@ class TestCreateCycleCount:
     def test_create_count_invalid_warehouse(self, client, auth_headers):
         resp = client.post(
             "/api/inventory/cycle-count/create",
-            json={"warehouse_id": 9999, "bin_ids": [2]},
+            json={"warehouse_id": 9999, "bin_ids": [3]},
             headers=auth_headers,
         )
         assert resp.status_code == 404
@@ -70,7 +67,7 @@ class TestGetCycleCount:
         # Create a count first
         create_resp = client.post(
             "/api/inventory/cycle-count/create",
-            json={"warehouse_id": 1, "bin_ids": [2]},
+            json={"warehouse_id": 1, "bin_ids": [3]},
             headers=auth_headers,
         )
         count_id = create_resp.get_json()["counts"][0]["count_id"]
@@ -80,7 +77,7 @@ class TestGetCycleCount:
         data = resp.get_json()
         assert data["cycle_count"]["status"] == "PENDING"
         assert len(data["lines"]) >= 1
-        # Bin 2 has item 1 (qty 25) and item 7 (qty 40)
+        # Bin 3 (A-01-01) has item 1 (qty 50) and item 11 (qty 12)
         for line in data["lines"]:
             assert line["expected_quantity"] > 0
 
@@ -90,7 +87,7 @@ class TestGetCycleCount:
 
 
 class TestSubmitCycleCount:
-    def _create_count_for_bin(self, client, auth_headers, bin_id=2):
+    def _create_count_for_bin(self, client, auth_headers, bin_id=3):
         """Create a cycle count and return count_id and lines."""
         create_resp = client.post(
             "/api/inventory/cycle-count/create",
@@ -105,7 +102,7 @@ class TestSubmitCycleCount:
         return count_id, detail_resp.get_json()["lines"]
 
     def test_submit_count_no_variance(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
 
         # Submit exact expected quantities
         submit_lines = [
@@ -124,7 +121,7 @@ class TestSubmitCycleCount:
         assert data["summary"]["lines_with_variance"] == 0
 
     def test_submit_count_with_variance(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
 
         # Submit different quantities
         submit_lines = [
@@ -144,7 +141,7 @@ class TestSubmitCycleCount:
         assert len(data["summary"]["adjustments"]) > 0
 
     def test_submit_count_negative_variance(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
         line = lines[0]
         original_qty = line["expected_quantity"]
 
@@ -163,13 +160,13 @@ class TestSubmitCycleCount:
 
         # Verify inventory was decremented
         new_qty = _query_val(
-            "SELECT quantity_on_hand FROM inventory WHERE item_id = %s AND bin_id = 2",
+            "SELECT quantity_on_hand FROM inventory WHERE item_id = %s AND bin_id = 3",
             (line["item_id"],),
         )
         assert new_qty == original_qty - 3
 
     def test_submit_count_positive_variance(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
         line = lines[0]
         original_qty = line["expected_quantity"]
 
@@ -187,13 +184,13 @@ class TestSubmitCycleCount:
         assert adj["variance"] == 10
 
         new_qty = _query_val(
-            "SELECT quantity_on_hand FROM inventory WHERE item_id = %s AND bin_id = 2",
+            "SELECT quantity_on_hand FROM inventory WHERE item_id = %s AND bin_id = 3",
             (line["item_id"],),
         )
         assert new_qty == original_qty + 10
 
     def test_submit_count_updates_last_counted_at(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
         line = lines[0]
 
         submit_lines = [
@@ -206,13 +203,13 @@ class TestSubmitCycleCount:
         )
 
         last_counted = _query_val(
-            "SELECT last_counted_at FROM inventory WHERE item_id = %s AND bin_id = 2",
+            "SELECT last_counted_at FROM inventory WHERE item_id = %s AND bin_id = 3",
             (line["item_id"],),
         )
         assert last_counted is not None, "last_counted_at should be set"
 
     def test_submit_count_creates_audit_log(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
 
         submit_lines = [
             {"count_line_id": l["count_line_id"], "counted_quantity": l["expected_quantity"]}
@@ -228,7 +225,7 @@ class TestSubmitCycleCount:
         assert row is not None
 
     def test_submit_count_already_completed(self, client, auth_headers):
-        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=2)
+        count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
 
         submit_lines = [
             {"count_line_id": l["count_line_id"], "counted_quantity": l["expected_quantity"]}
@@ -253,6 +250,6 @@ class TestSubmitCycleCount:
     def test_inventory_requires_auth(self, client):
         resp = client.post(
             "/api/inventory/cycle-count/create",
-            json={"warehouse_id": 1, "bin_ids": [2]},
+            json={"warehouse_id": 1, "bin_ids": [3]},
         )
         assert resp.status_code == 401

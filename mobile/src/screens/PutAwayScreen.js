@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Alert, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
+import PagedList from '../components/PagedList';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
 import { colors, fonts } from '../theme/styles';
@@ -9,28 +10,72 @@ import { colors, fonts } from '../theme/styles';
 export default function PutAwayScreen({ navigation }) {
   const { warehouseId } = useAuth();
 
-  // Current item being put away
-  const [item, setItem] = useState(null);
-  const [preferredBin, setPreferredBin] = useState(null);
-  const [fromBinId, setFromBinId] = useState(null);
-  const [quantity, setQuantity] = useState(0);
-  const [lotNumber, setLotNumber] = useState(null);
+  // Phase: 'load' → 'process' → 'done'
+  const [phase, setPhase] = useState('load');
 
-  // Session history
-  const [history, setHistory] = useState([]);
+  // Load phase: queue of items to put away
+  const [queue, setQueue] = useState([]);
+  const [scanDisabled, setScanDisabled] = useState(false);
+
+  // Process phase: working through queue
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [activeItem, setActiveItem] = useState(null);
+  const [preferredBin, setPreferredBin] = useState(null);
+  const [scannedBin, setScannedBin] = useState(null);
+  const [putQty, setPutQty] = useState('');
+  const [processPhase, setProcessPhase] = useState('scan_bin'); // scan_bin | enter_qty
 
   // Preferred bin prompt
   const [showPreferredPrompt, setShowPreferredPrompt] = useState(false);
   const [promptData, setPromptData] = useState(null);
 
+  // Session history
+  const [history, setHistory] = useState([]);
   const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
-  const [phase, setPhase] = useState('scan_item'); // scan_item | scan_bin
 
-  // Step 1: Scan item barcode
+  // --- Load Phase ---
+
   const handleScanItem = async (barcode) => {
+    // Check for staging bin scan first
     try {
-      // Look up item
+      const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
+      if (binResp.data?.bin) {
+        const bin = binResp.data.bin;
+        if (bin.bin_type === 'Staging') {
+          // Load all items from this staging bin
+          const items = binResp.data.items || [];
+          if (items.length === 0) {
+            setError('No items in this staging bin');
+            setScanDisabled(true);
+            return;
+          }
+          const newEntries = items
+            .filter((it) => !queue.find((q) => q.item_id === it.item_id && q.from_bin_id === bin.bin_id))
+            .map((it) => ({
+              item_id: it.item_id,
+              sku: it.sku,
+              item_name: it.item_name,
+              upc: it.upc,
+              from_bin_id: bin.bin_id,
+              from_bin_code: bin.bin_code,
+              quantity: it.quantity_on_hand,
+              lot_number: it.lot_number || null,
+            }));
+          if (newEntries.length === 0) {
+            setError('All items from this bin already loaded');
+            setScanDisabled(true);
+            return;
+          }
+          setQueue((prev) => [...prev, ...newEntries]);
+          return;
+        }
+      }
+    } catch {
+      // Not a bin, try as item
+    }
+
+    // Item scan
+    try {
       const itemResp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
       if (!itemResp.data?.item) {
         setError('Item not found');
@@ -39,11 +84,9 @@ export default function PutAwayScreen({ navigation }) {
       }
 
       const scannedItem = itemResp.data.item;
-
-      // Check if this item is in a staging/receiving bin
       const locations = itemResp.data.locations || [];
       const stagingLoc = locations.find(
-        (l) => l.bin_type === 'RECEIVING' || l.bin_type === 'INBOUND_STAGING'
+        (l) => l.bin_type === 'Staging'
       );
 
       if (!stagingLoc) {
@@ -52,24 +95,63 @@ export default function PutAwayScreen({ navigation }) {
         return;
       }
 
-      setFromBinId(stagingLoc.bin_id);
-      setQuantity(stagingLoc.quantity_on_hand);
-      setLotNumber(stagingLoc.lot_number || null);
+      // Duplicate check
+      if (queue.find((q) => q.item_id === scannedItem.item_id && q.from_bin_id === stagingLoc.bin_id)) {
+        setError('Already added');
+        setScanDisabled(true);
+        return;
+      }
 
-      // Get preferred bin suggestion
-      const suggestResp = await client.get(`/api/putaway/suggest/${scannedItem.item_id}`);
-      const preferred = suggestResp.data.preferred_bin || suggestResp.data.suggested_bin || null;
-
-      setItem(scannedItem);
-      setPreferredBin(preferred);
-      setPhase('scan_bin');
+      setQueue((prev) => [...prev, {
+        item_id: scannedItem.item_id,
+        sku: scannedItem.sku,
+        item_name: scannedItem.item_name,
+        upc: scannedItem.upc,
+        from_bin_id: stagingLoc.bin_id,
+        from_bin_code: stagingLoc.bin_code,
+        quantity: stagingLoc.quantity_on_hand,
+        lot_number: stagingLoc.lot_number || null,
+      }]);
     } catch {
       setError('Item not found');
       setScanDisabled(true);
     }
   };
 
-  // Step 3: Scan bin to confirm put-away
+  const removeFromQueue = (index) => {
+    setQueue((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleLoadAll = async () => {
+    if (queue.length === 0) return;
+    setCurrentIndex(0);
+    await loadItem(0);
+  };
+
+  // --- Process Phase ---
+
+  const loadItem = async (index) => {
+    if (index >= queue.length) {
+      setPhase('done');
+      return;
+    }
+    const entry = queue[index];
+    setActiveItem(entry);
+    setCurrentIndex(index);
+    setScannedBin(null);
+    setPutQty(String(entry.quantity));
+    setProcessPhase('scan_bin');
+    setPhase('process');
+
+    // Get preferred bin suggestion
+    try {
+      const suggestResp = await client.get(`/api/putaway/suggest/${entry.item_id}`);
+      setPreferredBin(suggestResp.data.preferred_bin || suggestResp.data.suggested_bin || null);
+    } catch {
+      setPreferredBin(null);
+    }
+  };
+
   const handleScanBin = async (barcode) => {
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
@@ -78,50 +160,44 @@ export default function PutAwayScreen({ navigation }) {
         setScanDisabled(true);
         return;
       }
+      setScannedBin(binResp.data.bin);
+      setProcessPhase('enter_qty');
+    } catch {
+      setError('Bin not found');
+      setScanDisabled(true);
+    }
+  };
 
-      const scannedBin = binResp.data.bin;
+  const handleConfirmPutAway = async () => {
+    const qty = parseInt(putQty, 10);
+    if (!qty || qty <= 0) return;
 
-      // Execute put-away
+    try {
       await client.post('/api/putaway/confirm', {
-        item_id: item.item_id,
-        from_bin_id: fromBinId,
+        item_id: activeItem.item_id,
+        from_bin_id: activeItem.from_bin_id,
         to_bin_id: scannedBin.bin_id,
-        quantity: quantity,
-        lot_number: lotNumber,
+        quantity: qty,
+        lot_number: activeItem.lot_number,
         warehouse_id: warehouseId,
       });
 
-      // Add to session history
       setHistory((prev) => [...prev, {
-        sku: item.sku,
-        item_name: item.item_name,
+        sku: activeItem.sku,
+        item_name: activeItem.item_name,
         bin_code: scannedBin.bin_code,
-        quantity: quantity,
+        quantity: qty,
       }]);
 
-      // Determine if we need to show the preferred bin prompt
+      // Check preferred bin
       const matchesPreferred = preferredBin && scannedBin.bin_id === preferredBin.bin_id;
-
       if (matchesPreferred) {
-        // Matches preferred - just reset, no prompt needed
-        resetForNextItem();
+        loadItem(currentIndex + 1);
       } else if (!preferredBin) {
-        // No preferred bin exists - offer to set one
-        setPromptData({
-          type: 'set_new',
-          item,
-          newBin: scannedBin,
-          oldBin: null,
-        });
+        setPromptData({ type: 'set_new', item: activeItem, newBin: scannedBin, oldBin: null });
         setShowPreferredPrompt(true);
       } else {
-        // Different bin from preferred - offer to change
-        setPromptData({
-          type: 'change',
-          item,
-          newBin: scannedBin,
-          oldBin: preferredBin,
-        });
+        setPromptData({ type: 'change', item: activeItem, newBin: scannedBin, oldBin: preferredBin });
         setShowPreferredPrompt(true);
       }
     } catch (err) {
@@ -143,37 +219,17 @@ export default function PutAwayScreen({ navigation }) {
     }
     setShowPreferredPrompt(false);
     setPromptData(null);
-    resetForNextItem();
+    loadItem(currentIndex + 1);
   };
 
   const handleSkipPreferred = () => {
     setShowPreferredPrompt(false);
     setPromptData(null);
-    resetForNextItem();
+    loadItem(currentIndex + 1);
   };
 
-  const resetForNextItem = () => {
-    setItem(null);
-    setPreferredBin(null);
-    setFromBinId(null);
-    setQuantity(0);
-    setLotNumber(null);
-    setPhase('scan_item');
-  };
-
-  const handleCancel = () => {
-    if (history.length === 0) {
-      navigation.goBack();
-      return;
-    }
-    Alert.alert(
-      'Leave Put-Away',
-      'Are you sure? All put-aways in this session have already been saved.',
-      [
-        { text: 'Stay', style: 'cancel' },
-        { text: 'Leave', onPress: () => navigation.goBack() },
-      ]
-    );
+  const handleSkipItem = () => {
+    loadItem(currentIndex + 1);
   };
 
   return (
@@ -183,7 +239,15 @@ export default function PutAwayScreen({ navigation }) {
           <Text style={styles.backText}>{'<'}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>PUT-AWAY</Text>
-        {history.length > 0 ? (
+        {phase === 'load' && queue.length > 0 ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{queue.length}</Text>
+          </View>
+        ) : phase === 'process' ? (
+          <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted }}>
+            {currentIndex + 1} / {queue.length}
+          </Text>
+        ) : history.length > 0 ? (
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{history.length}</Text>
           </View>
@@ -192,38 +256,56 @@ export default function PutAwayScreen({ navigation }) {
         )}
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
-        {phase === 'scan_item' && (
-          <>
-            <ScanInput placeholder="SCAN ITEM" onScan={handleScanItem} disabled={scanDisabled} />
+      {/* Load Phase */}
+      {phase === 'load' && (
+        <>
+          <View style={styles.content}>
+            <View style={{ padding: 16, paddingBottom: 0 }}>
+              <ScanInput placeholder="SCAN ITEM OR STAGING BIN" onScan={handleScanItem} disabled={scanDisabled} />
+            </View>
 
-            {history.length > 0 && (
-              <View style={styles.historySection}>
-                <Text style={styles.historyTitle}>
-                  Put-aways this session: {history.length}
-                </Text>
-                {history.map((h, i) => (
-                  <View key={i} style={styles.historyRow}>
-                    <Text style={styles.historyCheck}>{'\u2713'}</Text>
+            <View style={{ flex: 1, paddingHorizontal: 16 }}>
+              <PagedList
+                items={queue}
+                pageSize={20}
+                renderItem={(entry, index) => (
+                  <View style={styles.queueRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.historySku}>{h.sku}</Text>
-                      <Text style={styles.historyDetail}>{h.item_name}</Text>
+                      <Text style={styles.queueSku}>{entry.sku}</Text>
+                      <Text style={styles.queueDetail}>
+                        {entry.item_name} {'\u00b7'} QTY: {entry.quantity} {'\u00b7'} from {entry.from_bin_code}
+                      </Text>
                     </View>
-                    <Text style={styles.historyBin}>{'\u2192'} {h.bin_code}</Text>
+                    <TouchableOpacity style={styles.removeBtn} onPress={() => removeFromQueue(index)}>
+                      <Text style={styles.removeText}>X</Text>
+                    </TouchableOpacity>
                   </View>
-                ))}
-              </View>
-            )}
-          </>
-        )}
+                )}
+              />
+            </View>
 
-        {phase === 'scan_bin' && item && (
-          <>
+            <View style={styles.bottomBar}>
+              <TouchableOpacity
+                style={[styles.buttonPrimary, queue.length === 0 && styles.buttonDisabled]}
+                onPress={handleLoadAll}
+                disabled={queue.length === 0}
+              >
+                <Text style={styles.buttonPrimaryText}>LOAD ALL ITEMS</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Process Phase */}
+      {phase === 'process' && activeItem && (
+        <>
+          <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
             {/* Item info */}
             <View style={styles.itemCard}>
-              <Text style={styles.itemName}>{item.item_name}</Text>
-              <Text style={styles.sku}>{item.sku}</Text>
-              <Text style={styles.qty}>QTY: {quantity}</Text>
+              <Text style={styles.itemName}>{activeItem.item_name}</Text>
+              <Text style={styles.sku}>{activeItem.sku}</Text>
+              <Text style={styles.fromBin}>FROM: {activeItem.from_bin_code} {'\u00b7'} QTY: {activeItem.quantity}</Text>
             </View>
 
             {/* Suggested bin */}
@@ -242,22 +324,72 @@ export default function PutAwayScreen({ navigation }) {
               </View>
             )}
 
-            <ScanInput placeholder="SCAN BIN TO CONFIRM" onScan={handleScanBin} disabled={scanDisabled} />
-          </>
-        )}
-      </ScrollView>
+            {processPhase === 'scan_bin' && (
+              <ScanInput placeholder="SCAN DESTINATION BIN" onScan={handleScanBin} disabled={scanDisabled} />
+            )}
 
-      {/* Bottom bar */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity style={styles.buttonDone} onPress={() => navigation.goBack()}>
-          <Text style={styles.buttonDoneText}>DONE</Text>
-        </TouchableOpacity>
-        {phase === 'scan_bin' && (
-          <TouchableOpacity style={styles.buttonCancel} onPress={resetForNextItem}>
-            <Text style={styles.buttonCancelText}>BACK</Text>
+            {processPhase === 'enter_qty' && scannedBin && (
+              <View style={styles.confirmCard}>
+                <Text style={styles.confirmLabel}>DESTINATION</Text>
+                <Text style={styles.confirmBinCode}>{scannedBin.bin_code}</Text>
+                <View style={styles.qtyRow}>
+                  <Text style={styles.qtyLabel}>QUANTITY</Text>
+                  <TextInput
+                    style={styles.qtyInput}
+                    value={putQty}
+                    onChangeText={setPutQty}
+                    keyboardType="number-pad"
+                  />
+                </View>
+                <TouchableOpacity style={styles.buttonPrimary} onPress={handleConfirmPutAway}>
+                  <Text style={styles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.buttonSecondary, { marginTop: 8 }]}
+                  onPress={() => { setScannedBin(null); setProcessPhase('scan_bin'); }}
+                >
+                  <Text style={styles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={styles.bottomBar}>
+            <TouchableOpacity style={styles.buttonSecondary} onPress={handleSkipItem}>
+              <Text style={styles.buttonSecondaryText}>SKIP ITEM</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+
+      {/* Done Phase */}
+      {phase === 'done' && (
+        <View style={styles.doneSection}>
+          <Text style={styles.doneCheck}>{'\u2713'}</Text>
+          <Text style={styles.doneText}>Put-Away Complete</Text>
+          <Text style={styles.doneDetail}>
+            {history.length} item{history.length !== 1 ? 's' : ''} put away
+          </Text>
+
+          {history.map((h, i) => (
+            <View key={i} style={styles.historyRow}>
+              <Text style={styles.historyCheck}>{'\u2713'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.historySku}>{h.sku}</Text>
+                <Text style={styles.historyDetail}>{h.item_name}</Text>
+              </View>
+              <Text style={styles.historyBin}>{'\u2192'} {h.bin_code}</Text>
+            </View>
+          ))}
+
+          <TouchableOpacity style={[styles.buttonPrimary, { marginTop: 24, width: '100%' }]} onPress={() => { setPhase('load'); setQueue([]); }}>
+            <Text style={styles.buttonPrimaryText}>PUT AWAY MORE</Text>
           </TouchableOpacity>
-        )}
-      </View>
+          <TouchableOpacity style={[styles.buttonSecondary, { marginTop: 8, width: '100%' }]} onPress={() => navigation.goBack()}>
+            <Text style={styles.buttonSecondaryText}>DONE</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Preferred bin prompt modal */}
       <Modal visible={showPreferredPrompt} transparent animationType="fade">
@@ -331,13 +463,23 @@ const styles = StyleSheet.create({
   content: { flex: 1 },
   contentInner: { padding: 16 },
 
-  // Item card
+  // Load phase
+  queueRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    padding: 14, marginBottom: 8, minHeight: 48,
+  },
+  queueSku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  queueDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  removeBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
+
+  // Process phase
   itemCard: { marginBottom: 16 },
   itemName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
   sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
-  qty: { fontFamily: fonts.mono, fontSize: 14, color: colors.textPrimary, marginTop: 4 },
+  fromBin: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 4 },
 
-  // Suggested bin
   suggestCard: {
     borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: 8,
     padding: 20, marginBottom: 16, alignItems: 'center',
@@ -346,7 +488,6 @@ const styles = StyleSheet.create({
   suggestBinCode: { fontFamily: fonts.mono, fontSize: 30, fontWeight: '700', color: colors.accentRed },
   suggestZone: { fontFamily: fonts.mono, fontSize: 12, color: colors.copper, letterSpacing: 0.3, marginTop: 4, textTransform: 'uppercase' },
 
-  // No preferred bin
   noPreferredCard: {
     borderWidth: 1, borderColor: colors.border, borderRadius: 8, borderStyle: 'dashed',
     padding: 20, marginBottom: 16, alignItems: 'center',
@@ -354,11 +495,29 @@ const styles = StyleSheet.create({
   noPreferredText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted },
   noPreferredSub: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
 
+  confirmCard: {
+    borderWidth: 1.5, borderColor: colors.success, borderRadius: 8,
+    padding: 16, marginTop: 8,
+  },
+  confirmLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
+  confirmBinCode: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.success, marginBottom: 12 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  qtyLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
+  qtyInput: {
+    fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
+    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
+  },
+
+  // Done phase
+  doneSection: { flex: 1, alignItems: 'center', padding: 32, paddingTop: 40 },
+  doneCheck: { fontSize: 64, color: colors.success, marginBottom: 16 },
+  doneText: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
+  doneDetail: { fontSize: 15, color: colors.textMuted, marginBottom: 16 },
+
   // History
-  historySection: { marginTop: 16 },
-  historyTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 8 },
   historyRow: {
-    flexDirection: 'row', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', width: '100%',
     borderWidth: 1, borderColor: colors.success, borderRadius: 8,
     padding: 12, marginBottom: 6, minHeight: 48,
   },
@@ -369,16 +528,17 @@ const styles = StyleSheet.create({
 
   // Bottom bar
   bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
-  buttonDone: {
+  buttonPrimary: {
     backgroundColor: colors.accentRed, borderRadius: 8,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
-  buttonDoneText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonCancel: {
+  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
+  buttonDisabled: { opacity: 0.5 },
+  buttonSecondary: {
     backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
-  buttonCancelText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  buttonSecondaryText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 
   // Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 32 },
@@ -389,14 +549,4 @@ const styles = StyleSheet.create({
   modalDivider: { height: 1, backgroundColor: colors.border, marginVertical: 16 },
   modalBody: { fontSize: 14, color: colors.textPrimary, marginBottom: 20 },
   modalActions: { gap: 8 },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48, marginBottom: 8,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonSecondaryText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 });

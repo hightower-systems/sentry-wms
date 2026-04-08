@@ -1,28 +1,26 @@
-import psycopg2
-import os
+from db_test_context import get_raw_connection
 
 
 def _query_one(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row
 
 
 class TestPOLookup:
     def test_lookup_po_by_barcode(self, client, auth_headers):
-        resp = client.get("/api/receiving/po/PO-001", headers=auth_headers)
+        resp = client.get("/api/receiving/po/PO-2026-001", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["purchase_order"]["po_number"] == "PO-001"
+        assert data["purchase_order"]["po_number"] == "PO-2026-001"
         assert data["purchase_order"]["status"] == "OPEN"
-        assert len(data["lines"]) == 3, "PO-001 should have 3 lines"
+        assert len(data["lines"]) == 10, "PO-2026-001 should have 10 lines"
 
     def test_lookup_po_by_number(self, client, auth_headers):
-        resp = client.get("/api/receiving/po/PO-001", headers=auth_headers)
+        resp = client.get("/api/receiving/po/PO-2026-001", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["purchase_order"]["po_id"] == 1
@@ -33,14 +31,12 @@ class TestPOLookup:
 
     def test_lookup_po_closed(self, client, auth_headers):
         # Close the PO directly in the DB, then try to look it up
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
-        conn.autocommit = True
+        conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute("UPDATE purchase_orders SET status = 'CLOSED' WHERE po_id = 1")
         cur.close()
-        conn.close()
 
-        resp = client.get("/api/receiving/po/PO-001", headers=auth_headers)
+        resp = client.get("/api/receiving/po/PO-2026-001", headers=auth_headers)
         assert resp.status_code == 400
         assert "closed" in resp.get_json()["error"].lower()
 
@@ -81,13 +77,20 @@ class TestReceiveItems:
 
     def test_receive_all_items_completes_po(self, client, auth_headers, seed_data):
         bid = seed_data["staging_bin_id"]
-        # Receive all 3 PO lines fully: item 1 qty 50, item 4 qty 20, item 6 qty 100
+        # Receive all 10 PO-2026-001 lines fully
         payload = {
             "po_id": 1,
             "items": [
-                {"item_id": 1, "quantity": 50, "bin_id": bid},
-                {"item_id": 4, "quantity": 20, "bin_id": bid},
-                {"item_id": 6, "quantity": 100, "bin_id": bid},
+                {"item_id": 1, "quantity": 100, "bin_id": bid},
+                {"item_id": 2, "quantity": 100, "bin_id": bid},
+                {"item_id": 3, "quantity": 100, "bin_id": bid},
+                {"item_id": 4, "quantity": 100, "bin_id": bid},
+                {"item_id": 5, "quantity": 50, "bin_id": bid},
+                {"item_id": 6, "quantity": 20, "bin_id": bid},
+                {"item_id": 7, "quantity": 200, "bin_id": bid},
+                {"item_id": 8, "quantity": 30, "bin_id": bid},
+                {"item_id": 9, "quantity": 40, "bin_id": bid},
+                {"item_id": 10, "quantity": 60, "bin_id": bid},
             ],
         }
         resp = client.post("/api/receiving/receive", json=payload, headers=auth_headers)
@@ -116,7 +119,7 @@ class TestReceiveItems:
     def test_receive_invalid_item(self, client, auth_headers, seed_data):
         payload = {
             "po_id": 1,
-            "items": [{"item_id": 2, "quantity": 5, "bin_id": seed_data["staging_bin_id"]}],
+            "items": [{"item_id": 11, "quantity": 5, "bin_id": seed_data["staging_bin_id"]}],
         }
         resp = client.post("/api/receiving/receive", json=payload, headers=auth_headers)
         assert resp.status_code == 400
@@ -131,10 +134,10 @@ class TestReceiveItems:
         assert resp.status_code == 400
 
     def test_receive_over_receipt_warning(self, client, auth_headers, seed_data):
-        # PO line 1 has 50 ordered. Receive 60 - should succeed with warning
+        # PO line 1 has 100 ordered. Receive 110 - should succeed with warning
         payload = {
             "po_id": 1,
-            "items": [{"item_id": 1, "quantity": 60, "bin_id": seed_data["staging_bin_id"]}],
+            "items": [{"item_id": 1, "quantity": 110, "bin_id": seed_data["staging_bin_id"]}],
         }
         resp = client.post("/api/receiving/receive", json=payload, headers=auth_headers)
         assert resp.status_code == 200

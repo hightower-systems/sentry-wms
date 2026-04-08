@@ -9,7 +9,7 @@ from middleware.auth_middleware import require_auth
 from models.database import get_db
 from services.auth_service import authenticate_user, generate_token
 
-ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack_ship", "count", "transfer"]
+ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -47,9 +47,18 @@ def me():
             return jsonify({"error": "User not found"}), 404
 
         if row.role == "ADMIN":
-            functions = ALL_FUNCTIONS
+            functions = list(ALL_FUNCTIONS)
         else:
             functions = list(row.allowed_functions) if row.allowed_functions else []
+
+        # Check packing toggle — filter out "pack" when packing is disabled
+        packing_row = db.execute(
+            text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")
+        ).fetchone()
+        require_packing = not packing_row or packing_row.value != "false"
+
+        if not require_packing:
+            functions = [f for f in functions if f != "pack"]
 
         return jsonify({
             "user_id": row.user_id,
@@ -58,6 +67,7 @@ def me():
             "role": row.role,
             "warehouse_id": row.warehouse_id,
             "allowed_functions": functions,
+            "require_packing": require_packing,
         })
     finally:
         db.close()

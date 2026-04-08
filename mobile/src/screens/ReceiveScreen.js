@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Pressable, Vibration, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Pressable, Vibration, Alert, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
@@ -32,11 +32,40 @@ export default function ReceiveScreen({ navigation }) {
   const [turboStatus, setTurboStatus] = useState('');
 
   const [error, setError] = useState('');
+  const [receivingBinId, setReceivingBinId] = useState(null);
+  const [receivingBinCode, setReceivingBinCode] = useState('');
+  const [showBinPicker, setShowBinPicker] = useState(false);
+  const [binPickerValue, setBinPickerValue] = useState('');
+  const [allowOverReceiving, setAllowOverReceiving] = useState(true);
 
   useEffect(() => {
     AsyncStorage.getItem(MODE_KEY).then((saved) => {
       if (saved === 'turbo' || saved === 'standard') setMode(saved);
     }).catch(() => {});
+    // Load over-receiving setting
+    client.get('/api/admin/settings/allow_over_receiving')
+      .then((resp) => {
+        const val = resp.data?.value;
+        setAllowOverReceiving(val !== 'false' && val !== false);
+      })
+      .catch(() => {});
+    // Load default receiving bin from settings
+    client.get('/api/admin/settings/default_receiving_bin')
+      .then((resp) => {
+        const binId = parseInt(resp.data?.value, 10);
+        if (binId) {
+          setReceivingBinId(binId);
+          // Look up bin code via admin bins list
+          client.get('/api/admin/bins?warehouse_id=1')
+            .then((r) => {
+              const bins = r.data?.bins || [];
+              const match = bins.find((b) => b.id === binId);
+              setReceivingBinCode(match?.bin_code || `Bin #${binId}`);
+            })
+            .catch(() => setReceivingBinCode(`Bin #${binId}`));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const changeMode = (newMode) => {
@@ -139,6 +168,23 @@ export default function ReceiveScreen({ navigation }) {
     setQuantity(String(remaining > 0 ? remaining : 1));
   };
 
+  const doReceiveStandard = async (qty) => {
+    try {
+      await client.post('/api/receiving/receive', {
+        po_id: po.po_id,
+        items: [{ item_id: activeItem.item_id, quantity: qty, bin_id: receivingBinId || activeItem.staging_bin_id || 1 }],
+        warehouse_id: warehouseId,
+      });
+
+      await refreshPO();
+      setActiveItem(null);
+      setQuantity('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to receive');
+      setScanDisabled(true);
+    }
+  };
+
   const handleConfirmStandard = async () => {
     if (!activeItem) return;
     const qty = parseInt(quantity, 10);
@@ -146,25 +192,25 @@ export default function ReceiveScreen({ navigation }) {
 
     const remaining = activeItem.quantity_ordered - activeItem.quantity_received;
 
-    try {
-      await client.post('/api/receiving/receive', {
-        po_id: po.po_id,
-        items: [{ item_id: activeItem.item_id, quantity: qty, bin_id: activeItem.staging_bin_id || 1 }],
-        warehouse_id: warehouseId,
-      });
-
-      await refreshPO();
-      setActiveItem(null);
-      setQuantity('');
-
-      if (qty > remaining && remaining > 0) {
-        setError(`Receiving ${qty - remaining} over expected quantity`);
+    if (qty > remaining && remaining > 0) {
+      if (!allowOverReceiving) {
+        setError(`Cannot receive more than ordered (${remaining} remaining)`);
         setScanDisabled(true);
+        return;
       }
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to receive');
-      setScanDisabled(true);
+      // Show warning but allow
+      Alert.alert(
+        'Over-Receiving',
+        `You are receiving ${qty - remaining} more than expected. Continue?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Continue', onPress: () => doReceiveStandard(qty) },
+        ]
+      );
+      return;
     }
+
+    await doReceiveStandard(qty);
   };
 
   // Turbo mode
@@ -181,7 +227,7 @@ export default function ReceiveScreen({ navigation }) {
     try {
       await client.post('/api/receiving/receive', {
         po_id: po.po_id,
-        items: [{ item_id: match.item_id, quantity: 1, bin_id: match.staging_bin_id || 1 }],
+        items: [{ item_id: match.item_id, quantity: 1, bin_id: receivingBinId || match.staging_bin_id || 1 }],
         warehouse_id: warehouseId,
       });
 
@@ -199,9 +245,9 @@ export default function ReceiveScreen({ navigation }) {
       setError(err.response?.data?.error || 'Failed to receive');
       setScanDisabled(true);
     }
-  }, [lines, po, warehouseId]);
+  }, [lines, po, warehouseId, receivingBinId]);
 
-  const enqueueTurbo = useScanQueue(processTurboScan);
+  const [enqueueTurbo, turboProcessing] = useScanQueue(processTurboScan);
 
   const handleScanItem = mode === 'turbo' ? enqueueTurbo : handleScanItemStandard;
 
@@ -214,7 +260,19 @@ export default function ReceiveScreen({ navigation }) {
   };
 
   const handleCancel = () => {
-    navigation.goBack();
+    const hasReceived = lines.some((l) => l.quantity_received > 0);
+    if (!hasReceived) {
+      navigation.goBack();
+      return;
+    }
+    Alert.alert(
+      'Cancel Receiving',
+      'Are you sure you want to cancel? Received items will not be saved.',
+      [
+        { text: 'Go Back', style: 'cancel' },
+        { text: 'Yes, Cancel', style: 'destructive', onPress: () => navigation.goBack() },
+      ]
+    );
   };
 
   const resetAll = () => {
@@ -308,6 +366,11 @@ export default function ReceiveScreen({ navigation }) {
                   <Text style={styles.modeBadgeText}>{mode === 'turbo' ? 'TURBO' : 'STANDARD'}</Text>
                 </View>
               </View>
+              {receivingBinCode ? (
+                <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
+                  {'\u2192'} {receivingBinCode}
+                </Text>
+              ) : null}
             </View>
 
             {poComplete ? (
@@ -325,7 +388,7 @@ export default function ReceiveScreen({ navigation }) {
                 <ScanInput
                   placeholder="SCAN ITEM"
                   onScan={handleScanItem}
-                  disabled={scanDisabled || (mode === 'standard' && !!activeItem)}
+                  disabled={scanDisabled || (mode === 'standard' && !!activeItem) || (mode === 'turbo' && turboProcessing)}
                 />
 
                 {mode === 'turbo' && turboStatus !== '' && (
@@ -421,8 +484,55 @@ export default function ReceiveScreen({ navigation }) {
               <Text style={[styles.modeOptionLabel, mode === 'turbo' && styles.modeOptionLabelActive]}>TURBO</Text>
               <Text style={styles.modeOptionDesc}>Each scan = 1 unit received</Text>
             </TouchableOpacity>
+            <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 8 }} />
+            <Text style={styles.modeTitle}>RECEIVING BIN</Text>
+            <TouchableOpacity
+              style={styles.modeOption}
+              onPress={() => { setShowModeMenu(false); setBinPickerValue(''); setShowBinPicker(true); }}
+            >
+              <Text style={styles.modeOptionLabel}>{receivingBinCode || 'Not Set'}</Text>
+              <Text style={styles.modeOptionDesc}>Tap to change destination bin</Text>
+            </TouchableOpacity>
           </View>
         </Pressable>
+      </Modal>
+
+      {/* Bin picker modal */}
+      <Modal visible={showBinPicker} transparent animationType="fade">
+        <View style={styles.modeOverlay}>
+          <View style={styles.modeCard}>
+            <Text style={styles.modeTitle}>CHANGE RECEIVING BIN</Text>
+            <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
+              Scan or type bin code
+            </Text>
+            <ScanInput
+              placeholder="SCAN BIN"
+              onScan={async (barcode) => {
+                try {
+                  const resp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
+                  if (resp.data?.bin) {
+                    setReceivingBinId(resp.data.bin.bin_id);
+                    setReceivingBinCode(resp.data.bin.bin_code);
+                    setShowBinPicker(false);
+                  } else {
+                    setError('Bin not found');
+                    setScanDisabled(true);
+                  }
+                } catch {
+                  setError('Bin not found');
+                  setScanDisabled(true);
+                }
+              }}
+              disabled={false}
+            />
+            <TouchableOpacity
+              style={[styles.buttonCancel, { marginTop: 8 }]}
+              onPress={() => setShowBinPicker(false)}
+            >
+              <Text style={styles.buttonCancelText}>CANCEL</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       <ErrorPopup

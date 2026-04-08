@@ -1,14 +1,12 @@
-import psycopg2
-import os
+from db_test_context import get_raw_connection
 
 
 def _query_one(sql, params=None):
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(sql, params or ())
     row = cur.fetchone()
     cur.close()
-    conn.close()
     return row
 
 
@@ -18,8 +16,8 @@ def _query_val(sql, params=None):
 
 
 def _create_batch(client, auth_headers, so_ids=None):
-    """Create a pick batch for the given SOs (default: SO-001 and SO-002)."""
-    identifiers = so_ids or ["SO-001", "SO-002"]
+    """Create a pick batch for the given SOs (default: SO-2026-001 and SO-2026-002)."""
+    identifiers = so_ids or ["SO-2026-001", "SO-2026-002"]
     resp = client.post(
         "/api/picking/create-batch",
         json={"so_identifiers": identifiers, "warehouse_id": 1},
@@ -46,9 +44,9 @@ class TestCreateBatch:
 
     def test_create_batch_allocates_inventory(self, client, auth_headers):
         _create_batch(client, auth_headers)
-        # Item 1 (WIDGET-BLU) in bin 2 should have quantity_allocated > 0
+        # Item 1 (TST-001) in bin 3 should have quantity_allocated > 0
         row = _query_one(
-            "SELECT quantity_allocated FROM inventory WHERE item_id = 1 AND bin_id = 2"
+            "SELECT quantity_allocated FROM inventory WHERE item_id = 1 AND bin_id = 3"
         )
         assert row[0] > 0, "Inventory should be allocated after batch creation"
 
@@ -312,7 +310,7 @@ class TestCompleteBatch:
     def test_picking_requires_auth(self, client):
         resp = client.post(
             "/api/picking/create-batch",
-            json={"so_identifiers": ["SO-001"], "warehouse_id": 1},
+            json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1},
         )
         assert resp.status_code == 401
 
@@ -335,8 +333,7 @@ def test_next_pick_with_zone_no_aisle(client, auth_headers):
     """Bin with zone but no aisle returns zone and aisle=null."""
     # The staging bin (RCV-01) has zone (Receiving Area) but no aisle
     # Create an SO that needs an item in a staging-like location
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     # Put some item 1 inventory in the staging bin (bin_id=1, zone=Receiving, no aisle)
     cur.execute(
@@ -345,13 +342,11 @@ def test_next_pick_with_zone_no_aisle(client, auth_headers):
     # Remove item 1 from all non-staging bins so it must pick from staging
     cur.execute("DELETE FROM inventory WHERE item_id = 1 AND bin_id != 1")
     # Change staging bin type so it's pickable
-    cur.execute("UPDATE bins SET bin_type = 'STANDARD' WHERE bin_id = 1")
+    cur.execute("UPDATE bins SET bin_type = 'Pickable' WHERE bin_id = 1")
     cur.close()
-    conn.close()
 
     # Create SO for item 1
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
@@ -363,7 +358,6 @@ def test_next_pick_with_zone_no_aisle(client, auth_headers):
         (so_id,),
     )
     cur.close()
-    conn.close()
 
     batch_resp = client.post(
         "/api/picking/create-batch",
@@ -374,15 +368,14 @@ def test_next_pick_with_zone_no_aisle(client, auth_headers):
 
     resp = client.get(f"/api/picking/batch/{batch['batch_id']}/next", headers=auth_headers)
     data = resp.get_json()
-    assert data["bin_code"] == "RCV-01"
+    assert data["bin_code"] == "RECV-01"
     assert data["zone"] == "Receiving Area"
     assert data["aisle"] is None
 
 
 def test_next_pick_no_zone(client, auth_headers):
     """Bin with no zone returns zone=null and aisle=null."""
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     # Create a bin with no zone (zone_id references are NOT NULL in schema,
     # so we create a bin in an existing zone then set zone_id via direct update)
@@ -401,7 +394,7 @@ def test_next_pick_no_zone(client, auth_headers):
     zone_id = cur.fetchone()[0]
     cur.execute(
         """INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_sequence, putaway_sequence)
-           VALUES (%s, 1, 'NOZONE-01', 'BIN-NOZONE-01', 'STANDARD', 50, 50) RETURNING bin_id""",
+           VALUES (%s, 1, 'NOZONE-01', 'BIN-NOZONE-01', 'Pickable', 50, 50) RETURNING bin_id""",
         (zone_id,),
     )
     bin_id = cur.fetchone()[0]
@@ -413,10 +406,8 @@ def test_next_pick_no_zone(client, auth_headers):
     # Remove item 1 from all other bins
     cur.execute("DELETE FROM inventory WHERE item_id = 1 AND bin_id != %s", (bin_id,))
     cur.close()
-    conn.close()
 
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
-    conn.autocommit = True
+    conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
@@ -428,7 +419,6 @@ def test_next_pick_no_zone(client, auth_headers):
         (so_id,),
     )
     cur.close()
-    conn.close()
 
     batch_resp = client.post(
         "/api/picking/create-batch",

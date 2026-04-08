@@ -82,8 +82,11 @@ export default function Items() {
     { key: 'upc', label: 'UPC', mono: true, render: (r) => r.upc || '-' },
     { key: 'default_bin_code', label: 'Default Bin', mono: true, render: (r) => r.default_bin_code || '\u2013' },
     { key: 'category', label: 'Category', render: (r) => r.category || '-' },
-    { key: 'weight', label: 'Weight', render: (r) => r.weight ? `${r.weight} lb` : '-' },
+    { key: 'weight_lbs', label: 'Weight', render: (r) => r.weight_lbs ? `${r.weight_lbs} lb` : '-' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
+    { key: 'actions', label: '', render: (r) => (
+      <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }} title="Edit">&#9998;</button>
+    )},
   ];
 
   const invCols = [
@@ -118,6 +121,16 @@ export default function Items() {
             <span className="detail-label">Weight</span><span>{detail.weight ? `${detail.weight} lb` : '-'}</span>
             <span className="detail-label">Active</span><span>{detail.is_active ? 'Yes' : 'No'}</span>
           </div>
+          {detail.preferred_bins && detail.preferred_bins.length > 0 && (
+            <>
+              <div className="section-title">Preferred Bins</div>
+              <DataTable columns={[
+                { key: 'bin_code', label: 'Bin', mono: true },
+                { key: 'zone_name', label: 'Zone' },
+                { key: 'priority', label: 'Priority' },
+              ]} data={detail.preferred_bins} />
+            </>
+          )}
           {detail.inventory && detail.inventory.length > 0 && (
             <>
               <div className="section-title">Inventory locations</div>

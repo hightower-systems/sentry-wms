@@ -20,6 +20,7 @@ export default function PickWalkScreen({ navigation, route }) {
   const [roundComplete, setRoundComplete] = useState(false);
   const [allTasks, setAllTasks] = useState([]);
   const [showEarlySubmit, setShowEarlySubmit] = useState(false);
+  const [showItemDetail, setShowItemDetail] = useState(false);
 
   useEffect(() => {
     if (batch) {
@@ -183,8 +184,12 @@ export default function PickWalkScreen({ navigation, route }) {
             )}
           </View>
 
-          {/* Item card */}
-          <View style={styles.itemCard}>
+          {/* Item card - tap for details */}
+          <TouchableOpacity
+            style={styles.itemCard}
+            onPress={() => setShowItemDetail(true)}
+            activeOpacity={0.7}
+          >
             <View style={styles.itemCardInner}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemLabel}>ITEM</Text>
@@ -196,6 +201,7 @@ export default function PickWalkScreen({ navigation, route }) {
                 <Text style={styles.qty}>{task.quantity_to_pick}</Text>
               </View>
             </View>
+            <Text style={styles.tapHint}>TAP FOR DETAILS</Text>
 
             {/* Scan progress */}
             {task.quantity_to_pick > 1 && (
@@ -214,7 +220,7 @@ export default function PickWalkScreen({ navigation, route }) {
                 </View>
               </View>
             )}
-          </View>
+          </TouchableOpacity>
 
           {/* Contributing orders */}
           {contributingOrders.length > 1 && (
@@ -327,6 +333,68 @@ export default function PickWalkScreen({ navigation, route }) {
         </View>
       </Modal>
 
+      {/* Item detail modal */}
+      <Modal visible={showItemDetail} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>ITEM DETAILS</Text>
+            {task && (
+              <View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>SKU</Text>
+                  <Text style={styles.detailValue}>{task.sku}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>NAME</Text>
+                  <Text style={styles.detailValue}>{task.item_name}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>UPC</Text>
+                  <Text style={styles.detailValue}>{task.upc || '-'}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>BIN</Text>
+                  <Text style={styles.detailValue}>{task.bin_code}</Text>
+                </View>
+                {task.zone_name && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>ZONE</Text>
+                    <Text style={styles.detailValue}>{task.zone_name}{task.aisle ? ` / Aisle ${task.aisle}` : ''}</Text>
+                  </View>
+                )}
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>QTY NEEDED</Text>
+                  <Text style={styles.detailValue}>{task.quantity_to_pick}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>SCANNED</Text>
+                  <Text style={styles.detailValue}>{scannedCount} / {task.quantity_to_pick}</Text>
+                </View>
+                {contributingOrders.length > 0 && (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={styles.detailLabel}>ORDERS</Text>
+                    {contributingOrders.map((order, i) => (
+                      <View key={i} style={styles.detailOrderRow}>
+                        <Text style={styles.detailOrderSo}>{order.so_number}</Text>
+                        <Text style={styles.detailOrderQty}>{order.quantity}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.buttonPrimary}
+                onPress={() => setShowItemDetail(false)}
+              >
+                <Text style={styles.buttonPrimaryText}>CLOSE</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <ErrorPopup
         visible={!!error}
         message={error}
@@ -428,4 +496,12 @@ const styles = StyleSheet.create({
   },
   earlySubmitSku: { fontFamily: fonts.mono, fontSize: 13, color: colors.textPrimary },
   earlySubmitQty: { fontFamily: fonts.mono, fontSize: 13, color: colors.accentRed },
+
+  tapHint: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, textAlign: 'center', marginTop: 8, letterSpacing: 0.5 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
+  detailLabel: { fontFamily: fonts.mono, fontSize: 11, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
+  detailValue: { fontFamily: fonts.mono, fontSize: 13, color: colors.textPrimary, textAlign: 'right', flex: 1, marginLeft: 12 },
+  detailOrderRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, paddingLeft: 8 },
+  detailOrderSo: { fontFamily: fonts.mono, fontSize: 12, color: colors.textPrimary },
+  detailOrderQty: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.accentRed },
 });

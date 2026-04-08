@@ -34,6 +34,7 @@ services:
         condition: service_healthy
     volumes:
       - ./api:/app
+      - ./db:/db
 
   admin:
     build: ./admin
