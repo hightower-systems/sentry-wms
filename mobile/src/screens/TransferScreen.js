@@ -4,7 +4,7 @@ import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 const STEPS = ['SCAN ITEM', 'SCAN FROM BIN', 'SCAN TO BIN'];
 
@@ -226,7 +226,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
@@ -235,12 +234,12 @@ const styles = StyleSheet.create({
   contentInner: { padding: 16 },
   steps: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   stepItem: { alignItems: 'center', flex: 1 },
-  stepDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.border, marginBottom: 4 },
+  stepDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.cardBorder, marginBottom: 4 },
   stepDotActive: { backgroundColor: colors.accentRed },
   stepLabel: { fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted, letterSpacing: 0.3, textAlign: 'center' },
   stepLabelActive: { color: colors.accentRed, fontWeight: '700' },
   infoCard: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 12, marginBottom: 12,
   },
   label: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
@@ -253,20 +252,19 @@ const styles = StyleSheet.create({
   qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   qtyInput: {
     fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
   },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  successSection: { alignItems: 'center', paddingVertical: 32 },
   buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
-  buttonSecondaryText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
   successSection: { alignItems: 'center', paddingVertical: 32 },
   successText: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.success, marginBottom: 8 },
   successDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24, textAlign: 'center' },

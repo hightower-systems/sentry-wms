@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, TextInput, ScrollView, StyleSheet } from 
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function PackShipScreen({ navigation }) {
   const [order, setOrder] = useState(null);
@@ -153,7 +153,7 @@ export default function PackShipScreen({ navigation }) {
               value={carrier}
               onChangeText={setCarrier}
               placeholder="e.g. UPS, FedEx, USPS"
-              placeholderTextColor={colors.textSecondary}
+              placeholderTextColor={colors.textPlaceholder}
             />
 
             <Text style={styles.fieldLabel}>TRACKING NUMBER</Text>
@@ -162,7 +162,7 @@ export default function PackShipScreen({ navigation }) {
               value={tracking}
               onChangeText={setTracking}
               placeholder="Enter tracking number"
-              placeholderTextColor={colors.textSecondary}
+              placeholderTextColor={colors.textPlaceholder}
               autoCapitalize="characters"
             />
 
@@ -190,7 +190,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
@@ -203,10 +202,10 @@ const styles = StyleSheet.create({
   packedLabel: { fontFamily: fonts.mono, fontSize: 12, color: colors.success, letterSpacing: 0.3, marginTop: 4 },
   itemRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
-    padding: 12, marginBottom: 8, minHeight: 48,
+    borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
+    backgroundColor: colors.cardBg, padding: 12, marginBottom: 8, minHeight: 48,
   },
-  itemRowComplete: { borderColor: colors.success, backgroundColor: '#f8fdf9' },
+  itemRowComplete: { borderColor: colors.success, backgroundColor: '#f0f9f0' },
   sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   itemName: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   itemQty: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -218,12 +217,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3, marginBottom: 4, marginTop: 12,
   },
   textInput: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
-    color: colors.textPrimary, backgroundColor: colors.background, minHeight: 48, marginBottom: 8,
+    color: colors.textPrimary, backgroundColor: colors.inputBg, minHeight: 48, marginBottom: 8,
   },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 16,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },

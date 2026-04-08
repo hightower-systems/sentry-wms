@@ -7,7 +7,7 @@ import PagedList from '../components/PagedList';
 import useScanQueue from '../hooks/useScanQueue';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 const MODE_KEY = 'sentry_receive_mode';
 
@@ -411,6 +411,7 @@ export default function ReceiveScreen({ navigation }) {
                         value={quantity}
                         onChangeText={setQuantity}
                         keyboardType="number-pad"
+                        placeholderTextColor={colors.textPlaceholder}
                       />
                     </View>
                     <TouchableOpacity style={styles.buttonPrimary} onPress={handleConfirmStandard}>
@@ -484,7 +485,7 @@ export default function ReceiveScreen({ navigation }) {
               <Text style={[styles.modeOptionLabel, mode === 'turbo' && styles.modeOptionLabelActive]}>TURBO</Text>
               <Text style={styles.modeOptionDesc}>Each scan = 1 unit received</Text>
             </TouchableOpacity>
-            <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 8 }} />
+            <View style={{ height: 1, backgroundColor: colors.cardBorder, marginVertical: 8 }} />
             <Text style={styles.modeTitle}>RECEIVING BIN</Text>
             <TouchableOpacity
               style={styles.modeOption}
@@ -552,7 +553,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
@@ -570,25 +570,25 @@ const styles = StyleSheet.create({
   // Phase 1: PO queue
   queueRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 14, marginBottom: 8, minHeight: 48,
   },
   poNumber: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   poDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   removeBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
+  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   buttonDisabled: { opacity: 0.5 },
   buttonCancel: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
-  buttonCancelText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  buttonCancelText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 
   // Phase 2: Receiving
   poHeader: { marginBottom: 16 },
@@ -598,18 +598,18 @@ const styles = StyleSheet.create({
   poMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
   poVendor: { fontSize: 13, color: colors.textMuted },
   modeBadge: {
-    backgroundColor: colors.border, borderRadius: 4,
+    backgroundColor: colors.cardBorder, borderRadius: radii.badge,
     paddingHorizontal: 8, paddingVertical: 2,
   },
   modeBadgeTurbo: { backgroundColor: colors.accentRed },
   modeBadgeText: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '700', color: colors.cream, letterSpacing: 0.5 },
   turboCard: {
-    backgroundColor: '#f0f9f0', borderWidth: 1, borderColor: colors.success, borderRadius: 8,
+    backgroundColor: '#f0f9f0', borderWidth: 1, borderColor: colors.success, borderRadius: radii.card,
     padding: 12, marginBottom: 16, alignItems: 'center',
   },
   turboText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.success },
   receiveCard: {
-    borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: 8,
+    borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: radii.card,
     padding: 16, marginBottom: 16,
   },
   sku: { fontFamily: fonts.mono, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
@@ -619,12 +619,12 @@ const styles = StyleSheet.create({
   label: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
   qtyInput: {
     fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
   },
   lineRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 12, marginBottom: 8, minHeight: 48,
   },
   lineQty: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
@@ -645,18 +645,17 @@ const styles = StyleSheet.create({
 
   // Mode selector
   modeOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    flex: 1, backgroundColor: colors.overlay,
     justifyContent: 'flex-start', alignItems: 'flex-end',
     paddingTop: 100, paddingRight: 16,
   },
   modeCard: {
-    backgroundColor: colors.background, borderRadius: 8, padding: 16, minWidth: 220,
-    borderWidth: 1, borderColor: colors.border,
-    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4,
+    backgroundColor: colors.background, borderRadius: radii.card, padding: 16, minWidth: 220,
+    borderWidth: 1, borderColor: colors.cardBorder,
   },
   modeTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.textMuted, letterSpacing: 0.5, marginBottom: 12 },
   modeOption: {
-    padding: 12, borderRadius: 6, borderWidth: 1, borderColor: colors.border, marginBottom: 8,
+    padding: 12, borderRadius: radii.badge, borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 8,
   },
   modeOptionActive: { borderColor: colors.accentRed, backgroundColor: '#fdf6f4' },
   modeOptionLabel: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },

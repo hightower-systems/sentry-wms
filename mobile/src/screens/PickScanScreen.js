@@ -5,7 +5,7 @@ import ErrorPopup from '../components/ErrorPopup';
 import PagedList from '../components/PagedList';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function PickScanScreen({ navigation }) {
   const { warehouseId } = useAuth();
@@ -153,7 +153,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
@@ -166,16 +165,16 @@ const styles = StyleSheet.create({
   content: { flex: 1 },
   orderRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 14, marginBottom: 8, minHeight: 48,
   },
   soNumber: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   orderDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   removeBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border },
+  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function PickCompleteScreen({ navigation, route }) {
   const { total_picks = 0, total_orders = 0, shorts = 0 } = route.params || {};
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: colors.cardBorder,
   },
   summaryLabel: {
     fontFamily: fonts.mono,
@@ -88,11 +88,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   shortValue: {
-    color: colors.warning,
+    color: colors.copper,
   },
   buttonPrimary: {
     backgroundColor: colors.accentRed,
-    borderRadius: 8,
+    borderRadius: radii.button,
     paddingVertical: 14,
     paddingHorizontal: 32,
     alignItems: 'center',
@@ -110,8 +110,8 @@ const styles = StyleSheet.create({
   buttonSecondary: {
     backgroundColor: colors.background,
     borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.button,
     paddingVertical: 14,
     paddingHorizontal: 32,
     alignItems: 'center',
@@ -119,7 +119,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   buttonSecondaryText: {
-    color: colors.textMuted,
+    color: colors.textSecondary,
     fontFamily: fonts.mono,
     fontSize: 14,
     fontWeight: '600',

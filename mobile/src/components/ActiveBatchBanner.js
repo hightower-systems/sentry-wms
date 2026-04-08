@@ -1,14 +1,15 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function ActiveBatchBanner({ batch, onResume, onDismiss }) {
   if (!batch) return null;
 
   return (
     <View style={styles.container}>
+      <Text style={styles.label}>ACTIVE BATCH</Text>
       <Text style={styles.message}>
-        Resume pick batch? {batch.completed_picks} of {batch.total_picks} picks done
+        {batch.completed_picks} of {batch.total_picks} picks done
       </Text>
       <Text style={styles.detail}>
         {batch.total_orders} order{batch.total_orders !== 1 ? 's' : ''}
@@ -27,22 +28,32 @@ export default function ActiveBatchBanner({ batch, onResume, onDismiss }) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: colors.background,
-    borderWidth: 1.5,
-    borderColor: colors.accentRed,
-    borderRadius: 8,
-    padding: 16,
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.accentRed,
+    borderRadius: radii.card,
+    padding: 14,
     marginBottom: 16,
   },
-  message: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
+  label: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.accentRed,
+    letterSpacing: 1.5,
     marginBottom: 4,
+  },
+  message: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    color: colors.textPrimary,
+    marginBottom: 2,
   },
   detail: {
     fontFamily: fonts.mono,
-    fontSize: 12,
+    fontSize: 11,
     color: colors.textMuted,
     marginBottom: 12,
   },
@@ -52,28 +63,25 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   resumeButton: {
-    backgroundColor: colors.accentRed,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    minHeight: 48,
-    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.textPrimary,
+    borderRadius: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
   },
   resumeText: {
-    color: colors.cream,
     fontFamily: fonts.mono,
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: '700',
+    color: colors.textPrimary,
     letterSpacing: 0.5,
   },
   dismissButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    minHeight: 48,
-    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
   },
   dismissText: {
     color: colors.textMuted,
-    fontSize: 14,
+    fontSize: 12,
   },
 });

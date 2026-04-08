@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Pressable, 
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function ShipScreen({ navigation }) {
   const [order, setOrder] = useState(null);
@@ -17,7 +17,7 @@ export default function ShipScreen({ navigation }) {
   const [error, setError] = useState('');
   const [scanDisabled, setScanDisabled] = useState(false);
 
-  const CARRIERS = ['UPS', 'FedEx', 'USPS', 'DHL', 'Other'];
+  const CARRIERS = ['UPS', 'FedEx', 'USPS', 'DHL', 'Amazon', 'Other'];
 
   const handleScanOrder = async (barcode) => {
     try {
@@ -100,7 +100,7 @@ export default function ShipScreen({ navigation }) {
 
             <Text style={styles.fieldLabel}>CARRIER</Text>
             <TouchableOpacity style={styles.pickerBtn} onPress={() => setShowCarrierPicker(true)}>
-              <Text style={[styles.pickerText, !carrier && { color: colors.textSecondary }]}>
+              <Text style={[styles.pickerText, !carrier && { color: colors.textPlaceholder }]}>
                 {carrier || 'Select carrier...'}
               </Text>
               <Text style={{ color: colors.textSecondary }}>&#9662;</Text>
@@ -111,7 +111,7 @@ export default function ShipScreen({ navigation }) {
                 value={carrier}
                 onChangeText={setCarrier}
                 placeholder="Enter carrier name"
-                placeholderTextColor={colors.textSecondary}
+                placeholderTextColor={colors.textPlaceholder}
                 autoFocus
               />
             )}
@@ -122,7 +122,7 @@ export default function ShipScreen({ navigation }) {
               value={tracking}
               onChangeText={setTracking}
               placeholder="Enter tracking number"
-              placeholderTextColor={colors.textSecondary}
+              placeholderTextColor={colors.textPlaceholder}
               autoCapitalize="characters"
             />
 
@@ -191,7 +191,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
@@ -206,8 +205,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', gap: 12, marginBottom: 16,
   },
   summaryItem: {
-    flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 8,
-    padding: 12, alignItems: 'center',
+    flex: 1, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
+    backgroundColor: colors.cardBg, padding: 12, alignItems: 'center',
   },
   summaryValue: { fontFamily: fonts.mono, fontSize: 20, fontWeight: '700', color: colors.textPrimary },
   summaryLabel: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, letterSpacing: 0.3, marginTop: 2 },
@@ -216,42 +215,42 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3, marginBottom: 4, marginTop: 12,
   },
   textInput: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
-    color: colors.textPrimary, backgroundColor: colors.background, minHeight: 48, marginBottom: 8,
+    color: colors.textPrimary, backgroundColor: colors.inputBg, minHeight: 48, marginBottom: 8,
   },
   doneContainer: { alignItems: 'center', paddingTop: 40 },
   doneIcon: { fontSize: 48, color: colors.success, marginBottom: 16 },
   doneTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 },
   doneDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24 },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 16, width: '100%',
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   buttonSecondary: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 8, width: '100%',
   },
-  buttonSecondaryText: { color: colors.textPrimary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
+  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   pickerBtn: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 12, minHeight: 48, marginBottom: 8,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: colors.inputBg,
   },
   pickerText: { fontSize: 14, color: colors.textPrimary, fontFamily: fonts.mono },
   pickerOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    flex: 1, backgroundColor: colors.overlay,
     justifyContent: 'center', alignItems: 'center', padding: 32,
   },
   pickerCard: {
-    backgroundColor: colors.background, borderRadius: 12, padding: 20, width: '100%',
-    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.background, borderRadius: radii.card, padding: 20, width: '100%',
+    borderWidth: 1, borderColor: colors.cardBorder,
   },
   pickerTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.textMuted, letterSpacing: 0.5, marginBottom: 12 },
   pickerOption: {
-    padding: 14, borderRadius: 8, borderWidth: 1, borderColor: colors.border, marginBottom: 8,
+    padding: 14, borderRadius: radii.card, borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 8,
   },
   pickerOptionActive: { borderColor: colors.accentRed, backgroundColor: '#fdf6f4' },
   pickerOptionText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },

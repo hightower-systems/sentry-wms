@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { View, TextInput, StyleSheet } from 'react-native';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabled = false, autoFocus = true }) {
   const inputRef = useRef(null);
@@ -19,10 +19,14 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
   useEffect(() => {
     if (disabled) return;
     const interval = setInterval(() => {
-      if (!inputRef.current?.isFocused?.()) {
-        inputRef.current?.focus();
+      try {
+        if (inputRef.current && typeof inputRef.current.isFocused === 'function' && !inputRef.current.isFocused()) {
+          inputRef.current.focus();
+        }
+      } catch {
+        // Swallow focus errors on hardware scanner devices
       }
-    }, 500);
+    }, 1000);
     return () => clearInterval(interval);
   }, [disabled]);
 
@@ -38,15 +42,10 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
 
   const handleChangeText = (text) => {
     setValue(text);
-    // Hardware scanners send characters rapidly then a newline.
-    // Buffer rapid input and auto-submit after a brief pause
-    // in case the scanner doesn't send Enter/Return.
     bufferRef.current = text;
     if (timerRef.current) clearTimeout(timerRef.current);
     if (text.length > 0) {
       timerRef.current = setTimeout(() => {
-        // If the value hasn't changed in 100ms and is non-empty,
-        // the scanner likely finished sending. Auto-submit.
         if (bufferRef.current === text && text.trim().length >= 3) {
           handleSubmit();
         }
@@ -54,7 +53,6 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
     }
   };
 
-  // Keys the C6000 hardware scanner can emit that should be swallowed
   const IGNORED_KEYS = ['Escape', 'GoBack', 'F1', 'F2', 'F3', 'F4', 'F5',
     'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Tab'];
 
@@ -64,12 +62,11 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
         ref={inputRef}
         style={styles.input}
         placeholder={placeholder}
-        placeholderTextColor={colors.textSecondary}
+        placeholderTextColor={colors.textPlaceholder}
         value={value}
         onChangeText={handleChangeText}
         onSubmitEditing={handleSubmit}
         onKeyPress={(e) => {
-          // Prevent scanner extra keys from triggering navigation or focus loss
           if (IGNORED_KEYS.includes(e.nativeEvent.key)) {
             e.preventDefault?.();
             e.stopPropagation?.();
@@ -93,23 +90,24 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: colors.inputBg,
     borderWidth: 1.5,
-    borderColor: colors.accentRed,
-    borderRadius: 8,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
-    minHeight: 48,
+    minHeight: 44,
     marginBottom: 16,
   },
   disabled: {
-    backgroundColor: '#f5f5f5',
-    borderColor: colors.border,
+    backgroundColor: '#f0ede6',
+    borderColor: colors.cardBorder,
   },
   input: {
     flex: 1,
     fontFamily: fonts.mono,
-    fontSize: 14,
+    fontSize: 12,
     color: colors.textPrimary,
-    paddingVertical: 12,
+    letterSpacing: 1,
+    paddingVertical: 10,
   },
 });

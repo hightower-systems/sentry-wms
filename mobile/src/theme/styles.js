@@ -1,17 +1,50 @@
 import { Platform, StyleSheet } from 'react-native';
 
 export const colors = {
-  accentRed: '#8e2715',
-  copper: '#c4722a',
-  cream: '#FCF4E3',
-  background: '#FFFFFF',
-  border: '#d5d0c8',
-  textPrimary: '#1A1714',
-  textSecondary: '#b0a99e',
-  textMuted: '#999999',
-  overlay: 'rgba(0, 0, 0, 0.5)',
-  success: '#2d7a3a',
-  warning: '#c4722a',
+  // Brand
+  accentRed: '#8e2716',
+  copper: '#b87333',
+  cream: '#fdf4e3',
+
+  // Surfaces
+  background: '#ffffff',
+  cardBg: '#f7f3ec',
+  cardBorder: '#e0d9cc',
+  inputBg: '#f7f3ec',
+  inputBorder: '#d6cfc0',
+
+  // Text
+  textPrimary: '#1a1a1a',
+  textSecondary: '#7a7060',
+  textMuted: '#999080',
+  textPlaceholder: '#b0a898',
+
+  // Status
+  success: '#34a853',
+  warning: '#b87333',
+  danger: '#8e2716',
+
+  // Utility
+  border: '#e0d9cc',
+  overlay: 'rgba(0,0,0,0.4)',
+  grayAccent: '#a09b91',
+};
+
+export const radii = {
+  card: 12,
+  input: 12,
+  button: 12,
+  badge: 6,
+  small: 8,
+  heroCard: 12,
+};
+
+export const spacing = {
+  screenPadding: 16,
+  cardGap: 8,
+  sectionGap: 12,
+  cardPadding: 14,
+  bottomBarPadding: 16,
 };
 
 export const fonts = {
@@ -26,7 +59,7 @@ export default StyleSheet.create({
   },
   screenContent: {
     flex: 1,
-    padding: 16,
+    padding: spacing.screenPadding,
   },
 
   // ── Header ──────────────────────────────────────────────
@@ -35,10 +68,8 @@ export default StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.background,
-    borderBottomWidth: 2,
-    borderBottomColor: colors.accentRed,
+    paddingTop: 52,
+    paddingBottom: 12,
   },
   headerTitle: {
     fontFamily: fonts.mono,
@@ -59,26 +90,26 @@ export default StyleSheet.create({
 
   // ── Cards ───────────────────────────────────────────────
   card: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.cardBg,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.card,
+    padding: spacing.cardPadding,
+    marginBottom: spacing.sectionGap,
   },
   cardRed: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.cardBg,
     borderWidth: 1.5,
     borderColor: colors.accentRed,
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: radii.card,
+    padding: spacing.cardPadding,
+    marginBottom: spacing.sectionGap,
   },
 
   // ── Buttons ─────────────────────────────────────────────
   buttonPrimary: {
     backgroundColor: colors.accentRed,
-    borderRadius: 8,
+    borderRadius: radii.button,
     paddingVertical: 14,
     paddingHorizontal: 24,
     alignItems: 'center',
@@ -96,8 +127,8 @@ export default StyleSheet.create({
   buttonSecondary: {
     backgroundColor: colors.background,
     borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.button,
     paddingVertical: 14,
     paddingHorizontal: 24,
     alignItems: 'center',
@@ -105,7 +136,7 @@ export default StyleSheet.create({
     minHeight: 48,
   },
   buttonSecondaryText: {
-    color: colors.textMuted,
+    color: colors.textSecondary,
     fontFamily: fonts.mono,
     fontSize: 14,
     fontWeight: '600',
@@ -120,63 +151,25 @@ export default StyleSheet.create({
   scanInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: colors.inputBg,
     borderWidth: 1.5,
-    borderColor: colors.accentRed,
-    borderRadius: 8,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
-    minHeight: 48,
+    minHeight: 44,
     marginBottom: 16,
-  },
-  scanInputIcon: {
-    fontFamily: fonts.mono,
-    fontSize: 18,
-    color: colors.accentRed,
-    marginRight: 8,
   },
   scanInputField: {
     flex: 1,
     fontFamily: fonts.mono,
-    fontSize: 14,
+    fontSize: 12,
     color: colors.textPrimary,
-    paddingVertical: 12,
+    letterSpacing: 1,
+    paddingVertical: 10,
   },
   scanInputDisabled: {
-    backgroundColor: '#f5f5f5',
-    borderColor: colors.border,
-  },
-
-  // ── Function Rows (Home screen) ─────────────────────────
-  functionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 3,
-    borderRadius: 8,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-    minHeight: 48,
-  },
-  functionRowRed: {
-    borderLeftColor: colors.accentRed,
-  },
-  functionRowCopper: {
-    borderLeftColor: colors.copper,
-  },
-  functionRowGray: {
-    borderLeftColor: colors.border,
-  },
-  functionLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+    backgroundColor: '#f0ede6',
+    borderColor: colors.cardBorder,
   },
 
   // ── Badges ──────────────────────────────────────────────
@@ -192,9 +185,9 @@ export default StyleSheet.create({
     backgroundColor: colors.copper,
   },
   badgeText: {
-    color: '#FFFFFF',
+    color: colors.cream,
     fontFamily: fonts.mono,
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
   },
 
@@ -247,26 +240,26 @@ export default StyleSheet.create({
   // ── Form Inputs ─────────────────────────────────────────
   textInput: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
     color: colors.textPrimary,
-    backgroundColor: colors.background,
+    backgroundColor: colors.inputBg,
     minHeight: 48,
   },
   quantityInput: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontFamily: fonts.mono,
     fontSize: 18,
     fontWeight: '700',
     color: colors.textPrimary,
-    backgroundColor: colors.background,
+    backgroundColor: colors.inputBg,
     minHeight: 48,
     textAlign: 'center',
     width: 80,
@@ -277,10 +270,10 @@ export default StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.background,
+    backgroundColor: colors.cardBg,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.card,
     paddingVertical: 12,
     paddingHorizontal: 16,
     marginBottom: 8,
@@ -290,7 +283,7 @@ export default StyleSheet.create({
   // ── Misc ────────────────────────────────────────────────
   divider: {
     height: 1,
-    backgroundColor: colors.border,
+    backgroundColor: colors.cardBorder,
     marginVertical: 12,
   },
   centerContent: {

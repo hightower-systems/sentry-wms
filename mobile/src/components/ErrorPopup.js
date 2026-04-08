@@ -1,16 +1,16 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function ErrorPopup({ visible, message, onDismiss }) {
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
         <View style={styles.card}>
-          <TouchableOpacity style={styles.closeButton} onPress={onDismiss}>
-            <Text style={styles.closeText}>X</Text>
-          </TouchableOpacity>
           <Text style={styles.message}>{message}</Text>
+          <TouchableOpacity style={styles.button} onPress={onDismiss}>
+            <Text style={styles.buttonText}>DISMISS</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -27,33 +27,35 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.background,
-    borderRadius: 8,
+    borderRadius: radii.card,
+    borderWidth: 1.5,
+    borderColor: colors.accentRed,
     padding: 24,
-    paddingTop: 40,
     width: '100%',
-    maxWidth: 340,
+    maxWidth: 320,
     alignItems: 'center',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 8,
-    right: 12,
-    padding: 8,
-    minWidth: 48,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeText: {
-    fontFamily: fonts.mono,
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.textMuted,
   },
   message: {
     fontSize: 16,
-    color: colors.textPrimary,
+    color: colors.accentRed,
     textAlign: 'center',
     lineHeight: 24,
+    marginBottom: 20,
+  },
+  button: {
+    backgroundColor: colors.accentRed,
+    borderRadius: radii.button,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    minHeight: 44,
+    width: '100%',
+  },
+  buttonText: {
+    color: colors.cream,
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

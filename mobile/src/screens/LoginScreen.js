@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingVi
 import { useAuth } from '../auth/AuthContext';
 import WarehouseSelector from '../components/WarehouseSelector';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -43,6 +43,7 @@ export default function LoginScreen() {
     } catch (err) {
       if (err.response?.status === 401) {
         setError('Invalid credentials');
+        setPassword('');
       } else {
         setError('Connection error - check WiFi');
       }
@@ -66,7 +67,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Username"
-            placeholderTextColor={colors.textSecondary}
+            placeholderTextColor={colors.textPlaceholder}
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
@@ -75,7 +76,7 @@ export default function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor={colors.textSecondary}
+            placeholderTextColor={colors.textPlaceholder}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -102,7 +103,7 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
 
-        <Text style={styles.version}>v0.9.0</Text>
+        <Text style={styles.version}>v1.0.0</Text>
       </View>
 
       <WarehouseSelector
@@ -151,23 +152,24 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
     color: colors.textPrimary,
-    backgroundColor: colors.background,
+    backgroundColor: colors.inputBg,
     minHeight: 48,
   },
   warehouseButton: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
     paddingHorizontal: 14,
     paddingVertical: 12,
     minHeight: 48,
     justifyContent: 'center',
+    backgroundColor: colors.inputBg,
   },
   warehouseLabel: {
     fontFamily: fonts.mono,
@@ -184,7 +186,7 @@ const styles = StyleSheet.create({
   },
   loginButton: {
     backgroundColor: colors.accentRed,
-    borderRadius: 8,
+    borderRadius: radii.button,
     paddingVertical: 14,
     alignItems: 'center',
     minHeight: 48,
@@ -209,7 +211,7 @@ const styles = StyleSheet.create({
   version: {
     fontFamily: fonts.mono,
     fontSize: 11,
-    color: colors.textMuted,
+    color: colors.textPlaceholder,
     textAlign: 'center',
     position: 'absolute',
     bottom: 32,

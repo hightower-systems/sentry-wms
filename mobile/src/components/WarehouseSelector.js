@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function WarehouseSelector({ visible, warehouses, selected, onSelect }) {
   const renderItem = ({ item }) => {
@@ -43,11 +43,13 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.background,
-    borderRadius: 8,
+    borderRadius: radii.card,
     padding: 20,
     width: '100%',
     maxWidth: 340,
     maxHeight: '60%',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
   },
   title: {
     fontFamily: fonts.mono,
@@ -63,17 +65,18 @@ const styles = StyleSheet.create({
   },
   item: {
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.card,
     padding: 16,
     marginBottom: 8,
     minHeight: 48,
     justifyContent: 'center',
+    backgroundColor: colors.cardBg,
   },
   itemSelected: {
     borderColor: colors.accentRed,
     borderWidth: 1.5,
-    backgroundColor: '#fdf8f7',
+    backgroundColor: colors.background,
   },
   code: {
     fontFamily: fonts.mono,

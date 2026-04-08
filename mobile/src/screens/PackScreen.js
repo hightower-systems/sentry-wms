@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-nati
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function PackScreen({ navigation }) {
   const [order, setOrder] = useState(null);
@@ -153,7 +153,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
@@ -165,10 +164,10 @@ const styles = StyleSheet.create({
   customer: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   itemRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 12, marginBottom: 8, minHeight: 48,
   },
-  itemRowComplete: { borderColor: colors.success, backgroundColor: '#f8fdf9' },
+  itemRowComplete: { borderColor: colors.success, backgroundColor: '#f0f9f0' },
   sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   itemName: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   itemQty: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -179,13 +178,13 @@ const styles = StyleSheet.create({
   doneIcon: { fontSize: 48, color: colors.success, marginBottom: 16 },
   doneTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, marginBottom: 24 },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 16, width: '100%',
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   buttonSecondary: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 8, width: '100%',
   },
-  buttonSecondaryText: { color: colors.textPrimary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
+  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 });

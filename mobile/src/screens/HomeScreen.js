@@ -7,17 +7,23 @@ import ErrorPopup from '../components/ErrorPopup';
 import ActiveBatchBanner from '../components/ActiveBatchBanner';
 import WarehouseSelector from '../components/WarehouseSelector';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii, spacing } from '../theme/styles';
 
 const FUNCTIONS = [
-  { key: 'pick', label: 'PICK', screen: 'PickScan', accent: 'red' },
-  { key: 'receive', label: 'RECEIVE', screen: 'Receive', accent: 'red' },
-  { key: 'putaway', label: 'PUT-AWAY', screen: 'PutAway', accent: 'red' },
-  { key: 'transfer', label: 'TRANSFER', screen: 'Transfer', accent: 'copper' },
-  { key: 'pack', label: 'PACK', screen: 'Pack', accent: 'copper' },
-  { key: 'ship', label: 'SHIP', screen: 'Ship', accent: 'copper' },
-  { key: 'count', label: 'COUNT', screen: 'Count', accent: 'gray' },
+  { key: 'pick', label: 'PICK', sub: 'Wave picking', screen: 'PickScan', accent: 'red' },
+  { key: 'pack', label: 'PACK', sub: 'Verify & pack', screen: 'Pack', accent: 'red' },
+  { key: 'receive', label: 'RECEIVE', sub: 'PO receiving', screen: 'Receive', accent: 'copper' },
+  { key: 'putaway', label: 'PUT-AWAY', sub: 'Bin placement', screen: 'PutAway', accent: 'copper' },
+  { key: 'transfer', label: 'TRANSFER', sub: 'Bin to bin', screen: 'Transfer', accent: 'gray' },
+  { key: 'count', label: 'COUNT', sub: 'Cycle count', screen: 'Count', accent: 'gray' },
+  { key: 'ship', label: 'SHIP', sub: 'Fulfill & ship', screen: 'Ship', accent: 'gray' },
 ];
+
+const ACCENT_COLORS = {
+  red: colors.accentRed,
+  copper: colors.copper,
+  gray: colors.grayAccent,
+};
 
 export default function HomeScreen({ navigation }) {
   const { user, warehouseId, logout, switchWarehouse } = useAuth();
@@ -128,16 +134,18 @@ export default function HomeScreen({ navigation }) {
 
   const getBadgeCount = (key) => badges[key] || 0;
 
+  const userInitial = (user?.full_name || user?.username || 'U').charAt(0).toUpperCase();
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.headerLogo}>SENTRY</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity onPress={() => setShowWarehousePicker(true)}>
-            <Text style={styles.headerWarehouse}>{warehouseCode || '---'}</Text>
+          <TouchableOpacity style={styles.warehousePill} onPress={() => setShowWarehousePicker(true)}>
+            <Text style={styles.warehousePillText}>{warehouseCode || '---'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.userBtn} onPress={() => setShowUserMenu(true)}>
-            <Text style={styles.userIcon}>{'\u2630'}</Text>
+          <TouchableOpacity style={styles.userAvatar} onPress={() => setShowUserMenu(true)}>
+            <Text style={styles.userAvatarText}>{userInitial}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -179,29 +187,38 @@ export default function HomeScreen({ navigation }) {
           />
         )}
 
-        {visibleFunctions.map((fn) => (
-          <TouchableOpacity
-            key={fn.key}
-            style={[
-              styles.functionRow,
-              fn.accent === 'red' && styles.functionRowRed,
-              fn.accent === 'copper' && styles.functionRowCopper,
-              fn.accent === 'gray' && styles.functionRowGray,
-            ]}
-            onPress={() => navigation.navigate(fn.screen)}
-          >
-            <Text style={styles.functionLabel}>{fn.label}</Text>
-            {fn.accent !== 'gray' && getBadgeCount(fn.key) > 0 && (
-              <View style={[styles.badge, fn.accent === 'copper' && styles.badgeCopper]}>
-                <Text style={styles.badgeText}>{getBadgeCount(fn.key)}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
+        <Text style={styles.operationsLabel}>OPERATIONS</Text>
+
+        <View style={styles.grid}>
+          {visibleFunctions.map((fn, index) => {
+            const accentColor = ACCENT_COLORS[fn.accent];
+            const badgeCount = getBadgeCount(fn.key);
+            const isShip = fn.key === 'ship';
+
+            return (
+              <TouchableOpacity
+                key={fn.key}
+                style={[styles.gridCard, isShip && styles.gridCardFull]}
+                onPress={() => navigation.navigate(fn.screen)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.accentStripe, { backgroundColor: accentColor }]} />
+                <View style={[styles.accentDash, { backgroundColor: accentColor }]} />
+                <Text style={styles.cardLabel}>{fn.label}</Text>
+                <Text style={styles.cardSub}>{fn.sub}</Text>
+                {badgeCount > 0 && (
+                  <View style={[styles.cardBadge, { backgroundColor: accentColor }]}>
+                    <Text style={styles.cardBadgeText}>{badgeCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>v0.9.0 - {warehouseName}</Text>
+        <Text style={styles.footerText}>v1.0.0 / {warehouseName}</Text>
       </View>
 
       <ErrorPopup
@@ -238,42 +255,50 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 52,
     paddingBottom: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: colors.accentRed,
   },
   headerLogo: {
     fontFamily: fonts.mono,
     fontSize: 18,
     fontWeight: '700',
     color: colors.accentRed,
-    letterSpacing: 2,
+    letterSpacing: 4,
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
-  headerWarehouse: {
+  warehousePill: {
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.badge,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  warehousePillText: {
     fontFamily: fonts.mono,
-    fontSize: 13,
+    fontSize: 9,
     fontWeight: '600',
     color: colors.textPrimary,
-    letterSpacing: 0.3,
   },
-  userBtn: {
-    padding: 4,
-    minWidth: 32,
-    minHeight: 32,
+  userAvatar: {
+    backgroundColor: colors.accentRed,
+    borderRadius: 8,
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  userIcon: {
-    fontSize: 18,
-    color: colors.textPrimary,
+  userAvatarText: {
+    color: colors.background,
+    fontFamily: fonts.mono,
+    fontSize: 14,
+    fontWeight: '700',
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: colors.overlay || 'rgba(0,0,0,0.4)',
+    backgroundColor: colors.overlay,
     justifyContent: 'flex-start',
     alignItems: 'flex-end',
     paddingTop: 100,
@@ -281,16 +306,11 @@ const styles = StyleSheet.create({
   },
   menuCard: {
     backgroundColor: colors.background,
-    borderRadius: 8,
+    borderRadius: radii.card,
     padding: 16,
     minWidth: 180,
     borderWidth: 1,
-    borderColor: colors.border,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    borderColor: colors.cardBorder,
   },
   menuUser: {
     fontFamily: fonts.mono,
@@ -306,7 +326,7 @@ const styles = StyleSheet.create({
   },
   menuDivider: {
     height: 1,
-    backgroundColor: colors.border,
+    backgroundColor: colors.cardBorder,
     marginVertical: 12,
   },
   menuItem: {
@@ -325,51 +345,75 @@ const styles = StyleSheet.create({
   contentInner: {
     padding: 16,
   },
-  functionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 3,
-    borderRadius: 8,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+  operationsLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: '600',
+    color: colors.textMuted,
+    letterSpacing: 2,
     marginBottom: 8,
-    minHeight: 48,
+    marginTop: 4,
   },
-  functionRowRed: {
-    borderLeftColor: colors.accentRed,
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.cardGap,
   },
-  functionRowCopper: {
-    borderLeftColor: colors.copper,
+  gridCard: {
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.card,
+    padding: spacing.cardPadding,
+    paddingTop: 18,
+    overflow: 'hidden',
+    width: '48.5%',
   },
-  functionRowGray: {
-    borderLeftColor: colors.border,
+  gridCardFull: {
+    width: '100%',
   },
-  functionLabel: {
+  accentStripe: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 5,
+    borderTopLeftRadius: radii.card,
+    borderTopRightRadius: radii.card,
+  },
+  accentDash: {
+    width: 18,
+    height: 2,
+    borderRadius: 1,
+    marginBottom: 6,
+  },
+  cardLabel: {
     fontFamily: fonts.mono,
     fontSize: 14,
     fontWeight: '700',
     color: colors.textPrimary,
     letterSpacing: 0.5,
   },
-  badge: {
-    backgroundColor: colors.accentRed,
+  cardSub: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  cardBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
     borderRadius: 10,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    minWidth: 24,
+    minWidth: 22,
     alignItems: 'center',
   },
-  badgeCopper: {
-    backgroundColor: colors.copper,
-  },
-  badgeText: {
-    color: '#FFFFFF',
+  cardBadgeText: {
+    color: colors.cream,
     fontFamily: fonts.mono,
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
   },
   footer: {
@@ -378,7 +422,7 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontFamily: fonts.mono,
-    fontSize: 11,
-    color: colors.textMuted,
+    fontSize: 9,
+    color: colors.textPlaceholder,
   },
 });

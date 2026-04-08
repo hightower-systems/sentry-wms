@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Alert, Styl
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function PickWalkScreen({ navigation, route }) {
   const { batch_id, batch } = route.params;
@@ -12,13 +12,14 @@ export default function PickWalkScreen({ navigation, route }) {
   const [pickNumber, setPickNumber] = useState(0);
   const [totalPicks, setTotalPicks] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
-  const [ordersExpanded, setOrdersExpanded] = useState(false);
+
   const [error, setError] = useState('');
   const [scanDisabled, setScanDisabled] = useState(false);
   const [showShortModal, setShowShortModal] = useState(false);
   const [shortQty, setShortQty] = useState('0');
   const [roundComplete, setRoundComplete] = useState(false);
   const [allTasks, setAllTasks] = useState([]);
+  const [taskList, setTaskList] = useState([]);
   const [showEarlySubmit, setShowEarlySubmit] = useState(false);
   const [showItemDetail, setShowItemDetail] = useState(false);
 
@@ -28,6 +29,10 @@ export default function PickWalkScreen({ navigation, route }) {
       setTotalOrders(batch.total_orders || 0);
     }
     loadNextTask();
+    // Load full task list for next-item preview
+    client.get(`/api/picking/batch/${batch_id}/tasks`)
+      .then((resp) => setTaskList(resp.data.tasks || resp.data || []))
+      .catch(() => {});
   }, []);
 
   const loadNextTask = async () => {
@@ -52,7 +57,6 @@ export default function PickWalkScreen({ navigation, route }) {
   const handleScan = async (barcode) => {
     if (!task) return;
 
-    // Validate barcode matches expected item (UPC or SKU)
     const expectedUpc = task.upc || '';
     const expectedSku = task.sku || '';
     if (barcode !== expectedUpc && barcode !== expectedSku) {
@@ -65,7 +69,6 @@ export default function PickWalkScreen({ navigation, route }) {
     const qtyNeeded = task.quantity_to_pick;
 
     if (newCount >= qtyNeeded) {
-      // All units scanned - confirm the pick via API
       try {
         await client.post('/api/picking/confirm', {
           pick_task_id: task.pick_task_id,
@@ -105,7 +108,6 @@ export default function PickWalkScreen({ navigation, route }) {
   };
 
   const handleSubmit = async () => {
-    // Check if there are unfulfilled tasks
     if (!roundComplete) {
       try {
         const resp = await client.get(`/api/picking/batch/${batch_id}/tasks`);
@@ -132,7 +134,6 @@ export default function PickWalkScreen({ navigation, route }) {
         total_orders: totalOrders,
       });
     } catch (err) {
-      // If submit endpoint doesn't exist, go to complete screen anyway
       navigation.replace('PickComplete', {
         batch_id,
         total_picks: totalPicks,
@@ -154,13 +155,29 @@ export default function PickWalkScreen({ navigation, route }) {
 
   const contributingOrders = task?.contributing_orders || [];
 
+  // Peek at the next task in the pick sequence
+  const nextTask = (() => {
+    if (!task || taskList.length === 0) return null;
+    const currentIdx = taskList.findIndex((t) => t.pick_task_id === task.pick_task_id);
+    if (currentIdx === -1 || currentIdx >= taskList.length - 1) return null;
+    const next = taskList[currentIdx + 1];
+    return next?.status === 'PENDING' ? next : null;
+  })();
+  const isLastItem = task && taskList.length > 0 &&
+    taskList.findIndex((t) => t.pick_task_id === task.pick_task_id) === taskList.length - 1;
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          PICK {pickNumber} OF {totalPicks}
-        </Text>
-        <Text style={styles.headerOrders}>{totalOrders} order{totalOrders !== 1 ? 's' : ''}</Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle}>
+            ITEM {pickNumber} OF {totalPicks}
+          </Text>
+          <View style={styles.headerOrderRow}>
+            <Text style={styles.headerOrders}>{totalOrders} order{totalOrders !== 1 ? 's' : ''}</Text>
+            <View style={styles.greenDot} />
+          </View>
+        </View>
       </View>
 
       {roundComplete ? (
@@ -173,7 +190,7 @@ export default function PickWalkScreen({ navigation, route }) {
         </View>
       ) : task && (
         <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
-          {/* Bin target card */}
+          {/* Bin hero card */}
           <View style={styles.binCard}>
             <Text style={styles.binLabel}>GO TO BIN</Text>
             <Text style={styles.binCode}>{task.bin_code}</Text>
@@ -184,7 +201,7 @@ export default function PickWalkScreen({ navigation, route }) {
             )}
           </View>
 
-          {/* Item card - tap for details */}
+          {/* Item card */}
           <TouchableOpacity
             style={styles.itemCard}
             onPress={() => setShowItemDetail(true)}
@@ -201,44 +218,44 @@ export default function PickWalkScreen({ navigation, route }) {
                 <Text style={styles.qty}>{task.quantity_to_pick}</Text>
               </View>
             </View>
-            <Text style={styles.tapHint}>TAP FOR DETAILS</Text>
 
-            {/* Scan progress */}
             {task.quantity_to_pick > 1 && (
-              <View style={styles.scanProgress}>
-                <Text style={styles.scanProgressLabel}>SCANNED</Text>
-                <Text style={styles.scanProgressCount}>
-                  {scannedCount} / {task.quantity_to_pick}
-                </Text>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${(scannedCount / task.quantity_to_pick) * 100}%` },
-                    ]}
-                  />
+              <>
+                <View style={styles.itemDivider} />
+                <View style={styles.scanProgress}>
+                  <Text style={styles.scanProgressLabel}>SCANNED</Text>
+                  <Text style={styles.scanProgressCount}>
+                    {scannedCount} / {task.quantity_to_pick}
+                  </Text>
+                  <View style={styles.progressBar}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${(scannedCount / task.quantity_to_pick) * 100}%` },
+                      ]}
+                    />
+                  </View>
                 </View>
-              </View>
+              </>
             )}
           </TouchableOpacity>
 
-          {/* Contributing orders */}
-          {contributingOrders.length > 1 && (
-            <TouchableOpacity
-              style={styles.ordersToggle}
-              onPress={() => setOrdersExpanded(!ordersExpanded)}
-            >
-              <Text style={styles.ordersToggleText}>
-                FOR {contributingOrders.length} ORDERS {ordersExpanded ? '\u25bc' : '\u25b6'}
-              </Text>
-            </TouchableOpacity>
-          )}
-          {ordersExpanded && contributingOrders.map((order, i) => (
-            <View key={i} style={styles.orderRow}>
-              <Text style={styles.orderSo}>{order.so_number}</Text>
-              <Text style={styles.orderQty}>{order.quantity}</Text>
+          {/* Next item preview */}
+          {taskList.length > 1 && (nextTask ? (
+            <View style={styles.nextCard}>
+              <Text style={styles.nextLabel}>NEXT</Text>
+              <Text style={styles.nextSku}>{nextTask.sku}</Text>
+              <Text style={styles.nextName}>{nextTask.item_name}</Text>
+              <View style={styles.nextBinRow}>
+                <Text style={styles.nextBinLabel}>BIN</Text>
+                <Text style={styles.nextBinCode}>{nextTask.bin_code}</Text>
+              </View>
             </View>
-          ))}
+          ) : isLastItem ? (
+            <View style={styles.nextCard}>
+              <Text style={styles.lastItemText}>LAST ITEM IN BATCH</Text>
+            </View>
+          ) : null)}
 
           {/* Scan input */}
           <ScanInput
@@ -247,26 +264,25 @@ export default function PickWalkScreen({ navigation, route }) {
             disabled={scanDisabled}
           />
 
-          {/* Short pick button */}
+          {/* Short pick */}
           <TouchableOpacity
-            style={styles.buttonSecondary}
             onPress={() => {
               setShortQty('0');
               setShowShortModal(true);
             }}
           >
-            <Text style={styles.buttonSecondaryText}>SHORT PICK</Text>
+            <Text style={styles.shortPickText}>SHORT PICK</Text>
           </TouchableOpacity>
         </ScrollView>
       )}
 
-      {/* Bottom buttons - always visible */}
+      {/* Bottom buttons */}
       <View style={styles.bottomBar}>
         <TouchableOpacity style={styles.buttonPrimary} onPress={handleSubmit}>
           <Text style={styles.buttonPrimaryText}>SUBMIT</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.buttonCancel} onPress={handleCancel}>
-          <Text style={styles.buttonCancelText}>CANCEL</Text>
+        <TouchableOpacity style={styles.buttonSecondary} onPress={handleCancel}>
+          <Text style={styles.buttonSecondaryText}>CANCEL</Text>
         </TouchableOpacity>
       </View>
 
@@ -300,7 +316,7 @@ export default function PickWalkScreen({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* Early submit warning modal */}
+      {/* Early submit warning */}
       <Modal visible={showEarlySubmit} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -412,10 +428,12 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
-  headerOrders: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted },
+  headerLeft: {},
+  headerTitle: { fontFamily: fonts.mono, fontSize: 15, fontWeight: '700', color: colors.textPrimary },
+  headerOrderRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  headerOrders: { fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted },
+  greenDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success, marginLeft: 6 },
   content: { flex: 1 },
   contentInner: { padding: 16 },
 
@@ -427,64 +445,69 @@ const styles = StyleSheet.create({
   roundCompleteDetail: { fontSize: 15, color: colors.textMuted },
 
   binCard: {
-    borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed,
+    borderRadius: radii.heroCard,
     padding: 20, marginBottom: 16, alignItems: 'center',
   },
-  binLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
-  binCode: { fontFamily: fonts.mono, fontSize: 30, fontWeight: '700', color: colors.accentRed },
-  binZone: { fontFamily: fonts.mono, fontSize: 12, color: colors.copper, letterSpacing: 0.3, marginTop: 4, textTransform: 'uppercase' },
+  binLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.cream, opacity: 0.5, letterSpacing: 2, marginBottom: 4 },
+  binCode: { fontFamily: fonts.mono, fontSize: 36, fontWeight: '700', color: colors.cream, letterSpacing: 3 },
+  binZone: { fontFamily: fonts.mono, fontSize: 11, color: colors.cream, opacity: 0.4, letterSpacing: 0.3, marginTop: 4, textTransform: 'uppercase' },
 
   itemCard: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 16, marginBottom: 16,
   },
   itemCardInner: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-  itemLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
-  sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  itemName: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  itemLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
+  sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
+  itemName: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   qtySection: { alignItems: 'flex-end' },
-  qty: { fontFamily: fonts.mono, fontSize: 28, fontWeight: '700', color: colors.accentRed },
+  qty: { fontFamily: fonts.mono, fontSize: 30, fontWeight: '700', color: colors.accentRed },
 
-  scanProgress: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border },
-  scanProgressLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
-  scanProgressCount: { fontFamily: fonts.mono, fontSize: 20, fontWeight: '700', color: colors.accentRed, marginTop: 2 },
-  progressBar: { height: 4, backgroundColor: colors.border, borderRadius: 2, marginTop: 8 },
+  itemDivider: { height: 1, backgroundColor: colors.cardBorder, marginVertical: 12 },
+  scanProgress: {},
+  scanProgressLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted },
+  scanProgressCount: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary, marginTop: 2 },
+  progressBar: { height: 4, backgroundColor: colors.cardBorder, borderRadius: 2, marginTop: 8 },
   progressFill: { height: 4, backgroundColor: colors.accentRed, borderRadius: 2 },
 
-  ordersToggle: { paddingVertical: 8, marginBottom: 8 },
-  ordersToggleText: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
-  orderRow: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    paddingVertical: 6, paddingHorizontal: 12, marginBottom: 4,
-    backgroundColor: '#fafaf8', borderRadius: 4,
+  nextCard: {
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
+    padding: 14, marginBottom: 16,
   },
-  orderSo: { fontFamily: fonts.mono, fontSize: 13, color: colors.textPrimary },
-  orderQty: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '700', color: colors.textPrimary },
+  nextLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 1, marginBottom: 4 },
+  nextSku: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.textPrimary },
+  nextName: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
+  nextBinRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  nextBinLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginRight: 6 },
+  nextBinCode: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.accentRed },
+  lastItemText: { fontFamily: fonts.mono, fontSize: 11, fontWeight: '600', color: colors.textMuted, textAlign: 'center', letterSpacing: 0.5 },
 
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
+  shortPickText: {
+    fontFamily: fonts.mono, fontSize: 11, fontWeight: '700', color: colors.copper,
+    textAlign: 'center', letterSpacing: 0.5, paddingVertical: 8,
+  },
+
+  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48, marginBottom: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
+    paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
-  buttonSecondaryText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
-  buttonCancel: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonCancelText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 
-  modalOverlay: { flex: 1, backgroundColor: colors.overlay || 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 32 },
-  modalCard: { backgroundColor: colors.background, borderRadius: 8, padding: 24, width: '100%', maxWidth: 320 },
+  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  modalCard: { backgroundColor: colors.background, borderRadius: radii.card, padding: 24, width: '100%', maxWidth: 320, borderWidth: 1, borderColor: colors.cardBorder },
   modalTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
   modalSubtitle: { fontSize: 13, color: colors.textMuted, marginBottom: 16 },
   shortInput: {
     fontFamily: fonts.mono, fontSize: 24, fontWeight: '700', color: colors.textPrimary,
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
+    backgroundColor: colors.inputBg,
     paddingHorizontal: 16, paddingVertical: 12, textAlign: 'center', minHeight: 48,
     marginBottom: 16,
   },
@@ -492,13 +515,12 @@ const styles = StyleSheet.create({
   earlySubmitList: { maxHeight: 200, marginBottom: 16 },
   earlySubmitRow: {
     flexDirection: 'row', justifyContent: 'space-between',
-    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border,
+    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.cardBorder,
   },
   earlySubmitSku: { fontFamily: fonts.mono, fontSize: 13, color: colors.textPrimary },
   earlySubmitQty: { fontFamily: fonts.mono, fontSize: 13, color: colors.accentRed },
 
-  tapHint: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, textAlign: 'center', marginTop: 8, letterSpacing: 0.5 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.cardBorder },
   detailLabel: { fontFamily: fonts.mono, fontSize: 11, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
   detailValue: { fontFamily: fonts.mono, fontSize: 13, color: colors.textPrimary, textAlign: 'right', flex: 1, marginLeft: 12 },
   detailOrderRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, paddingLeft: 8 },

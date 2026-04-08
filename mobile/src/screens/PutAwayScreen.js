@@ -5,7 +5,7 @@ import ErrorPopup from '../components/ErrorPopup';
 import PagedList from '../components/PagedList';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts } from '../theme/styles';
+import { colors, fonts, radii } from '../theme/styles';
 
 export default function PutAwayScreen({ navigation }) {
   const { warehouseId } = useAuth();
@@ -339,6 +339,7 @@ export default function PutAwayScreen({ navigation }) {
                     value={putQty}
                     onChangeText={setPutQty}
                     keyboardType="number-pad"
+                    placeholderTextColor={colors.textPlaceholder}
                   />
                 </View>
                 <TouchableOpacity style={styles.buttonPrimary} onPress={handleConfirmPutAway}>
@@ -370,6 +371,10 @@ export default function PutAwayScreen({ navigation }) {
           <Text style={styles.doneDetail}>
             {history.length} item{history.length !== 1 ? 's' : ''} put away
           </Text>
+
+          {history.length > 0 && (
+            <Text style={styles.sessionHistoryLabel}>SESSION HISTORY</Text>
+          )}
 
           {history.map((h, i) => (
             <View key={i} style={styles.historyRow}>
@@ -450,13 +455,12 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-    borderBottomWidth: 2, borderBottomColor: colors.accentRed,
   },
   backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
   backText: { fontSize: 22, color: colors.textPrimary },
   headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
   badge: {
-    backgroundColor: colors.accentRed, borderRadius: 10,
+    backgroundColor: colors.copper, borderRadius: 10,
     paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
   },
   badgeText: { color: '#FFFFFF', fontFamily: fonts.mono, fontSize: 12, fontWeight: '700' },
@@ -466,7 +470,7 @@ const styles = StyleSheet.create({
   // Load phase
   queueRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 14, marginBottom: 8, minHeight: 48,
   },
   queueSku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
@@ -475,28 +479,31 @@ const styles = StyleSheet.create({
   removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
 
   // Process phase
-  itemCard: { marginBottom: 16 },
+  itemCard: {
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
+    padding: 16, marginBottom: 16,
+  },
   itemName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
   sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
   fromBin: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 4 },
 
   suggestCard: {
-    borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: 8,
+    borderWidth: 2, borderStyle: 'dashed', borderColor: colors.copper, borderRadius: 0,
     padding: 20, marginBottom: 16, alignItems: 'center',
   },
   suggestLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
-  suggestBinCode: { fontFamily: fonts.mono, fontSize: 30, fontWeight: '700', color: colors.accentRed },
+  suggestBinCode: { fontFamily: fonts.mono, fontSize: 30, fontWeight: '700', color: colors.copper },
   suggestZone: { fontFamily: fonts.mono, fontSize: 12, color: colors.copper, letterSpacing: 0.3, marginTop: 4, textTransform: 'uppercase' },
 
   noPreferredCard: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8, borderStyle: 'dashed',
+    borderWidth: 2, borderStyle: 'dashed', borderColor: colors.copper, borderRadius: 0,
     padding: 20, marginBottom: 16, alignItems: 'center',
   },
   noPreferredText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted },
   noPreferredSub: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
 
   confirmCard: {
-    borderWidth: 1.5, borderColor: colors.success, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.success, borderRadius: radii.card,
     padding: 16, marginTop: 8,
   },
   confirmLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
@@ -505,7 +512,7 @@ const styles = StyleSheet.create({
   qtyLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
   qtyInput: {
     fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
-    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
   },
 
@@ -515,10 +522,14 @@ const styles = StyleSheet.create({
   doneText: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
   doneDetail: { fontSize: 15, color: colors.textMuted, marginBottom: 16 },
 
-  // History
+  // Session history
+  sessionHistoryLabel: {
+    fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted,
+    letterSpacing: 1, alignSelf: 'flex-start', marginBottom: 8, marginTop: 8,
+  },
   historyRow: {
     flexDirection: 'row', alignItems: 'center', width: '100%',
-    borderWidth: 1, borderColor: colors.success, borderRadius: 8,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.small,
     padding: 12, marginBottom: 6, minHeight: 48,
   },
   historyCheck: { fontSize: 16, color: colors.success, marginRight: 10 },
@@ -527,26 +538,29 @@ const styles = StyleSheet.create({
   historyBin: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '700', color: colors.textPrimary },
 
   // Bottom bar
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
+  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
   buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: 8,
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
   buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   buttonDisabled: { opacity: 0.5 },
   buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.border, borderRadius: 8,
+    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
     paddingVertical: 14, alignItems: 'center', minHeight: 48,
   },
-  buttonSecondaryText: { color: colors.textMuted, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
+  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 
   // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 32 },
-  modalCard: { backgroundColor: colors.background, borderRadius: 8, padding: 24, width: '100%', maxWidth: 320 },
+  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  modalCard: {
+    backgroundColor: colors.background, borderRadius: radii.card, padding: 24, width: '100%', maxWidth: 320,
+    borderWidth: 1, borderColor: colors.cardBorder,
+  },
   modalTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
   modalItemName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary, marginTop: 4 },
   modalSku: { fontFamily: fonts.mono, fontSize: 14, color: colors.textMuted, marginTop: 2 },
-  modalDivider: { height: 1, backgroundColor: colors.border, marginVertical: 16 },
+  modalDivider: { height: 1, backgroundColor: colors.cardBorder, marginVertical: 16 },
   modalBody: { fontSize: 14, color: colors.textPrimary, marginBottom: 20 },
   modalActions: { gap: 8 },
 });
