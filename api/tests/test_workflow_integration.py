@@ -194,17 +194,22 @@ class TestCycleCountCorrectsInventory:
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "VARIANCE"
 
-        # 4. Verify inventory was adjusted
+        # 4. Verify inventory was NOT changed (pending audit — requires admin approval)
         new_qty = _query_val(
             "SELECT quantity_on_hand FROM inventory WHERE item_id = 1 AND bin_id = 3"
         )
-        assert new_qty == 55
+        assert new_qty == 50
 
-        # 5. Verify adjustment record exists
+        # 5. Verify pending adjustment record exists
         adj = _query_val(
             "SELECT quantity_change FROM inventory_adjustments WHERE item_id = 1 AND bin_id = 3"
         )
         assert adj == 5
+
+        adj_status = _query_val(
+            "SELECT status FROM inventory_adjustments WHERE item_id = 1 AND bin_id = 3"
+        )
+        assert adj_status == "PENDING"
 
 
 class TestTransferAndPickFromNewLocation:

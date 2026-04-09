@@ -214,16 +214,16 @@ class TestItems:
         assert "existing inventory" in resp.get_json()["error"]
 
     def test_delete_item_without_inventory(self, client, auth_headers):
-        # Create an item with no inventory, then delete
+        # Create an item with no inventory, then hard delete
         create = client.post("/api/admin/items", json={"sku": "DEL-ME", "item_name": "Delete Me"}, headers=auth_headers)
         item_id = create.get_json()["item_id"]
 
         resp = client.delete(f"/api/admin/items/{item_id}", headers=auth_headers)
         assert resp.status_code == 200
-        assert resp.get_json()["message"] == "Item deactivated"
+        assert resp.get_json()["message"] == "Item deleted"
 
-        active = _query_val("SELECT is_active FROM items WHERE item_id = %s", (item_id,))
-        assert active is False
+        exists = _query_val("SELECT 1 FROM items WHERE item_id = %s", (item_id,))
+        assert exists is None
 
 
 # ── Purchase Orders ───────────────────────────────────────────────────────────
@@ -376,7 +376,7 @@ class TestUsers:
 
     def test_create_user(self, client, auth_headers):
         resp = client.post("/api/admin/users", json={
-            "username": "newpicker", "password": "testpass", "full_name": "New Picker", "role": "PICKER", "warehouse_id": 1
+            "username": "newpicker", "password": "testpass", "full_name": "New Picker", "role": "USER", "warehouse_id": 1
         }, headers=auth_headers)
         assert resp.status_code == 201
         data = resp.get_json()
@@ -404,7 +404,7 @@ class TestUsers:
     def test_update_user_password(self, client, auth_headers):
         # Create a user, update password, verify login works
         client.post("/api/admin/users", json={
-            "username": "pwtest", "password": "old", "full_name": "PW Test", "role": "PICKER", "warehouse_id": 1
+            "username": "pwtest", "password": "old", "full_name": "PW Test", "role": "USER", "warehouse_id": 1
         }, headers=auth_headers)
 
         user_id = _query_val("SELECT user_id FROM users WHERE username = 'pwtest'")
@@ -417,7 +417,7 @@ class TestUsers:
     def test_delete_user(self, client, auth_headers):
         # Create a user then deactivate
         create = client.post("/api/admin/users", json={
-            "username": "delme", "password": "test", "full_name": "Del Me", "role": "PICKER"
+            "username": "delme", "password": "test", "full_name": "Del Me", "role": "USER"
         }, headers=auth_headers)
         uid = create.get_json()["user_id"]
 
@@ -646,7 +646,7 @@ class TestRoleEnforcement:
     def test_picker_cannot_create_user(self, client, auth_headers):
         headers = _picker_headers(client)
         resp = client.post("/api/admin/users", json={
-            "username": "x", "password": "x", "full_name": "x", "role": "PICKER"
+            "username": "x", "password": "x", "full_name": "x", "role": "USER"
         }, headers=headers)
         assert resp.status_code == 403
 

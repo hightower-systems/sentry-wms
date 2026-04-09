@@ -21,18 +21,23 @@ def list_items():
     category = request.args.get("category")
     active = request.args.get("active")
 
+    search = request.args.get("q", "")
+
     where_clauses = []
     params = {}
     if category:
-        where_clauses.append("category = :cat")
+        where_clauses.append("i.category = :cat")
         params["cat"] = category
     if active is not None:
-        where_clauses.append("is_active = :active")
+        where_clauses.append("i.is_active = :active")
         params["active"] = active.lower() == "true"
+    if search:
+        where_clauses.append("(i.sku ILIKE :search OR i.item_name ILIKE :search OR i.upc ILIKE :search)")
+        params["search"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    total = g.db.execute(text(f"SELECT COUNT(*) FROM items {where_sql}"), params).scalar()
+    total = g.db.execute(text(f"SELECT COUNT(*) FROM items i {where_sql}"), params).scalar()
     pages = max(1, math.ceil(total / per_page))
 
     params["limit"] = per_page
@@ -45,7 +50,7 @@ def list_items():
             FROM items i
             LEFT JOIN preferred_bins pb ON pb.item_id = i.item_id AND pb.priority = 1
             LEFT JOIN bins b ON b.bin_id = COALESCE(pb.bin_id, i.default_bin_id)
-            {where_sql.replace("category", "i.category").replace("is_active", "i.is_active")}
+            {where_sql}
             ORDER BY i.item_id LIMIT :limit OFFSET :offset
         """),
         params,
@@ -122,7 +127,7 @@ def get_item(item_id):
 
 @admin_bp.route("/items", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_item():
     data = request.get_json()
@@ -163,7 +168,7 @@ def create_item():
 
 @admin_bp.route("/items/<int:item_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_item(item_id):
     data = request.get_json()
@@ -200,9 +205,24 @@ def update_item(item_id):
     })
 
 
+@admin_bp.route("/items/<int:item_id>/archive", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def archive_item(item_id):
+    existing = g.db.execute(text("SELECT item_id, is_active FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
+    if not existing:
+        return jsonify({"error": "Item not found"}), 404
+
+    new_active = not existing.is_active
+    g.db.execute(text("UPDATE items SET is_active = :active, updated_at = NOW() WHERE item_id = :iid"), {"iid": item_id, "active": new_active})
+    g.db.commit()
+    return jsonify({"message": "Item restored" if new_active else "Item archived", "is_active": new_active})
+
+
 @admin_bp.route("/items/<int:item_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def delete_item(item_id):
     existing = g.db.execute(text("SELECT item_id FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
@@ -214,11 +234,31 @@ def delete_item(item_id):
         {"iid": item_id},
     ).fetchone()
     if has_inv:
-        return jsonify({"error": "Cannot deactivate item with existing inventory"}), 400
+        return jsonify({"error": "Cannot delete item with existing inventory"}), 400
 
-    g.db.execute(text("UPDATE items SET is_active = FALSE, updated_at = NOW() WHERE item_id = :iid"), {"iid": item_id})
+    # Check for references in order lines
+    has_orders = g.db.execute(
+        text("SELECT 1 FROM sales_order_lines WHERE item_id = :iid LIMIT 1"),
+        {"iid": item_id},
+    ).fetchone()
+    if has_orders:
+        return jsonify({"error": "Cannot delete item with order history. Use archive instead."}), 400
+
+    has_po = g.db.execute(
+        text("SELECT 1 FROM purchase_order_lines WHERE item_id = :iid LIMIT 1"),
+        {"iid": item_id},
+    ).fetchone()
+    if has_po:
+        return jsonify({"error": "Cannot delete item with PO history. Use archive instead."}), 400
+
+    # Safe to hard delete — clean up related records first
+    g.db.execute(text("DELETE FROM preferred_bins WHERE item_id = :iid"), {"iid": item_id})
+    g.db.execute(text("DELETE FROM cycle_count_lines WHERE item_id = :iid"), {"iid": item_id})
+    g.db.execute(text("DELETE FROM inventory_adjustments WHERE item_id = :iid"), {"iid": item_id})
+    g.db.execute(text("DELETE FROM inventory WHERE item_id = :iid"), {"iid": item_id})
+    g.db.execute(text("DELETE FROM items WHERE item_id = :iid"), {"iid": item_id})
     g.db.commit()
-    return jsonify({"message": "Item deactivated"})
+    return jsonify({"message": "Item deleted"})
 
 
 # ── Inventory Overview ────────────────────────────────────────────────────────
@@ -281,17 +321,18 @@ def list_inventory():
 
 @admin_bp.route("/import/<entity_type>", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def csv_import(entity_type):
     if entity_type not in ("items", "bins", "purchase-orders", "sales-orders"):
         return jsonify({"error": f"Unsupported entity type: {entity_type}"}), 400
 
     data = request.get_json()
-    if not data or not data.get("records"):
+    # Accept either "records" key or entity_type key (e.g., "items")
+    records = data.get("records") or data.get(entity_type) or data.get(entity_type.replace("-", "_"))
+    if not data or not records:
         return jsonify({"error": "records array is required"}), 400
 
-    records = data["records"]
     imported = 0
     errors = []
 
@@ -301,9 +342,10 @@ def csv_import(entity_type):
                 _import_item(g.db, rec, idx, errors)
             elif entity_type == "bins":
                 _import_bin(g.db, rec, idx, errors)
-            else:
-                errors.append({"row": idx, "error": f"Import for {entity_type} not yet supported"})
-                continue
+            elif entity_type == "purchase-orders":
+                _import_purchase_order(g.db, rec, idx, errors)
+            elif entity_type == "sales-orders":
+                _import_sales_order(g.db, rec, idx, errors)
             imported += 1
         except _SkipRow as e:
             errors.append({"row": idx, "error": str(e)})
@@ -323,57 +365,166 @@ class _SkipRow(Exception):
 
 
 def _import_item(db, rec, idx, errors):
-    if not rec.get("sku"):
+    sku = rec.get("sku")
+    # Accept "name" or "item_name"
+    name = rec.get("item_name") or rec.get("name")
+    if not sku:
         raise _SkipRow("Missing required field: sku")
-    if not rec.get("item_name"):
-        raise _SkipRow("Missing required field: item_name")
+    if not name:
+        raise _SkipRow("Missing required field: name")
 
-    dup = db.execute(text("SELECT 1 FROM items WHERE sku = :sku"), {"sku": rec["sku"]}).fetchone()
+    dup = db.execute(text("SELECT 1 FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
     if dup:
-        raise _SkipRow(f"Duplicate SKU: {rec['sku']}")
+        raise _SkipRow(f"Duplicate SKU: {sku}")
 
-    if rec.get("upc"):
-        dup_upc = db.execute(text("SELECT 1 FROM items WHERE upc = :upc"), {"upc": rec["upc"]}).fetchone()
+    upc = rec.get("upc")
+    if upc:
+        dup_upc = db.execute(text("SELECT 1 FROM items WHERE upc = :upc"), {"upc": upc}).fetchone()
         if dup_upc:
-            raise _SkipRow(f"Duplicate UPC: {rec['upc']}")
+            raise _SkipRow(f"Duplicate UPC: {upc}")
+
+    # Resolve default_bin by code if provided
+    default_bin_id = None
+    if rec.get("default_bin"):
+        bin_row = db.execute(text("SELECT bin_id FROM bins WHERE bin_code = :code"), {"code": rec["default_bin"]}).fetchone()
+        if bin_row:
+            default_bin_id = bin_row.bin_id
 
     db.execute(
-        text("INSERT INTO items (sku, item_name, upc, category, weight_lbs) VALUES (:sku, :name, :upc, :cat, :weight)"),
-        {"sku": rec["sku"], "name": rec["item_name"], "upc": rec.get("upc"),
-         "cat": rec.get("category"), "weight": rec.get("weight_lbs")},
+        text("INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, default_bin_id) VALUES (:sku, :name, :desc, :upc, :cat, :weight, :bin)"),
+        {"sku": sku, "name": name, "desc": rec.get("description"),
+         "upc": upc, "cat": rec.get("category"),
+         "weight": rec.get("weight_lbs") or rec.get("weight") or None,
+         "bin": default_bin_id},
     )
 
 
 def _import_bin(db, rec, idx, errors):
-    if not rec.get("bin_code"):
+    bin_code = rec.get("bin_code")
+    if not bin_code:
         raise _SkipRow("Missing required field: bin_code")
-    if not rec.get("bin_barcode"):
-        raise _SkipRow("Missing required field: bin_barcode")
-    if not rec.get("bin_type"):
-        raise _SkipRow("Missing required field: bin_type")
-    if not rec.get("zone_id"):
-        raise _SkipRow("Missing required field: zone_id")
-    if not rec.get("warehouse_id"):
-        raise _SkipRow("Missing required field: warehouse_id")
+
+    # Resolve zone by name or code if zone_id not provided
+    zone_id = rec.get("zone_id")
+    if not zone_id and rec.get("zone"):
+        zone_row = db.execute(
+            text("SELECT zone_id FROM zones WHERE zone_code = :z OR zone_name = :z LIMIT 1"),
+            {"z": rec["zone"]},
+        ).fetchone()
+        if zone_row:
+            zone_id = zone_row.zone_id
+    if not zone_id:
+        raise _SkipRow("Missing required field: zone (or zone_id)")
+
+    # Get warehouse_id from zone if not provided
+    warehouse_id = rec.get("warehouse_id")
+    if not warehouse_id:
+        wh_row = db.execute(text("SELECT warehouse_id FROM zones WHERE zone_id = :zid"), {"zid": zone_id}).fetchone()
+        warehouse_id = wh_row.warehouse_id if wh_row else 1
+
+    bin_type = rec.get("bin_type", "Pickable")
+    bin_barcode = rec.get("bin_barcode") or bin_code
 
     dup = db.execute(
         text("SELECT 1 FROM bins WHERE warehouse_id = :wid AND bin_code = :code"),
-        {"wid": rec["warehouse_id"], "code": rec["bin_code"]},
+        {"wid": warehouse_id, "code": bin_code},
     ).fetchone()
     if dup:
-        raise _SkipRow(f"Duplicate bin_code: {rec['bin_code']}")
+        raise _SkipRow(f"Duplicate bin_code: {bin_code}")
 
     db.execute(
         text("""
-            INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, aisle, row_num, level_num, pick_sequence, putaway_sequence)
-            VALUES (:zid, :wid, :code, :barcode, :type, :aisle, :row, :level, :pick_seq, :put_seq)
+            INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, aisle, row_num, level_num, pick_sequence, putaway_sequence, description)
+            VALUES (:zid, :wid, :code, :barcode, :type, :aisle, :row, :level, :pick_seq, :put_seq, :desc)
         """),
         {
-            "zid": rec["zone_id"], "wid": rec["warehouse_id"], "code": rec["bin_code"],
-            "barcode": rec["bin_barcode"], "type": rec["bin_type"],
+            "zid": zone_id, "wid": warehouse_id, "code": bin_code,
+            "barcode": bin_barcode, "type": bin_type,
             "aisle": rec.get("aisle"), "row": rec.get("row_num"), "level": rec.get("level_num"),
             "pick_seq": rec.get("pick_sequence", 0), "put_seq": rec.get("putaway_sequence", 0),
+            "desc": rec.get("description"),
         },
+    )
+
+
+def _import_purchase_order(db, rec, idx, errors):
+    po_number = rec.get("po_number")
+    sku = rec.get("sku")
+    if not po_number:
+        raise _SkipRow("Missing required field: po_number")
+    if not sku:
+        raise _SkipRow("Missing required field: sku")
+
+    quantity = int(rec.get("quantity") or rec.get("quantity_expected") or 0)
+    if quantity <= 0:
+        raise _SkipRow("quantity must be > 0")
+
+    # Find item by SKU
+    item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
+    if not item_row:
+        raise _SkipRow(f"Item not found: {sku}")
+
+    # Find or create PO
+    po_row = db.execute(text("SELECT po_id FROM purchase_orders WHERE po_number = :pn"), {"pn": po_number}).fetchone()
+    if not po_row:
+        result = db.execute(
+            text("""
+                INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, expected_date, warehouse_id, status)
+                VALUES (:pn, :pn, :vendor, :exp_date, 1, 'OPEN')
+                RETURNING po_id
+            """),
+            {"pn": po_number, "vendor": rec.get("vendor"), "exp_date": rec.get("expected_date") or None},
+        )
+        po_id = result.fetchone()[0]
+    else:
+        po_id = po_row.po_id
+
+    # Get next line number
+    max_ln = db.execute(text("SELECT COALESCE(MAX(line_number), 0) FROM purchase_order_lines WHERE po_id = :pid"), {"pid": po_id}).scalar()
+
+    db.execute(
+        text("INSERT INTO purchase_order_lines (po_id, item_id, quantity_ordered, line_number) VALUES (:pid, :iid, :qty, :ln)"),
+        {"pid": po_id, "iid": item_row.item_id, "qty": quantity, "ln": max_ln + 1},
+    )
+
+
+def _import_sales_order(db, rec, idx, errors):
+    so_number = rec.get("so_number")
+    sku = rec.get("sku")
+    if not so_number:
+        raise _SkipRow("Missing required field: so_number")
+    if not sku:
+        raise _SkipRow("Missing required field: sku")
+
+    quantity = int(rec.get("quantity") or rec.get("quantity_ordered") or 0)
+    if quantity <= 0:
+        raise _SkipRow("quantity must be > 0")
+
+    # Find item by SKU
+    item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
+    if not item_row:
+        raise _SkipRow(f"Item not found: {sku}")
+
+    # Find or create SO
+    so_row = db.execute(text("SELECT so_id FROM sales_orders WHERE so_number = :sn"), {"sn": so_number}).fetchone()
+    if not so_row:
+        result = db.execute(
+            text("""
+                INSERT INTO sales_orders (so_number, so_barcode, customer_name, warehouse_id, order_date, status)
+                VALUES (:sn, :sn, :cust, 1, NOW(), 'OPEN')
+                RETURNING so_id
+            """),
+            {"sn": so_number, "cust": rec.get("customer")},
+        )
+        so_id = result.fetchone()[0]
+    else:
+        so_id = so_row.so_id
+
+    max_ln = db.execute(text("SELECT COALESCE(MAX(line_number), 0) FROM sales_order_lines WHERE so_id = :sid"), {"sid": so_id}).scalar()
+
+    db.execute(
+        text("INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES (:sid, :iid, :qty, :ln)"),
+        {"sid": so_id, "iid": item_row.item_id, "qty": quantity, "ln": max_ln + 1},
     )
 
 

@@ -5,17 +5,31 @@ import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
-const ROLES = ['ADMIN', 'MANAGER', 'PICKER', 'PACKER', 'RECEIVER'];
+const ROLES = ['ADMIN', 'USER'];
+
+const ALL_FUNCTIONS = [
+  { key: 'pick', label: 'Pick' },
+  { key: 'pack', label: 'Pack' },
+  { key: 'ship', label: 'Ship' },
+  { key: 'receive', label: 'Receive' },
+  { key: 'putaway', label: 'Put-Away' },
+  { key: 'count', label: 'Count' },
+  { key: 'transfer', label: 'Transfer' },
+];
 
 export default function Users() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => {
+    loadUsers();
+    loadWarehouses();
+  }, []);
 
   async function loadUsers() {
     const res = await api.get('/admin/users');
@@ -25,23 +39,42 @@ export default function Users() {
     }
   }
 
+  async function loadWarehouses() {
+    const res = await api.get('/admin/warehouses');
+    if (res?.ok) {
+      const data = await res.json();
+      setWarehouses(data.warehouses || []);
+    }
+  }
+
   function openCreate() {
     setEditId(null);
-    setForm({ role: 'PICKER', warehouse_id: 1, is_active: true });
+    setForm({ role: 'USER', warehouse_ids: [], allowed_functions: [], is_active: true });
     setError('');
     setShowModal(true);
   }
 
   function openEdit(user) {
     setEditId(user.id);
-    setForm({ ...user, password: '' });
+    setForm({
+      ...user,
+      password: '',
+      warehouse_ids: user.warehouse_ids || [],
+      allowed_functions: user.allowed_functions || [],
+    });
     setError('');
     setShowModal(true);
   }
 
   async function save() {
     setError('');
-    const body = { username: form.username, full_name: form.full_name, role: form.role, warehouse_id: form.warehouse_id ? Number(form.warehouse_id) : null };
+    const body = {
+      username: form.username,
+      full_name: form.full_name,
+      role: form.role,
+      warehouse_ids: form.warehouse_ids || [],
+      allowed_functions: form.allowed_functions || [],
+    };
     if (form.password) body.password = form.password;
     if (!editId) body.password = form.password;
     const res = editId
@@ -68,11 +101,39 @@ export default function Users() {
     }
   }
 
+  function toggleWarehouse(whId) {
+    const ids = form.warehouse_ids || [];
+    if (ids.includes(whId)) {
+      setForm({ ...form, warehouse_ids: ids.filter((id) => id !== whId) });
+    } else {
+      setForm({ ...form, warehouse_ids: [...ids, whId] });
+    }
+  }
+
+  function toggleFunction(fn) {
+    const fns = form.allowed_functions || [];
+    if (fns.includes(fn)) {
+      setForm({ ...form, allowed_functions: fns.filter((f) => f !== fn) });
+    } else {
+      setForm({ ...form, allowed_functions: [...fns, fn] });
+    }
+  }
+
+  function warehouseCodes(warehouseIds) {
+    if (!warehouseIds || warehouseIds.length === 0) return '-';
+    return warehouseIds
+      .map((id) => {
+        const wh = warehouses.find((w) => w.warehouse_id === id);
+        return wh ? wh.warehouse_code : id;
+      })
+      .join(', ');
+  }
+
   const columns = [
     { key: 'username', label: 'Username', mono: true },
     { key: 'full_name', label: 'Full Name' },
     { key: 'role', label: 'Role' },
-    { key: 'warehouse_id', label: 'Warehouse', render: (r) => r.warehouse_id || '-' },
+    { key: 'warehouse_ids', label: 'Warehouses', render: (r) => warehouseCodes(r.warehouse_ids) },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
     { key: 'actions', label: '', render: (r) => (
       <div style={{ display: 'flex', gap: 4 }}>
@@ -115,16 +176,42 @@ export default function Users() {
             <label>{editId ? 'New Password (leave blank to keep current)' : 'Password'}</label>
             <input className="form-input" type="password" value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value })} />
           </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label>Role</label>
-              <select className="form-select" value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
+          <div className="form-group">
+            <label>Role</label>
+            <select className="form-select" value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Warehouses</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0' }}>
+              {warehouses.map((wh) => (
+                <label key={wh.warehouse_id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={(form.warehouse_ids || []).includes(wh.warehouse_id)}
+                    onChange={() => toggleWarehouse(wh.warehouse_id)}
+                  />
+                  <span className="mono">{wh.warehouse_code}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>{wh.warehouse_name}</span>
+                </label>
+              ))}
+              {warehouses.length === 0 && <span style={{ color: 'var(--text-secondary)' }}>No warehouses found</span>}
             </div>
-            <div className="form-group">
-              <label>Warehouse ID</label>
-              <input className="form-input" type="number" value={form.warehouse_id ?? ''} onChange={(e) => setForm({ ...form, warehouse_id: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Mobile Module Access</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '8px 0' }}>
+              {ALL_FUNCTIONS.map((fn) => (
+                <label key={fn.key} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', minWidth: 100 }}>
+                  <input
+                    type="checkbox"
+                    checked={(form.allowed_functions || []).includes(fn.key)}
+                    onChange={() => toggleFunction(fn.key)}
+                  />
+                  {fn.label}
+                </label>
+              ))}
             </div>
           </div>
         </Modal>

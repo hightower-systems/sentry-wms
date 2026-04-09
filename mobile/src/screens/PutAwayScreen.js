@@ -19,8 +19,7 @@ export default function PutAwayScreen({ navigation }) {
   const [queue, setQueue] = useState([]);
   const { error, scanDisabled, showError, clearError } = useScreenError();
 
-  // Process phase: working through queue
-  const [currentIndex, setCurrentIndex] = useState(0);
+  // Process phase: selected item for put-away
   const [activeItem, setActiveItem] = useState(null);
   const [preferredBin, setPreferredBin] = useState(null);
   const [scannedBin, setScannedBin] = useState(null);
@@ -37,6 +36,7 @@ export default function PutAwayScreen({ navigation }) {
   // --- Load Phase ---
 
   const handleScanItem = async (barcode) => {
+    console.log('[SCAN_DEBUG] PutAwayScreen.handleScanItem received:', JSON.stringify(barcode));
     // Check for staging bin scan first
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
@@ -119,24 +119,16 @@ export default function PutAwayScreen({ navigation }) {
 
   const handleLoadAll = async () => {
     if (queue.length === 0) return;
-    setCurrentIndex(0);
-    await loadItem(0);
+    setPhase('process');
   };
 
   // --- Process Phase ---
 
-  const loadItem = async (index) => {
-    if (index >= queue.length) {
-      setPhase('done');
-      return;
-    }
-    const entry = queue[index];
+  const selectItem = async (entry) => {
     setActiveItem(entry);
-    setCurrentIndex(index);
     setScannedBin(null);
     setPutQty(String(entry.quantity));
     setProcessPhase('scan_bin');
-    setPhase('process');
 
     // Get preferred bin suggestion
     try {
@@ -147,7 +139,25 @@ export default function PutAwayScreen({ navigation }) {
     }
   };
 
+  // Handle scan during process phase — match to a queue item or a bin
+  const handleProcessScan = async (barcode) => {
+    console.log('[SCAN_DEBUG] PutAwayScreen.handleProcessScan received:', JSON.stringify(barcode), 'activeItem:', !!activeItem);
+    if (!activeItem) {
+      // No item selected — try to match a queue item by barcode
+      const match = queue.find((q) => q.upc === barcode || q.sku === barcode);
+      if (match) {
+        await selectItem(match);
+        return;
+      }
+      showError('Scan an item from the list');
+      return;
+    }
+    // Active item selected — this scan is a bin
+    await handleScanBin(barcode);
+  };
+
   const handleScanBin = async (barcode) => {
+    console.log('[SCAN_DEBUG] PutAwayScreen.handleScanBin received:', JSON.stringify(barcode));
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (!binResp.data?.bin) {
@@ -182,10 +192,15 @@ export default function PutAwayScreen({ navigation }) {
         quantity: qty,
       }]);
 
+      // Remove from queue
+      const putAwayItemId = activeItem.item_id;
+      const putAwayFromBin = activeItem.from_bin_id;
+      setQueue((prev) => prev.filter((q) => !(q.item_id === putAwayItemId && q.from_bin_id === putAwayFromBin)));
+
       // Check preferred bin
       const matchesPreferred = preferredBin && scannedBin.bin_id === preferredBin.bin_id;
       if (matchesPreferred) {
-        loadItem(currentIndex + 1);
+        finishItem();
       } else if (!preferredBin) {
         setPromptData({ type: 'set_new', item: activeItem, newBin: scannedBin, oldBin: null });
         setShowPreferredPrompt(true);
@@ -196,6 +211,13 @@ export default function PutAwayScreen({ navigation }) {
     } catch (err) {
       showError(err.response?.data?.error || 'Put-away failed');
     }
+  };
+
+  const finishItem = () => {
+    setActiveItem(null);
+    setPreferredBin(null);
+    setScannedBin(null);
+    setProcessPhase('scan_bin');
   };
 
   const handleUpdatePreferred = async () => {
@@ -211,17 +233,13 @@ export default function PutAwayScreen({ navigation }) {
     }
     setShowPreferredPrompt(false);
     setPromptData(null);
-    loadItem(currentIndex + 1);
+    finishItem();
   };
 
   const handleSkipPreferred = () => {
     setShowPreferredPrompt(false);
     setPromptData(null);
-    loadItem(currentIndex + 1);
-  };
-
-  const handleSkipItem = () => {
-    loadItem(currentIndex + 1);
+    finishItem();
   };
 
   return (
@@ -236,7 +254,7 @@ export default function PutAwayScreen({ navigation }) {
             </View>
           ) : phase === 'process' ? (
             <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted }}>
-              {currentIndex + 1} / {queue.length}
+              {queue.length} left
             </Text>
           ) : history.length > 0 ? (
             <View style={styles.badge}>
@@ -276,7 +294,7 @@ export default function PutAwayScreen({ navigation }) {
 
             <View style={screenStyles.bottomBar}>
               <TouchableOpacity
-                style={[buttonStyles.buttonPrimary, queue.length === 0 && buttonStyles.buttonDisabled]}
+                style={[buttonStyles.buttonPrimary, { flex: 1 }, queue.length === 0 && buttonStyles.buttonDisabled]}
                 onPress={handleLoadAll}
                 disabled={queue.length === 0}
               >
@@ -288,66 +306,111 @@ export default function PutAwayScreen({ navigation }) {
       )}
 
       {/* Process Phase */}
-      {phase === 'process' && activeItem && (
+      {phase === 'process' && (
         <>
-          <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
-            {/* Item info */}
-            <View style={styles.itemCard}>
-              <Text style={styles.itemName}>{activeItem.item_name}</Text>
-              <Text style={styles.sku}>{activeItem.sku}</Text>
-              <Text style={styles.fromBin}>FROM: {activeItem.from_bin_code} {'\u00b7'} QTY: {activeItem.quantity}</Text>
+          <View style={screenStyles.content}>
+            <View style={{ padding: 16, paddingBottom: 0 }}>
+              <ScanInput
+                placeholder={activeItem ? 'SCAN DESTINATION BIN' : 'SCAN ITEM'}
+                onScan={activeItem ? (processPhase === 'scan_bin' ? handleProcessScan : handleProcessScan) : handleProcessScan}
+                disabled={scanDisabled}
+              />
             </View>
 
-            {/* Suggested bin */}
-            {preferredBin ? (
-              <View style={styles.suggestCard}>
-                <Text style={styles.suggestLabel}>SUGGESTED BIN</Text>
-                <Text style={styles.suggestBinCode}>{preferredBin.bin_code}</Text>
-                {preferredBin.zone_name && (
-                  <Text style={styles.suggestZone}>{preferredBin.zone_name}</Text>
-                )}
-              </View>
-            ) : (
-              <View style={styles.noPreferredCard}>
-                <Text style={styles.noPreferredText}>No preferred bin set.</Text>
-                <Text style={styles.noPreferredSub}>Scan any bin to put away.</Text>
-              </View>
-            )}
-
-            {processPhase === 'scan_bin' && (
-              <ScanInput placeholder="SCAN DESTINATION BIN" onScan={handleScanBin} disabled={scanDisabled} />
-            )}
-
-            {processPhase === 'enter_qty' && scannedBin && (
-              <View style={styles.confirmCard}>
-                <Text style={styles.confirmLabel}>DESTINATION</Text>
-                <Text style={styles.confirmBinCode}>{scannedBin.bin_code}</Text>
-                <View style={styles.qtyRow}>
-                  <Text style={styles.qtyLabel}>QUANTITY</Text>
-                  <TextInput
-                    style={listStyles.qtyInput}
-                    value={putQty}
-                    onChangeText={setPutQty}
-                    keyboardType="number-pad"
-                    placeholderTextColor={colors.textPlaceholder}
-                  />
+            {/* Active item detail */}
+            {activeItem && (
+              <View style={{ paddingHorizontal: 16 }}>
+                <View style={styles.itemCard}>
+                  <Text style={styles.itemName}>{activeItem.item_name}</Text>
+                  <Text style={styles.sku}>{activeItem.sku}</Text>
+                  <Text style={styles.fromBin}>FROM: {activeItem.from_bin_code} {'\u00b7'} QTY: {activeItem.quantity}</Text>
                 </View>
-                <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmPutAway}>
-                  <Text style={buttonStyles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
-                </TouchableOpacity>
+
+                {/* Suggested bin */}
+                {preferredBin ? (
+                  <View style={styles.suggestCard}>
+                    <Text style={styles.suggestLabel}>SUGGESTED BIN</Text>
+                    <Text style={styles.suggestBinCode}>{preferredBin.bin_code}</Text>
+                    {preferredBin.zone_name && (
+                      <Text style={styles.suggestZone}>{preferredBin.zone_name}</Text>
+                    )}
+                  </View>
+                ) : processPhase === 'scan_bin' ? (
+                  <View style={styles.noPreferredCard}>
+                    <Text style={styles.noPreferredText}>No preferred bin set.</Text>
+                    <Text style={styles.noPreferredSub}>Scan any bin to put away.</Text>
+                  </View>
+                ) : null}
+
+                {processPhase === 'enter_qty' && scannedBin && (
+                  <View style={styles.confirmCard}>
+                    <Text style={styles.confirmLabel}>DESTINATION</Text>
+                    <Text style={styles.confirmBinCode}>{scannedBin.bin_code}</Text>
+                    <View style={styles.qtyRow}>
+                      <Text style={styles.qtyLabel}>QUANTITY</Text>
+                      <TextInput
+                        style={listStyles.qtyInput}
+                        value={putQty}
+                        onChangeText={setPutQty}
+                        keyboardType="number-pad"
+                        placeholderTextColor={colors.textPlaceholder}
+                      />
+                    </View>
+                    <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmPutAway}>
+                      <Text style={buttonStyles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
+                      onPress={() => { setScannedBin(null); setProcessPhase('scan_bin'); }}
+                    >
+                      <Text style={buttonStyles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 <TouchableOpacity
                   style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
-                  onPress={() => { setScannedBin(null); setProcessPhase('scan_bin'); }}
+                  onPress={() => { setActiveItem(null); setPreferredBin(null); setScannedBin(null); setProcessPhase('scan_bin'); }}
                 >
-                  <Text style={buttonStyles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
+                  <Text style={buttonStyles.buttonSecondaryText}>BACK TO LIST</Text>
                 </TouchableOpacity>
               </View>
             )}
-          </ScrollView>
+
+            {/* Scrollable queue list (when no item is selected) */}
+            {!activeItem && (
+              <View style={{ flex: 1, paddingHorizontal: 16 }}>
+                <PagedList
+                  items={queue}
+                  pageSize={20}
+                  renderItem={(entry) => (
+                    <TouchableOpacity
+                      style={[listStyles.row, { padding: 14 }]}
+                      onPress={() => selectItem(entry)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.queueSku}>{entry.sku}</Text>
+                        <Text style={styles.queueDetail}>
+                          {entry.item_name} {'\u00b7'} QTY: {entry.quantity} {'\u00b7'} from {entry.from_bin_code}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            )}
+          </View>
 
           <View style={screenStyles.bottomBar}>
-            <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleSkipItem}>
-              <Text style={buttonStyles.buttonSecondaryText}>SKIP ITEM</Text>
+            <TouchableOpacity
+              style={[buttonStyles.buttonPrimary, { flex: 1 }, queue.length > 0 && buttonStyles.buttonDisabled]}
+              onPress={() => { if (queue.length === 0) setPhase('done'); }}
+              disabled={queue.length > 0}
+            >
+              <Text style={buttonStyles.buttonPrimaryText}>
+                {queue.length === 0 ? 'FINISH' : `${queue.length} REMAINING`}
+              </Text>
             </TouchableOpacity>
           </View>
         </>
@@ -413,14 +476,14 @@ export default function PutAwayScreen({ navigation }) {
             )}
 
             <View style={modalStyles.actions}>
-              <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleUpdatePreferred}>
+              <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleUpdatePreferred}>
                 <Text style={buttonStyles.buttonPrimaryText}>
-                  {promptData?.type === 'set_new' ? 'YES, SET' : 'YES, UPDATE'}
+                  {promptData?.type === 'set_new' ? 'YES' : 'UPDATE'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleSkipPreferred}>
+              <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={handleSkipPreferred}>
                 <Text style={buttonStyles.buttonSecondaryText}>
-                  {promptData?.type === 'set_new' ? 'NO, SKIP' : 'NO, KEEP CURRENT'}
+                  {promptData?.type === 'set_new' ? 'SKIP' : 'KEEP'}
                 </Text>
               </TouchableOpacity>
             </View>

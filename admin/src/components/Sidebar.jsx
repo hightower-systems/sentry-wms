@@ -9,11 +9,13 @@ const NAV = [
       { to: '/', label: 'Dashboard' },
       { to: '/inventory', label: 'Inventory' },
       { to: '/cycle-counts', label: 'Counts' },
+      { to: '/count-approvals', label: 'Approvals' },
     ],
   },
   {
     label: 'Inbound',
     items: [
+      { to: '/purchase-orders', label: 'Purchase Orders' },
       { to: '/receiving', label: 'Receiving' },
       { to: '/putaway', label: 'Put-away' },
     ],
@@ -29,6 +31,7 @@ const NAV = [
   {
     label: 'Warehouse',
     items: [
+      { to: '/warehouses', label: 'Warehouses' },
       { to: '/bins', label: 'Bins' },
       { to: '/zones', label: 'Zones' },
       { to: '/items', label: 'Items' },
@@ -59,6 +62,7 @@ export default function Sidebar() {
         '/picking': data.orders_to_pick || 0,
         '/packing': data.orders_to_pack || 0,
         '/shipping': data.orders_to_ship || 0,
+        '/count-approvals': data.pending_adjustments || 0,
       });
     });
   }, [location.pathname]);

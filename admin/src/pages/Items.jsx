@@ -4,26 +4,39 @@ import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
+const FILTER_OPTIONS = [
+  { label: 'Active', value: 'active' },
+  { label: 'Archived', value: 'archived' },
+  { label: 'All', value: 'all' },
+];
+
 export default function Items() {
   const [items, setItems] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('active');
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
 
-  useEffect(() => { loadItems(); }, [page, search]);
+  useEffect(() => { loadItems(); }, [page, search, filter]);
 
   async function loadItems() {
     const params = new URLSearchParams({ page, per_page: 50 });
     if (search) params.set('q', search);
+    if (filter === 'active') params.set('active', 'true');
+    else if (filter === 'archived') params.set('active', 'false');
     const res = await api.get(`/admin/items?${params}`);
     if (res?.ok) {
       const data = await res.json();
-      setItems(data.items || []);
+      const mapped = (data.items || []).map((item) => ({
+        ...item,
+        id: item.id || item.item_id,
+      }));
+      setItems(mapped);
       setPagination({ page: data.page, pages: data.pages, total: data.total, per_page: data.per_page });
     }
   }
@@ -31,7 +44,14 @@ export default function Items() {
   async function viewItem(item) {
     const res = await api.get(`/admin/items/${item.id}`);
     if (res?.ok) {
-      setDetail(await res.json());
+      const data = await res.json();
+      const itemData = data.item || data;
+      setDetail({
+        ...itemData,
+        id: itemData.id || itemData.item_id,
+        inventory: data.inventory || itemData.inventory || [],
+        preferred_bins: data.preferred_bins || itemData.preferred_bins || [],
+      });
     }
   }
 
@@ -43,20 +63,28 @@ export default function Items() {
   }
 
   function openEdit(item) {
-    setEditId(item.id);
-    setForm(item);
+    setEditId(item.id || item.item_id);
+    setForm({ ...item, id: item.id || item.item_id });
     setError('');
     setShowModal(true);
   }
 
   async function save() {
     setError('');
-    const body = { sku: form.sku, item_name: form.item_name, upc: form.upc || null, category: form.category || null, weight: form.weight ? Number(form.weight) : null, default_bin_id: form.default_bin_id ? Number(form.default_bin_id) : null };
+    const body = {
+      sku: form.sku,
+      item_name: form.item_name,
+      upc: form.upc || null,
+      category: form.category || null,
+      weight: form.weight ? Number(form.weight) : null,
+      default_bin_id: form.default_bin_id ? Number(form.default_bin_id) : null,
+    };
     const res = editId
       ? await api.put(`/admin/items/${editId}`, body)
       : await api.post('/admin/items', body);
     if (res?.ok) {
-      setShowModal(false); setDetail(null);
+      setShowModal(false);
+      setDetail(null);
       loadItems();
     } else {
       const data = await res?.json();
@@ -64,15 +92,26 @@ export default function Items() {
     }
   }
 
-  async function deactivate(id) {
-    if (!confirm('Deactivate this item?')) return;
+  async function deleteItem(id) {
+    if (!confirm('Are you sure? This permanently deletes the item.')) return;
     const res = await api.delete(`/admin/items/${id}`);
     if (res?.ok) {
       setDetail(null);
       loadItems();
     } else {
       const data = await res?.json();
-      alert(data?.error || 'Failed to deactivate');
+      alert(data?.error || 'Failed to delete item');
+    }
+  }
+
+  async function toggleArchive(item) {
+    const res = await api.post(`/admin/items/${item.id}/archive`);
+    if (res?.ok) {
+      setDetail(null);
+      loadItems();
+    } else {
+      const data = await res?.json();
+      alert(data?.error || 'Failed to update item');
     }
   }
 
@@ -102,6 +141,16 @@ export default function Items() {
       </PageHeader>
       <div className="filter-bar">
         <input className="form-input" placeholder="Search by SKU, name, or UPC..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+        <select
+          className="form-select"
+          value={filter}
+          onChange={(e) => { setFilter(e.target.value); setPage(1); }}
+          style={{ width: 'auto', minWidth: 120 }}
+        >
+          {FILTER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </div>
       <DataTable columns={columns} data={items} pagination={pagination} onPageChange={setPage} onRowClick={viewItem} />
 
@@ -109,7 +158,10 @@ export default function Items() {
         <Modal title={detail.item_name || detail.sku} onClose={() => setDetail(null)}
           footer={
             <>
-              <button className="btn btn-danger" onClick={() => deactivate(detail.id)}>Deactivate</button>
+              <button className="btn btn-danger" onClick={() => deleteItem(detail.id)}>Delete</button>
+              <button className="btn" onClick={() => toggleArchive(detail)}>
+                {detail.is_active ? 'Archive' : 'Restore'}
+              </button>
               <button className="btn" onClick={() => { openEdit(detail); setDetail(null); }}>Edit</button>
             </>
           }

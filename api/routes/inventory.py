@@ -129,7 +129,7 @@ def get_cycle_count(count_id):
             """
             SELECT ccl.count_line_id, ccl.item_id, i.sku, i.item_name, i.upc,
                    ccl.expected_quantity, ccl.counted_quantity,
-                   ccl.scanned
+                   ccl.scanned, ccl.unexpected
             FROM cycle_count_lines ccl
             JOIN items i ON i.item_id = ccl.item_id
             WHERE ccl.count_id = :cid
@@ -138,6 +138,12 @@ def get_cycle_count(count_id):
         ),
         {"cid": count_id},
     ).fetchall()
+
+    # Fetch blind count setting
+    show_expected_row = g.db.execute(
+        text("SELECT value FROM app_settings WHERE key = 'count_show_expected'")
+    ).fetchone()
+    show_expected = not show_expected_row or show_expected_row.value != "false"
 
     return jsonify({
         "cycle_count": {
@@ -150,6 +156,7 @@ def get_cycle_count(count_id):
             "assigned_to": cc.assigned_to,
             "created_at": cc.created_at.isoformat() if cc.created_at else None,
         },
+        "show_expected": show_expected,
         "lines": [
             {
                 "count_line_id": l.count_line_id,
@@ -161,6 +168,7 @@ def get_cycle_count(count_id):
                 "counted_quantity": l.counted_quantity,
                 "variance": (l.counted_quantity - l.expected_quantity) if l.counted_quantity is not None else None,
                 "scanned": l.scanned,
+                "unexpected": l.unexpected if hasattr(l, "unexpected") else False,
             }
             for l in lines
         ],
@@ -204,9 +212,62 @@ def submit_cycle_count():
     for sub in submitted_lines:
         cl_id = sub.get("count_line_id")
         counted_qty = sub.get("counted_quantity")
+        is_unexpected = sub.get("unexpected", False)
 
         if counted_qty is None or counted_qty < 0:
             return jsonify({"error": f"counted_quantity must be >= 0 for line {cl_id}"}), 400
+
+        if is_unexpected:
+            # Unexpected item — not in original snapshot. Create a new count line.
+            item_id = sub.get("item_id")
+            sku = sub.get("sku", "UNKNOWN")
+            if not item_id:
+                return jsonify({"error": "item_id required for unexpected lines"}), 400
+
+            new_line = g.db.execute(
+                text(
+                    """
+                    INSERT INTO cycle_count_lines
+                        (count_id, item_id, expected_quantity, counted_quantity, scanned, unexpected, counted_by, counted_at)
+                    VALUES (:cid, :iid, 0, :qty, TRUE, TRUE, :user, NOW())
+                    RETURNING count_line_id
+                    """
+                ),
+                {"cid": count_id, "iid": item_id, "qty": counted_qty, "user": username},
+            )
+            new_cl_id = new_line.fetchone()[0]
+
+            lines_with_variance += 1
+            reason_detail = f"Cycle count unexpected item: counted {counted_qty} (not in snapshot)"
+            adj_result = g.db.execute(
+                text(
+                    """
+                    INSERT INTO inventory_adjustments
+                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id)
+                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, 'PENDING', :user, :cid)
+                    RETURNING adjustment_id
+                    """
+                ),
+                {
+                    "iid": item_id,
+                    "bid": cc.bin_id,
+                    "wh": cc.warehouse_id,
+                    "change": counted_qty,
+                    "detail": reason_detail,
+                    "user": username,
+                    "cid": count_id,
+                },
+            )
+            adj_id = adj_result.fetchone()[0]
+            adjustments.append({
+                "sku": sku,
+                "expected": 0,
+                "counted": counted_qty,
+                "variance": counted_qty,
+                "adjustment_id": adj_id,
+                "unexpected": True,
+            })
+            continue
 
         # Load the count line
         cl = g.db.execute(
@@ -243,14 +304,14 @@ def submit_cycle_count():
         if variance != 0:
             lines_with_variance += 1
 
-            # 3. Create adjustment
+            # 3. Create pending adjustment (no inventory update — requires admin approval)
             reason_detail = f"Cycle count variance: expected {cl.expected_quantity}, counted {counted_qty}"
             adj_result = g.db.execute(
                 text(
                     """
                     INSERT INTO inventory_adjustments
-                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, adjusted_by, cycle_count_id)
-                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :user, :cid)
+                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id)
+                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, 'PENDING', :user, :cid)
                     RETURNING adjustment_id
                     """
                 ),
@@ -265,18 +326,6 @@ def submit_cycle_count():
                 },
             )
             adj_id = adj_result.fetchone()[0]
-
-            # Update inventory to match counted quantity
-            g.db.execute(
-                text(
-                    """
-                    UPDATE inventory
-                    SET quantity_on_hand = :qty, updated_at = NOW()
-                    WHERE item_id = :iid AND bin_id = :bid
-                    """
-                ),
-                {"qty": counted_qty, "iid": cl.item_id, "bid": cc.bin_id},
-            )
 
             adjustments.append({
                 "sku": cl.sku,

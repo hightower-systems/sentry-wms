@@ -1,0 +1,4 @@
+po_number,vendor,sku,quantity,expected_date
+PO-1001,Acme Supply Co,WIDGET-001,100,2026-05-01
+PO-1001,Acme Supply Co,WIDGET-002,50,2026-05-01
+PO-1002,Global Parts Inc,GADGET-001,200,2026-05-15

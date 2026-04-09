@@ -52,7 +52,7 @@ def get_warehouse(warehouse_id):
 
 @admin_bp.route("/warehouses", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_warehouse():
     data = request.get_json()
@@ -77,7 +77,7 @@ def create_warehouse():
 
 @admin_bp.route("/warehouses/<int:warehouse_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_warehouse(warehouse_id):
     data = request.get_json()
@@ -110,6 +110,29 @@ def update_warehouse(warehouse_id):
     })
 
 
+@admin_bp.route("/warehouses/<int:warehouse_id>", methods=["DELETE"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def delete_warehouse(warehouse_id):
+    wh = g.db.execute(text("SELECT warehouse_id FROM warehouses WHERE warehouse_id = :wid"), {"wid": warehouse_id}).fetchone()
+    if not wh:
+        return jsonify({"error": "Warehouse not found"}), 404
+
+    # Check for existing inventory
+    has_inv = g.db.execute(
+        text("SELECT 1 FROM inventory WHERE warehouse_id = :wid AND quantity_on_hand > 0 LIMIT 1"),
+        {"wid": warehouse_id},
+    ).fetchone()
+    if has_inv:
+        return jsonify({"error": "Cannot delete warehouse with existing inventory"}), 400
+
+    # Soft delete
+    g.db.execute(text("UPDATE warehouses SET is_active = FALSE WHERE warehouse_id = :wid"), {"wid": warehouse_id})
+    g.db.commit()
+    return jsonify({"message": "Warehouse deactivated"})
+
+
 # ── Zones ─────────────────────────────────────────────────────────────────────
 
 @admin_bp.route("/zones", methods=["GET"])
@@ -133,7 +156,7 @@ def list_zones():
 
 @admin_bp.route("/zones", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_zone():
     data = request.get_json()
@@ -162,7 +185,7 @@ def create_zone():
 
 @admin_bp.route("/zones/<int:zone_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_zone(zone_id):
     data = request.get_json()
@@ -274,7 +297,7 @@ def get_bin(bin_id):
 
 @admin_bp.route("/bins", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_bin():
     data = request.get_json()
@@ -317,7 +340,7 @@ def create_bin():
 
 @admin_bp.route("/bins/<int:bin_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_bin(bin_id):
     data = request.get_json()

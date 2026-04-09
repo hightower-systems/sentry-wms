@@ -158,12 +158,19 @@ class TestSubmitCycleCount:
         adj = data["summary"]["adjustments"][0]
         assert adj["variance"] == -3
 
-        # Verify inventory was decremented
+        # Verify inventory was NOT changed (pending audit)
         new_qty = _query_val(
             "SELECT quantity_on_hand FROM inventory WHERE item_id = %s AND bin_id = 3",
             (line["item_id"],),
         )
-        assert new_qty == original_qty - 3
+        assert new_qty == original_qty
+
+        # Verify pending adjustment record exists
+        adj_status = _query_val(
+            "SELECT status FROM inventory_adjustments WHERE adjustment_id = %s",
+            (adj["adjustment_id"],),
+        )
+        assert adj_status == "PENDING"
 
     def test_submit_count_positive_variance(self, client, auth_headers):
         count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)
@@ -183,11 +190,19 @@ class TestSubmitCycleCount:
         adj = data["summary"]["adjustments"][0]
         assert adj["variance"] == 10
 
+        # Verify inventory was NOT changed (pending audit)
         new_qty = _query_val(
             "SELECT quantity_on_hand FROM inventory WHERE item_id = %s AND bin_id = 3",
             (line["item_id"],),
         )
-        assert new_qty == original_qty + 10
+        assert new_qty == original_qty
+
+        # Verify pending adjustment record exists
+        adj_status = _query_val(
+            "SELECT status FROM inventory_adjustments WHERE adjustment_id = %s",
+            (adj["adjustment_id"],),
+        )
+        assert adj_status == "PENDING"
 
     def test_submit_count_updates_last_counted_at(self, client, auth_headers):
         count_id, lines = self._create_count_for_bin(client, auth_headers, bin_id=3)

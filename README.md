@@ -3,7 +3,7 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.9.4-8e2716)
+  ![Version](https://img.shields.io/badge/version-0.9.5-8e2716)
   ![Tests](https://img.shields.io/badge/tests-261%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -240,7 +240,9 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.9.2 | Test infrastructure, bin type simplification, short pick reporting | ✅ Complete |
 | v0.9.3 | UI revamp — tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
 | v0.9.4 | Structural refactor — service layer, admin split, shared styles/hooks | ✅ Complete |
-| v1.0.0 | ERP integration + public release | Planned |
+| v0.9.5 | Scan hardening, cycle count approval, admin UX overhaul, CSV templates | ✅ Complete |
+| v1.0.0 | Production release — hardware tested, full warehouse workflow | Planned |
+| v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
@@ -252,4 +254,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.4
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.5

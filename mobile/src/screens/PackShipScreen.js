@@ -16,10 +16,11 @@ export default function PackShipScreen({ navigation }) {
   const { error, scanDisabled, showError, clearError } = useScreenError();
 
   const handleScanOrder = async (barcode) => {
+    console.log('[SCAN_DEBUG] PackShipScreen.handleScanOrder received:', JSON.stringify(barcode));
     try {
       const resp = await client.get(`/api/packing/order/${encodeURIComponent(barcode)}`);
       setOrder(resp.data.order || resp.data);
-      setItems((resp.data.items || []).map((item) => ({ ...item, verified: 0 })));
+      setItems((resp.data.items || []).map((item) => ({ ...item, verified: item.quantity_packed || item.quantity_verified || 0 })));
       setPhase('packing');
     } catch (err) {
       showError(err.response?.data?.error || 'Order not found');
@@ -27,6 +28,19 @@ export default function PackShipScreen({ navigation }) {
   };
 
   const handleScanItem = async (barcode) => {
+    console.log('[SCAN_DEBUG] PackShipScreen.handleScanItem received:', JSON.stringify(barcode));
+    // Client-side check: ensure item isn't already fully verified
+    const matchedItem = items.find(
+      (item) => item.sku === barcode || item.upc === barcode || item.item_barcode === barcode
+    );
+    if (matchedItem) {
+      const expected = matchedItem.quantity_picked || matchedItem.quantity_ordered;
+      if ((matchedItem.verified || 0) >= expected) {
+        showError(`${matchedItem.sku} already fully verified`);
+        return;
+      }
+    }
+
     try {
       const resp = await client.post('/api/packing/verify', {
         so_id: order.so_id,

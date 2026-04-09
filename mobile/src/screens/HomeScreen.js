@@ -83,7 +83,7 @@ export default function HomeScreen({ navigation }) {
     } finally {
       setInitialLoading(false);
     }
-  }, [warehouseId, batchDismissed]);
+  }, [warehouseId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -93,8 +93,10 @@ export default function HomeScreen({ navigation }) {
   );
 
   const handleScan = async (barcode) => {
-    const cleaned = barcode.replace(/[\r\n\t]/g, '').trim();
+    console.log('[SCAN_DEBUG] HomeScreen.handleScan received:', JSON.stringify(barcode));
+    const cleaned = barcode.replace(/[\r\n\s]+/g, '').trim();
     if (!cleaned) return;
+    console.log('[SCAN_DEBUG] HomeScreen.handleScan cleaned:', JSON.stringify(cleaned));
     const encoded = encodeURIComponent(cleaned);
 
     // Try item lookup (UPC or SKU)
@@ -145,7 +147,7 @@ export default function HomeScreen({ navigation }) {
       // Not a PO
     }
 
-    // Try SO lookup
+    // Try SO lookup — shipping
     try {
       const soResp = await client.get(`/api/shipping/order/${encoded}`);
       if (soResp.data && soResp.data.sales_order) {
@@ -154,17 +156,19 @@ export default function HomeScreen({ navigation }) {
         return;
       }
     } catch {
-      // Not an SO either — also try packing endpoint for PICKED status orders
-      try {
-        const packResp = await client.get(`/api/packing/order/${encoded}`);
-        if (packResp.data && packResp.data.sales_order) {
-          const so = packResp.data.sales_order;
-          navigation.navigate('Pack', { so_number: so.so_number });
-          return;
-        }
-      } catch {
-        // Not found anywhere
+      // Not a shippable SO
+    }
+
+    // Try SO lookup — packing (PICKED status orders)
+    try {
+      const packResp = await client.get(`/api/packing/order/${encoded}`);
+      if (packResp.data && packResp.data.sales_order) {
+        const so = packResp.data.sales_order;
+        navigation.navigate('Pack', { so_number: so.so_number });
+        return;
       }
+    } catch {
+      // Not a packable SO
     }
 
     showError('Barcode not recognized');
@@ -264,7 +268,7 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>v1.0.0 / {warehouseName}</Text>
+        <Text style={styles.footerText}>v0.9.5 / {warehouseName}</Text>
       </View>
 
       <ErrorPopup
@@ -387,6 +391,7 @@ const styles = StyleSheet.create({
   },
   contentInner: {
     padding: 16,
+    paddingBottom: 48,
   },
   operationsLabel: {
     fontFamily: fonts.mono,
@@ -460,8 +465,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     paddingVertical: 12,
     alignItems: 'center',
+    backgroundColor: colors.background,
   },
   footerText: {
     fontFamily: fonts.mono,

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../auth/AuthContext';
 import WarehouseSelector from '../components/WarehouseSelector';
 import client from '../api/client';
@@ -16,6 +17,11 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Restore cached username
+    AsyncStorage.getItem('sentry_last_username').then((saved) => {
+      if (saved) setUsername(saved);
+    }).catch(() => {});
+
     client.get('/api/warehouses/list')
       .then((resp) => {
         const list = resp.data.warehouses || [];
@@ -38,6 +44,8 @@ export default function LoginScreen() {
     }
     setError('');
     setLoading(true);
+    // Cache username for next login attempt
+    AsyncStorage.setItem('sentry_last_username', username).catch(() => {});
     try {
       await login(username, password, selectedWarehouse);
     } catch (err) {
@@ -103,7 +111,7 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
 
-        <Text style={styles.version}>v1.0.0</Text>
+        <Text style={styles.version}>v0.9.5</Text>
       </View>
 
       <WarehouseSelector

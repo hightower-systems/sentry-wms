@@ -2,6 +2,48 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.5] - 2026-04-08
+
+### Admin Panel
+- Cycle count approval page: review pending adjustments per item, approve/reject individually, apply approved changes to inventory
+- Inventory page: sortable columns by clicking headers (SKU, item name, bin, zone, quantities)
+- Item edit: Delete button (hard delete with confirmation, blocked if order history) and Archive button (soft delete, restorable)
+- Items page: filter dropdown for Active, Archived, or All items
+- Purchase orders: dedicated page showing all POs with status filter, clickable rows with Ordered/Received line detail
+- User creation: warehouse checkbox list (multi-warehouse assignment), simplified roles (Admin/User), mobile module access checkboxes (Pick, Pack, Ship, Receive, Put-Away, Count, Transfer)
+- User role enforcement: USER role shows "Not authorized, contact admin" on admin panel login
+- Warehouse management page: create, edit, delete warehouses
+- Settings: batch Save button replaces auto-save, "Unsaved changes" indicator, browser beforeunload warning
+- Admin panel version updated to 0.9.5
+
+### Mobile (Batch 1 — Scan Debug)
+- Added `[SCAN_DEBUG]` logging to every scan handler across all screens
+- Added `[API_DEBUG]` request/response logging to API client
+- ScanInput: removed 300ms auto-submit timer (caused partial barcodes on C6000), added processing lock, improved whitespace/CR sanitization
+- All scan handlers: process only on Enter/Submit, trim `\r\n\s`, ignore empty, disable during processing
+
+### Mobile (Batch 2 — Features)
+- Put-away: replaced forced sequential flow with scrollable item list (scan or tap any item)
+- Pick walk: item detail modal now has PICK + CLOSE buttons side by side for manual picking
+- Pick walk: replaced Alert.alert cancel with styled app modal (white card, 12px radius, tan border)
+- Pick walk: fixed NEXT ITEM PREVIEW — wrong API URL, stale task list, forward-scan logic for next PENDING task, "LAST ITEM IN BATCH" on final item
+- Cycle count architecture: removed auto-adjustment of inventory on variance — creates PENDING audit records instead
+- Cycle count: support for unexpected items (items found during count not in snapshot), flagged with "NEW" badge
+- Cycle count: blind count mode respects `count_show_expected` setting from admin
+- Transfer: X clear buttons on FROM BIN and TO BIN fields to correct mis-scans
+
+### CSV Templates
+- Added `docs/templates/` with 4 import templates: items, purchase orders, sales orders, bins (3 example rows each)
+- CSV import now supports purchase orders and sales orders (SKU-based line matching, auto-creates PO/SO headers)
+- "Download Template" link next to each import type selector
+
+### Database
+- Migration 013: `warehouse_ids INT[]` on users for multi-warehouse, role simplification (ADMIN/USER), default mobile module access
+- New endpoints: `GET/POST /api/admin/adjustments/pending|review`, `POST /api/admin/items/:id/archive`, `DELETE /api/admin/warehouses/:id`
+
+### Stats
+- 261 tests passing
+
 ## [v0.9.4] - 2026-04-08
 
 ### Refactored

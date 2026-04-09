@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, Vibration, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, Vibration, BackHandler, StyleSheet } from 'react-native';
 import ModeSelector from '../components/ModeSelector';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScanInput from '../components/ScanInput';
@@ -18,17 +18,33 @@ export default function CountScreen({ navigation }) {
   const [countId, setCountId] = useState(null);
   const [binCode, setBinCode] = useState('');
   const [lines, setLines] = useState([]);
-  const { error, scanDisabled, showError, clearError } = useScreenError();
+  const { error, scanDisabled, showError, clearError, errorRef } = useScreenError();
   const [submitted, setSubmitted] = useState(false);
   const [mode, setMode] = useState('standard');
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [turboStatus, setTurboStatus] = useState('');
+  const [showExpected, setShowExpected] = useState(true);
+  const scanInputRef = useRef(null);
 
   useEffect(() => {
     AsyncStorage.getItem(MODE_KEY).then((saved) => {
       if (saved === 'turbo' || saved === 'standard') setMode(saved);
     }).catch(() => {});
   }, []);
+
+  // Prevent hardware back button from exiting screen during active count
+  // and capture it as a focus-to-scan-input action
+  useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (countId && !submitted) {
+        // Refocus scan input instead of navigating back
+        scanInputRef.current?.focus();
+        return true; // consumed
+      }
+      return false; // let default behavior (navigation back) happen
+    });
+    return () => handler.remove();
+  }, [countId, submitted]);
 
   const changeMode = (newMode) => {
     setMode(newMode);
@@ -37,6 +53,7 @@ export default function CountScreen({ navigation }) {
   };
 
   const handleScanBin = async (barcode) => {
+    console.log('[SCAN_DEBUG] CountScreen.handleScanBin received:', JSON.stringify(barcode));
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (!binResp.data?.bin) {
@@ -54,6 +71,7 @@ export default function CountScreen({ navigation }) {
 
       const detailResp = await client.get(`/api/inventory/cycle-count/${newCountId}`);
       setCountId(newCountId);
+      setShowExpected(detailResp.data.show_expected !== false);
       setLines(
         (detailResp.data.lines || []).map((l) => ({
           ...l,
@@ -71,13 +89,37 @@ export default function CountScreen({ navigation }) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, counted_quantity: value } : l)));
   };
 
-  // Turbo mode: each scan = +1 to that item's count
+  // Turbo mode: each scan = +1 to that item's count (supports unexpected items)
   const processTurboScan = useCallback(async (barcode) => {
+    console.log('[SCAN_DEBUG] CountScreen.processTurboScan received:', JSON.stringify(barcode));
     const index = lines.findIndex(
       (l) => l.upc === barcode || l.sku === barcode
     );
+
     if (index === -1) {
-      showError('Item not in this bin');
+      // Unexpected item — look up by barcode and add as new line
+      try {
+        const resp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
+        if (!resp.data?.item) {
+          showError('Item not found');
+          return;
+        }
+        const foundItem = resp.data.item;
+        setLines((prev) => [...prev, {
+          count_line_id: null,
+          item_id: foundItem.item_id,
+          sku: foundItem.sku,
+          item_name: foundItem.item_name,
+          upc: foundItem.upc,
+          expected_quantity: 0,
+          counted_quantity: '1',
+          unexpected: true,
+        }]);
+        setTurboStatus(`${foundItem.sku}: 1 counted (unexpected)`);
+        try { Vibration.vibrate([0, 100, 50, 100]); } catch {}
+      } catch {
+        showError('Item not found');
+      }
       return;
     }
 
@@ -87,9 +129,10 @@ export default function CountScreen({ navigation }) {
       updated[index] = { ...updated[index], counted_quantity: String(current + 1) };
 
       const newCount = current + 1;
-      setTurboStatus(`${updated[index].sku}: ${newCount} counted`);
+      const label = updated[index].unexpected ? ' (unexpected)' : '';
+      setTurboStatus(`${updated[index].sku}: ${newCount} counted${label}`);
 
-      if (newCount >= updated[index].expected_quantity) {
+      if (newCount >= updated[index].expected_quantity && updated[index].expected_quantity > 0) {
         try { Vibration.vibrate(200); } catch {}
       }
 
@@ -97,16 +140,56 @@ export default function CountScreen({ navigation }) {
     });
   }, [lines]);
 
-  const [enqueueTurbo] = useScanQueue(processTurboScan);
+  const [enqueueTurbo] = useScanQueue(processTurboScan, errorRef);
 
   const handleScanItem = mode === 'turbo' ? enqueueTurbo : undefined;
 
+  // Standard mode: scan to add unexpected items
+  const handleAddUnexpected = async (barcode) => {
+    console.log('[SCAN_DEBUG] CountScreen.handleAddUnexpected received:', JSON.stringify(barcode));
+    // Check if item already in lines
+    const existing = lines.findIndex((l) => l.upc === barcode || l.sku === barcode);
+    if (existing !== -1) {
+      showError('Item already in list');
+      return;
+    }
+    try {
+      const resp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
+      if (!resp.data?.item) {
+        showError('Item not found');
+        return;
+      }
+      const foundItem = resp.data.item;
+      setLines((prev) => [...prev, {
+        count_line_id: null,
+        item_id: foundItem.item_id,
+        sku: foundItem.sku,
+        item_name: foundItem.item_name,
+        upc: foundItem.upc,
+        expected_quantity: 0,
+        counted_quantity: '0',
+        unexpected: true,
+      }]);
+    } catch {
+      showError('Item not found');
+    }
+  };
+
   const handleSubmit = async () => {
     try {
-      const countLines = lines.map((l) => ({
-        count_line_id: l.count_line_id,
-        counted_quantity: parseInt(l.counted_quantity, 10) || 0,
-      }));
+      const countLines = lines.map((l) => {
+        const entry = {
+          counted_quantity: parseInt(l.counted_quantity, 10) || 0,
+        };
+        if (l.unexpected) {
+          entry.unexpected = true;
+          entry.item_id = l.item_id;
+          entry.sku = l.sku;
+        } else {
+          entry.count_line_id = l.count_line_id;
+        }
+        return entry;
+      });
       await client.post('/api/inventory/cycle-count/submit', {
         count_id: countId,
         lines: countLines,
@@ -147,7 +230,7 @@ export default function CountScreen({ navigation }) {
             <Text style={doneStyles.check}>{'\u2713'}</Text>
             <Text style={styles.doneText}>Count submitted for {binCode}</Text>
             {lines.some((l) => parseInt(l.counted_quantity, 10) !== l.expected_quantity) && (
-              <Text style={styles.varianceNote}>Variances recorded and adjustments created</Text>
+              <Text style={styles.varianceNote}>Variances sent for admin review</Text>
             )}
           </View>
         ) : (
@@ -159,7 +242,7 @@ export default function CountScreen({ navigation }) {
               </View>
             </View>
 
-            {mode === 'turbo' && (
+            {mode === 'turbo' ? (
               <>
                 <ScanInput placeholder="SCAN ITEM" onScan={handleScanItem} disabled={scanDisabled} />
                 {turboStatus !== '' && (
@@ -168,6 +251,8 @@ export default function CountScreen({ navigation }) {
                   </View>
                 )}
               </>
+            ) : (
+              <ScanInput placeholder="SCAN UNEXPECTED ITEM" onScan={handleAddUnexpected} disabled={scanDisabled} />
             )}
 
             {lines.map((line, index) => {
@@ -176,12 +261,22 @@ export default function CountScreen({ navigation }) {
               const hasVariance = !isNaN(counted) && counted !== expected;
               return (
                 <View
-                  key={line.count_line_id || index}
-                  style={[listStyles.row, hasVariance && styles.lineVariance]}
+                  key={line.count_line_id || `unexpected-${index}`}
+                  style={[listStyles.row, hasVariance && styles.lineVariance, line.unexpected && styles.lineUnexpected]}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={listStyles.sku}>{line.sku}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={listStyles.sku}>{line.sku}</Text>
+                      {line.unexpected && (
+                        <View style={styles.unexpectedBadge}>
+                          <Text style={styles.unexpectedBadgeText}>NEW</Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={listStyles.itemName}>{line.item_name}</Text>
+                    {showExpected && !line.unexpected && (
+                      <Text style={styles.expectedText}>Expected: {expected}</Text>
+                    )}
                   </View>
                   {mode === 'standard' ? (
                     <TextInput
@@ -206,10 +301,10 @@ export default function CountScreen({ navigation }) {
       {/* Bottom bar */}
       {countId && !submitted && (
         <View style={screenStyles.bottomBar}>
-          <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleSubmit}>
+          <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleSubmit}>
             <Text style={buttonStyles.buttonPrimaryText}>SUBMIT COUNT</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={() => navigation.goBack()}>
             <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
           </TouchableOpacity>
         </View>
@@ -217,10 +312,10 @@ export default function CountScreen({ navigation }) {
 
       {submitted && (
         <View style={screenStyles.bottomBar}>
-          <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={resetCount}>
+          <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={resetCount}>
             <Text style={buttonStyles.buttonPrimaryText}>COUNT ANOTHER BIN</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={() => navigation.goBack()}>
             <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
         </View>
@@ -275,6 +370,14 @@ const styles = StyleSheet.create({
     minWidth: 48, textAlign: 'center',
   },
   turboCountVariance: { color: colors.copper },
+
+  lineUnexpected: { borderColor: colors.copper, borderLeftWidth: 3, borderLeftColor: colors.copper },
+  unexpectedBadge: {
+    backgroundColor: colors.copper, borderRadius: 4,
+    paddingHorizontal: 5, paddingVertical: 1, marginLeft: 6,
+  },
+  unexpectedBadgeText: { fontFamily: fonts.mono, fontSize: 8, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
+  expectedText: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, marginTop: 2 },
 
   doneSection: { alignItems: 'center', paddingVertical: 32 },
   doneText: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '600', color: colors.success, marginBottom: 8 },

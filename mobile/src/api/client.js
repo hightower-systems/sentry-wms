@@ -23,11 +23,15 @@ async function request(method, path, body) {
   const timeout = setTimeout(() => controller.abort(), 10000);
   options.signal = controller.signal;
 
+  const fullUrl = `${API_URL}${path}`;
+  console.log(`[API_DEBUG] ${method} ${path}`, body ? JSON.stringify(body).slice(0, 200) : '');
+
   let response;
   try {
-    response = await fetch(`${API_URL}${path}`, options);
+    response = await fetch(fullUrl, options);
   } catch (err) {
     clearTimeout(timeout);
+    console.log(`[API_DEBUG] ${method} ${path} NETWORK ERROR:`, err.message);
     if (err.name === 'AbortError') {
       const timeoutErr = new Error('Request timeout');
       timeoutErr.response = null;
@@ -46,6 +50,8 @@ async function request(method, path, body) {
       data = text;
     }
   }
+
+  console.log(`[API_DEBUG] ${method} ${path} → ${response.status}`, JSON.stringify(data).slice(0, 300));
 
   if (response.status === 401 && logoutHandler) {
     await logoutHandler();

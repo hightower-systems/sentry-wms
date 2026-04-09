@@ -16,6 +16,7 @@ export default function PickScanScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
 
   const handleScan = async (barcode) => {
+    console.log('[SCAN_DEBUG] PickScanScreen.handleScan received:', JSON.stringify(barcode));
     // Client-side duplicate check
     if (orders.find((o) => o.so_barcode === barcode || o.so_number === barcode)) {
       showError('Already scanned');
@@ -125,7 +126,7 @@ export default function PickScanScreen({ navigation }) {
 
         <View style={screenStyles.bottomBar}>
           <TouchableOpacity
-            style={[buttonStyles.buttonPrimary, orders.length === 0 && buttonStyles.buttonDisabled]}
+            style={[buttonStyles.buttonPrimary, { flex: 1 }, orders.length === 0 && buttonStyles.buttonDisabled]}
             onPress={handleLoadAll}
             disabled={orders.length === 0}
           >

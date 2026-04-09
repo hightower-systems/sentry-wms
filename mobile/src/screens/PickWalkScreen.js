@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, ActivityIndicator, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import useScreenError from '../hooks/useScreenError';
@@ -22,6 +22,7 @@ export default function PickWalkScreen({ navigation, route }) {
   const [taskList, setTaskList] = useState([]);
   const [showEarlySubmit, setShowEarlySubmit] = useState(false);
   const [showItemDetail, setShowItemDetail] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
 
   useEffect(() => {
     if (batch) {
@@ -29,11 +30,14 @@ export default function PickWalkScreen({ navigation, route }) {
       setTotalOrders(batch.total_orders || 0);
     }
     loadNextTask();
-    // Load full task list for next-item preview
-    client.get(`/api/picking/batch/${batch_id}/tasks`)
-      .then((resp) => setTaskList(resp.data.tasks || resp.data || []))
-      .catch(() => {});
+    loadTaskList();
   }, []);
+
+  const loadTaskList = () => {
+    client.get(`/api/picking/batch/${batch_id}`)
+      .then((resp) => setTaskList(resp.data.tasks || []))
+      .catch(() => {});
+  };
 
   const loadNextTask = async () => {
     try {
@@ -48,12 +52,15 @@ export default function PickWalkScreen({ navigation, route }) {
       setPickNumber(resp.data.pick_number || pickNumber + 1);
       if (resp.data.total_picks) setTotalPicks(resp.data.total_picks);
       if (resp.data.total_orders) setTotalOrders(resp.data.total_orders);
+      // Refresh task list so next-item preview has current statuses
+      loadTaskList();
     } catch (err) {
       showError(err.response?.data?.error || 'Failed to load next task');
     }
   };
 
   const handleScan = async (barcode) => {
+    console.log('[SCAN_DEBUG] PickWalkScreen.handleScan received:', JSON.stringify(barcode));
     if (!task) return;
 
     const expectedUpc = task.upc || '';
@@ -106,8 +113,8 @@ export default function PickWalkScreen({ navigation, route }) {
   const handleSubmit = async () => {
     if (!roundComplete) {
       try {
-        const resp = await client.get(`/api/picking/batch/${batch_id}/tasks`);
-        const tasks = resp.data.tasks || resp.data || [];
+        const resp = await client.get(`/api/picking/batch/${batch_id}`);
+        const tasks = resp.data.tasks || [];
         const pending = tasks.filter((t) => t.status === 'PENDING');
         if (pending.length > 0) {
           setAllTasks(pending);
@@ -139,28 +146,23 @@ export default function PickWalkScreen({ navigation, route }) {
   };
 
   const handleCancel = () => {
-    Alert.alert(
-      'Cancel Pick Walk',
-      'Are you sure? Progress on this batch will be lost.',
-      [
-        { text: 'Back to Picking', style: 'cancel' },
-        { text: 'Cancel Batch', style: 'destructive', onPress: () => navigation.navigate('Home') },
-      ]
-    );
+    setShowCancelModal(true);
   };
 
   const contributingOrders = task?.contributing_orders || [];
 
-  // Peek at the next task in the pick sequence
+  // Peek at the next PENDING task after the current one in pick sequence
   const nextTask = (() => {
     if (!task || taskList.length === 0) return null;
     const currentIdx = taskList.findIndex((t) => t.pick_task_id === task.pick_task_id);
-    if (currentIdx === -1 || currentIdx >= taskList.length - 1) return null;
-    const next = taskList[currentIdx + 1];
-    return next?.status === 'PENDING' ? next : null;
+    if (currentIdx === -1) return null;
+    // Search forward for the next PENDING task
+    for (let i = currentIdx + 1; i < taskList.length; i++) {
+      if (taskList[i].status === 'PENDING') return taskList[i];
+    }
+    return null;
   })();
-  const isLastItem = task && taskList.length > 0 &&
-    taskList.findIndex((t) => t.pick_task_id === task.pick_task_id) === taskList.length - 1;
+  const isLastItem = task && taskList.length > 0 && !nextTask;
 
   return (
     <View style={screenStyles.screen}>
@@ -241,7 +243,7 @@ export default function PickWalkScreen({ navigation, route }) {
           </TouchableOpacity>
 
           {/* Next item preview */}
-          {taskList.length > 1 && (nextTask ? (
+          {taskList.length > 0 && (nextTask ? (
             <View style={styles.nextCard}>
               <Text style={styles.nextLabel}>NEXT</Text>
               <Text style={styles.nextSku}>{nextTask.sku}</Text>
@@ -278,10 +280,10 @@ export default function PickWalkScreen({ navigation, route }) {
 
       {/* Bottom buttons */}
       <View style={screenStyles.bottomBar}>
-        <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleSubmit}>
+        <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleSubmit}>
           <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleCancel}>
+        <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={handleCancel}>
           <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
         </TouchableOpacity>
       </View>
@@ -302,11 +304,11 @@ export default function PickWalkScreen({ navigation, route }) {
               autoFocus
             />
             <View style={modalStyles.actions}>
-              <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleShort}>
+              <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleShort}>
                 <Text style={buttonStyles.buttonPrimaryText}>CONFIRM</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={buttonStyles.buttonSecondary}
+                style={[buttonStyles.buttonSecondary, { flex: 1 }]}
                 onPress={() => setShowShortModal(false)}
               >
                 <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
@@ -335,14 +337,14 @@ export default function PickWalkScreen({ navigation, route }) {
               ))}
             </ScrollView>
             <View style={modalStyles.actions}>
-              <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={() => { setShowEarlySubmit(false); doSubmit(); }}>
-                <Text style={buttonStyles.buttonPrimaryText}>SUBMIT ANYWAY</Text>
+              <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={() => { setShowEarlySubmit(false); doSubmit(); }}>
+                <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={buttonStyles.buttonSecondary}
+                style={[buttonStyles.buttonSecondary, { flex: 1 }]}
                 onPress={() => setShowEarlySubmit(false)}
               >
-                <Text style={buttonStyles.buttonSecondaryText}>BACK TO PICKING</Text>
+                <Text style={buttonStyles.buttonSecondaryText}>BACK</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -401,10 +403,63 @@ export default function PickWalkScreen({ navigation, route }) {
             )}
             <View style={modalStyles.actions}>
               <TouchableOpacity
-                style={buttonStyles.buttonPrimary}
+                style={[buttonStyles.buttonPrimary, { flex: 1 }]}
+                onPress={async () => {
+                  if (!task) return;
+                  const newCount = scannedCount + 1;
+                  const qtyNeeded = task.quantity_to_pick;
+                  if (newCount >= qtyNeeded) {
+                    try {
+                      await client.post('/api/picking/confirm', {
+                        pick_task_id: task.pick_task_id,
+                        scanned_barcode: task.upc || task.sku,
+                        quantity_picked: qtyNeeded,
+                      });
+                      setScannedCount(0);
+                      setShowItemDetail(false);
+                      await loadNextTask();
+                    } catch (err) {
+                      setShowItemDetail(false);
+                      showError(err.response?.data?.error || 'Pick failed');
+                    }
+                  } else {
+                    setScannedCount(newCount);
+                  }
+                }}
+              >
+                <Text style={buttonStyles.buttonPrimaryText}>PICK</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[buttonStyles.buttonSecondary, { flex: 1 }]}
                 onPress={() => setShowItemDetail(false)}
               >
-                <Text style={buttonStyles.buttonPrimaryText}>CLOSE</Text>
+                <Text style={buttonStyles.buttonSecondaryText}>CLOSE</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cancel batch modal */}
+      <Modal visible={showCancelModal} transparent animationType="fade">
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.card}>
+            <Text style={modalStyles.title}>CANCEL PICK WALK</Text>
+            <Text style={modalStyles.subtitle}>
+              Are you sure? Progress on this batch will be lost.
+            </Text>
+            <View style={modalStyles.actions}>
+              <TouchableOpacity
+                style={[buttonStyles.buttonPrimary, { flex: 1 }]}
+                onPress={() => { setShowCancelModal(false); navigation.navigate('Home'); }}
+              >
+                <Text style={buttonStyles.buttonPrimaryText}>CANCEL BATCH</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[buttonStyles.buttonSecondary, { flex: 1 }]}
+                onPress={() => setShowCancelModal(false)}
+              >
+                <Text style={buttonStyles.buttonSecondaryText}>BACK</Text>
               </TouchableOpacity>
             </View>
           </View>

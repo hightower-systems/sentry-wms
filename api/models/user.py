@@ -17,8 +17,9 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(100), nullable=False)
-    role = Column(String(20), nullable=False, default="PICKER")
+    role = Column(String(20), nullable=False, default="USER")
     warehouse_id = Column(Integer)
+    warehouse_ids = Column(ARRAY(Integer), default=[])
     allowed_functions = Column(ARRAY(String), default=[])
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -31,6 +32,7 @@ class User(Base):
             "full_name": self.full_name,
             "role": self.role,
             "warehouse_id": self.warehouse_id,
+            "warehouse_ids": list(self.warehouse_ids) if self.warehouse_ids else [],
             "allowed_functions": list(self.allowed_functions) if self.allowed_functions else [],
             "is_active": self.is_active,
         }

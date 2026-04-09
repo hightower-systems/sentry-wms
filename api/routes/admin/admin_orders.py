@@ -100,7 +100,7 @@ def get_purchase_order(po_id):
 
 @admin_bp.route("/purchase-orders", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_purchase_order():
     data = request.get_json()
@@ -150,7 +150,7 @@ def create_purchase_order():
 
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_purchase_order(po_id):
     data = request.get_json()
@@ -190,7 +190,7 @@ def update_purchase_order(po_id):
 
 @admin_bp.route("/purchase-orders/<int:po_id>/close", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def close_purchase_order(po_id):
     po = g.db.execute(text("SELECT po_id FROM purchase_orders WHERE po_id = :pid"), {"pid": po_id}).fetchone()
@@ -297,7 +297,7 @@ def get_sales_order(so_id):
 
 @admin_bp.route("/sales-orders", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_sales_order():
     data = request.get_json()
@@ -345,7 +345,7 @@ def create_sales_order():
 
 @admin_bp.route("/sales-orders/<int:so_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_sales_order(so_id):
     data = request.get_json()
@@ -384,7 +384,7 @@ def update_sales_order(so_id):
 
 @admin_bp.route("/sales-orders/<int:so_id>/cancel", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def cancel_sales_order(so_id):
     so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
@@ -431,7 +431,7 @@ def cancel_sales_order(so_id):
 
 @admin_bp.route("/short-picks", methods=["GET"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def get_short_picks():
     """Return recent short pick events from the audit log."""

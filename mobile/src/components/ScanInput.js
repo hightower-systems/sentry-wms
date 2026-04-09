@@ -5,19 +5,18 @@ import { colors, fonts, radii } from '../theme/styles';
 export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabled = false, autoFocus = true }) {
   const inputRef = useRef(null);
   const [value, setValue] = useState('');
-  const bufferRef = useRef('');
-  const timerRef = useRef(null);
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
-    if (autoFocus && !disabled) {
+    if (autoFocus && !disabled && !processing) {
       const timer = setTimeout(() => inputRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
-  }, [autoFocus, disabled]);
+  }, [autoFocus, disabled, processing]);
 
   // Re-focus input when it loses focus (hardware scanner can steal focus)
   useEffect(() => {
-    if (disabled) return;
+    if (disabled || processing) return;
     const interval = setInterval(() => {
       try {
         if (inputRef.current && typeof inputRef.current.isFocused === 'function' && !inputRef.current.isFocused()) {
@@ -28,52 +27,52 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [disabled]);
+  }, [disabled, processing]);
 
   const scanInFlightRef = useRef(false);
 
   const handleSubmit = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    const trimmed = value.replace(/[\r\n\t]/g, '').trim();
+    // DEBUG: log raw value with char codes to detect invisible characters
+    const charCodes = Array.from(value).map((c) => c.charCodeAt(0));
+    console.log('[SCAN_DEBUG] raw value:', JSON.stringify(value), 'charCodes:', charCodes);
+
+    // Strip ALL whitespace, carriage returns, newlines, and non-printable chars
+    const trimmed = value.replace(/[\r\n\s]+/g, '').trim();
+    console.log('[SCAN_DEBUG] trimmed value:', JSON.stringify(trimmed), 'length:', trimmed.length);
+
     setValue('');
-    bufferRef.current = '';
-    if (trimmed && onScan && !scanInFlightRef.current) {
-      scanInFlightRef.current = true;
-      Promise.resolve(onScan(trimmed)).finally(() => {
-        scanInFlightRef.current = false;
-      });
+    if (!trimmed || !onScan || scanInFlightRef.current) {
+      console.log('[SCAN_DEBUG] SKIPPED — empty:', !trimmed, 'noHandler:', !onScan, 'inFlight:', scanInFlightRef.current);
+      setTimeout(() => inputRef.current?.focus(), 50);
+      return;
     }
-    setTimeout(() => inputRef.current?.focus(), 50);
+
+    scanInFlightRef.current = true;
+    setProcessing(true);
+    Promise.resolve(onScan(trimmed)).finally(() => {
+      scanInFlightRef.current = false;
+      setProcessing(false);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    });
   };
 
   const handleChangeText = (text) => {
-    // Strip control characters that hardware scanners may inject
+    // Strip control characters that hardware scanners may inject (keep printable chars only)
     const cleaned = text.replace(/[\r\n\t]/g, '');
     setValue(cleaned);
-    bufferRef.current = cleaned;
-    // Wait for Enter key (onSubmitEditing) — do NOT auto-submit on timer.
-    // Hardware scanners send chars incrementally; a short timer causes partial submits.
-    // Fallback: if scanner doesn't send Enter, auto-submit after 300ms of no input
-    // and only if we have a reasonable barcode length.
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (cleaned.length >= 3) {
-      timerRef.current = setTimeout(() => {
-        if (bufferRef.current === cleaned) {
-          handleSubmit();
-        }
-      }, 300);
-    }
+    // NO auto-submit timer. Only process on Enter/Submit (onSubmitEditing).
+    // C6000 scanners send characters one at a time; a timer causes partial submits.
   };
 
   const IGNORED_KEYS = ['Escape', 'GoBack', 'F1', 'F2', 'F3', 'F4', 'F5',
     'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Tab'];
 
   return (
-    <View style={[styles.container, disabled && styles.disabled]}>
+    <View style={[styles.container, (disabled || processing) && styles.disabled]}>
       <TextInput
         ref={inputRef}
         style={styles.input}
-        placeholder={placeholder}
+        placeholder={processing ? 'PROCESSING...' : placeholder}
         placeholderTextColor={colors.textPlaceholder}
         value={value}
         onChangeText={handleChangeText}
@@ -84,7 +83,7 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
             e.stopPropagation?.();
           }
         }}
-        editable={!disabled}
+        editable={!disabled && !processing}
         autoFocus={autoFocus && !disabled}
         autoCapitalize="characters"
         autoCorrect={false}

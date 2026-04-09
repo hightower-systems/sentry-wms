@@ -1,7 +1,38 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../api.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
+
+const CSV_TEMPLATES = {
+  items: `sku,name,description,upc,default_bin
+WIDGET-001,Blue Widget,Standard blue widget,012345678901,A-01-01-01
+WIDGET-002,Red Widget,Standard red widget,012345678902,A-01-01-02
+GADGET-001,Mini Gadget,Compact gadget device,012345678903,B-02-01-01`,
+  'purchase-orders': `po_number,vendor,sku,quantity,expected_date
+PO-1001,Acme Supply Co,WIDGET-001,100,2026-05-01
+PO-1001,Acme Supply Co,WIDGET-002,50,2026-05-01
+PO-1002,Global Parts Inc,GADGET-001,200,2026-05-15`,
+  'sales-orders': `so_number,customer,sku,quantity
+SO-5001,John Smith,WIDGET-001,2
+SO-5001,John Smith,GADGET-001,1
+SO-5002,Jane Doe,WIDGET-002,3`,
+  bins: `bin_code,zone,aisle,bin_type,pick_sequence,description
+C-01-01-01,STORAGE,C,Pickable,100,Shelf C Row 1 Level 1
+C-01-02-01,STORAGE,C,Pickable,101,Shelf C Row 2 Level 1
+D-01-01-01,PICKING,D,Pickable,200,Pick zone D`,
+};
+
+function downloadTemplate(type) {
+  const csv = CSV_TEMPLATES[type];
+  if (!csv) return;
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `import-${type}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function Settings() {
   const [warehouse, setWarehouse] = useState(null);
@@ -15,13 +46,32 @@ export default function Settings() {
   const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', warehouse_id: 1, lines: [{ item_id: '', quantity: '' }] });
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
-  const [countShowExpected, setCountShowExpected] = useState(true);
-  const [requirePacking, setRequirePacking] = useState(true);
-  const [packingError, setPackingError] = useState('');
-  const [defaultReceivingBin, setDefaultReceivingBin] = useState('');
+
+  // Settings with save button
+  const [savedSettings, setSavedSettings] = useState({});
+  const [draftSettings, setDraftSettings] = useState({});
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [settingsSuccess, setSettingsSuccess] = useState('');
+  const [showLeaveWarning, setShowLeaveWarning] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
+
   const [receivingBins, setReceivingBins] = useState([]);
-  const [allowOverReceiving, setAllowOverReceiving] = useState(true);
   const fileRef = useRef(null);
+
+  const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
+
+  // Warn on browser navigation away with unsaved changes
+  useEffect(() => {
+    function handleBeforeUnload(e) {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     api.get('/admin/warehouses/1').then(async (res) => {
@@ -31,37 +81,36 @@ export default function Settings() {
         setWhForm(data);
       }
     });
-    api.get('/admin/settings/count_show_expected').then(async (res) => {
-      if (res?.ok) {
-        const data = await res.json();
-        setCountShowExpected(data.value !== 'false' && data.value !== false);
+
+    // Load all settings
+    Promise.all([
+      api.get('/admin/settings/count_show_expected'),
+      api.get('/admin/settings/require_packing_before_shipping'),
+      api.get('/admin/settings/allow_over_receiving'),
+      api.get('/admin/settings/default_receiving_bin'),
+    ]).then(async (responses) => {
+      const initial = {};
+      for (const res of responses) {
+        if (res?.ok) {
+          const data = await res.json();
+          initial[data.key] = data.value;
+        }
       }
-    }).catch(() => {});
-    api.get('/admin/settings/require_packing_before_shipping').then(async (res) => {
-      if (res?.ok) {
-        const data = await res.json();
-        setRequirePacking(data.value !== 'false' && data.value !== false);
-      }
-    }).catch(() => {});
-    api.get('/admin/settings/allow_over_receiving').then(async (res) => {
-      if (res?.ok) {
-        const data = await res.json();
-        setAllowOverReceiving(data.value !== 'false' && data.value !== false);
-      }
-    }).catch(() => {});
-    api.get('/admin/settings/default_receiving_bin').then(async (res) => {
-      if (res?.ok) {
-        const data = await res.json();
-        setDefaultReceivingBin(data.value || '');
-      }
-    }).catch(() => {});
+      // Set defaults for missing settings
+      if (!('count_show_expected' in initial)) initial.count_show_expected = 'true';
+      if (!('require_packing_before_shipping' in initial)) initial.require_packing_before_shipping = 'true';
+      if (!('allow_over_receiving' in initial)) initial.allow_over_receiving = 'true';
+      if (!('default_receiving_bin' in initial)) initial.default_receiving_bin = '';
+      setSavedSettings({ ...initial });
+      setDraftSettings({ ...initial });
+    });
+
     api.get('/admin/bins?warehouse_id=1&bin_type=Staging').then(async (res) => {
       if (res?.ok) {
         const data = await res.json();
         setReceivingBins(data.bins || []);
       }
     }).catch(() => {
-      // Fall back to all bins if filter not supported
       api.get('/admin/bins?warehouse_id=1').then(async (res) => {
         if (res?.ok) {
           const data = await res.json();
@@ -70,6 +119,26 @@ export default function Settings() {
       }).catch(() => {});
     });
   }, []);
+
+  function updateDraft(key, value) {
+    setDraftSettings((prev) => ({ ...prev, [key]: value }));
+    setSettingsSuccess('');
+  }
+
+  async function saveSettings() {
+    setSettingsSaving(true);
+    setSettingsError('');
+    setSettingsSuccess('');
+    const res = await api.put('/admin/settings', { settings: draftSettings });
+    if (res?.ok) {
+      setSavedSettings({ ...draftSettings });
+      setSettingsSuccess('Settings saved');
+    } else {
+      const data = await res?.json();
+      setSettingsError(data?.error || 'Failed to save settings');
+    }
+    setSettingsSaving(false);
+  }
 
   async function saveWarehouse() {
     const res = await api.put('/admin/warehouses/1', { warehouse_name: whForm.warehouse_name, address: whForm.address });
@@ -100,7 +169,7 @@ export default function Settings() {
       });
     }
 
-    const res = await api.post(`/admin/import/${importType}`, { [importType]: rows });
+    const res = await api.post(`/admin/import/${importType}`, { records: rows });
     if (res?.ok) {
       const data = await res.json();
       setImportResult(data);
@@ -121,7 +190,7 @@ export default function Settings() {
 
   async function createPO() {
     setFormError(''); setFormSuccess('');
-    const body = { ...poForm, lines: poForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity_expected: Number(l.quantity_expected) })) };
+    const body = { ...poForm, lines: poForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity_expected: Number(l.quantity_expected), quantity_ordered: Number(l.quantity_expected) })) };
     const res = await api.post('/admin/purchase-orders', body);
     if (res?.ok) {
       setFormSuccess('PO created');
@@ -143,7 +212,7 @@ export default function Settings() {
 
   async function createSO() {
     setFormError(''); setFormSuccess('');
-    const body = { ...soForm, lines: soForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity: Number(l.quantity) })) };
+    const body = { ...soForm, lines: soForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity: Number(l.quantity), quantity_ordered: Number(l.quantity) })) };
     const res = await api.post('/admin/sales-orders', body);
     if (res?.ok) {
       setFormSuccess('SO created');
@@ -154,6 +223,8 @@ export default function Settings() {
       setFormError(data?.error || 'Failed to create SO');
     }
   }
+
+  const toBool = (v) => v !== 'false' && v !== false;
 
   return (
     <div>
@@ -195,14 +266,17 @@ export default function Settings() {
       {/* Import tools */}
       <div className="settings-section">
         <h3>Import Tools</h3>
-        <p className="settings-note">Upload a CSV or JSON file to bulk import items or bins.</p>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <select className="form-select" style={{ width: 120 }} value={importType} onChange={(e) => setImportType(e.target.value)}>
+        <p className="settings-note">Upload a CSV or JSON file to bulk import records.</p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select className="form-select" style={{ width: 160 }} value={importType} onChange={(e) => setImportType(e.target.value)}>
             <option value="items">Items</option>
             <option value="bins">Bins</option>
+            <option value="purchase-orders">Purchase Orders</option>
+            <option value="sales-orders">Sales Orders</option>
           </select>
           <input ref={fileRef} type="file" accept=".csv,.json" style={{ fontSize: 13 }} />
           <button className="btn" onClick={handleImport}>Import</button>
+          <button className="btn btn-sm" onClick={() => downloadTemplate(importType)} style={{ fontSize: 12 }}>Download Template</button>
         </div>
         {importResult && (
           <div className="import-results">
@@ -210,7 +284,7 @@ export default function Settings() {
               <div className="errors">{importResult.error}</div>
             ) : (
               <>
-                <div className="success">Created: {importResult.created ?? 0}</div>
+                <div className="success">Imported: {importResult.imported ?? 0}</div>
                 {importResult.errors?.length > 0 && (
                   <div className="errors" style={{ marginTop: 4 }}>
                     Errors: {importResult.errors.length}
@@ -244,39 +318,24 @@ export default function Settings() {
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
             <input
               type="checkbox"
-              checked={requirePacking}
-              onChange={async (e) => {
-                const val = e.target.checked;
-                setPackingError('');
-                const res = await api.put('/admin/settings', { settings: { require_packing_before_shipping: String(val) } });
-                if (res?.ok) {
-                  setRequirePacking(val);
-                } else {
-                  const data = await res?.json();
-                  setPackingError(data?.error || 'Failed to update setting');
-                }
-              }}
+              checked={toBool(draftSettings.require_packing_before_shipping)}
+              onChange={(e) => updateDraft('require_packing_before_shipping', String(e.target.checked))}
             />
             Require packing before shipping
           </label>
         </div>
-        {packingError && <div className="form-error" style={{ marginTop: 4, fontSize: 13 }}>{packingError}</div>}
         <p className="settings-note">When enabled, orders must be packed before they can be shipped. When disabled, picked orders can be shipped directly.</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', marginTop: 8 }}>
           <label style={{ fontSize: 13, whiteSpace: 'nowrap' }}>Default Receiving Bin</label>
           <select
             className="form-select"
             style={{ width: 200 }}
-            value={defaultReceivingBin}
-            onChange={async (e) => {
-              const val = e.target.value;
-              setDefaultReceivingBin(val);
-              await api.put('/admin/settings', { settings: { default_receiving_bin: val } });
-            }}
+            value={draftSettings.default_receiving_bin || ''}
+            onChange={(e) => updateDraft('default_receiving_bin', e.target.value)}
           >
             <option value="">Select bin...</option>
             {receivingBins.map((b) => (
-              <option key={b.id} value={String(b.id)}>{b.bin_code}</option>
+              <option key={b.bin_id} value={String(b.bin_id)}>{b.bin_code}</option>
             ))}
           </select>
         </div>
@@ -285,12 +344,8 @@ export default function Settings() {
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
             <input
               type="checkbox"
-              checked={allowOverReceiving}
-              onChange={async (e) => {
-                const val = e.target.checked;
-                setAllowOverReceiving(val);
-                await api.put('/admin/settings', { settings: { allow_over_receiving: String(val) } });
-              }}
+              checked={toBool(draftSettings.allow_over_receiving)}
+              onChange={(e) => updateDraft('allow_over_receiving', String(e.target.checked))}
             />
             Allow over-receiving
           </label>
@@ -305,17 +360,23 @@ export default function Settings() {
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
             <input
               type="checkbox"
-              checked={countShowExpected}
-              onChange={async (e) => {
-                const val = e.target.checked;
-                setCountShowExpected(val);
-                await api.put('/admin/settings', { settings: { count_show_expected: String(val) } });
-              }}
+              checked={toBool(draftSettings.count_show_expected)}
+              onChange={(e) => updateDraft('count_show_expected', String(e.target.checked))}
             />
             Show expected quantities during cycle counts
           </label>
         </div>
         <p className="settings-note">When disabled, counters won't see expected quantities - useful for blind counts.</p>
+      </div>
+
+      {/* Save button */}
+      <div className="settings-section" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <button className="btn btn-primary" onClick={saveSettings} disabled={!hasUnsavedChanges || settingsSaving}>
+          {settingsSaving ? 'Saving...' : 'Save Settings'}
+        </button>
+        {hasUnsavedChanges && <span style={{ fontSize: 12, color: 'var(--copper)' }}>Unsaved changes</span>}
+        {settingsSuccess && <span style={{ fontSize: 12, color: 'var(--success)' }}>{settingsSuccess}</span>}
+        {settingsError && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{settingsError}</span>}
       </div>
 
       {/* Connector config placeholder */}
@@ -330,7 +391,7 @@ export default function Settings() {
       <div className="settings-section">
         <h3>About</h3>
         <div className="detail-grid">
-          <span className="detail-label">Version</span><span className="mono">0.8.0</span>
+          <span className="detail-label">Version</span><span className="mono">0.9.5</span>
           <span className="detail-label">Repository</span><span><a href="https://github.com/hightower-systems/sentry-wms" target="_blank" rel="noopener noreferrer">github.com/hightower-systems/sentry-wms</a></span>
         </div>
       </div>
@@ -402,6 +463,20 @@ export default function Settings() {
               </div>
             ))}
           </div>
+        </Modal>
+      )}
+
+      {/* Leave without saving warning */}
+      {showLeaveWarning && (
+        <Modal title="Unsaved Changes" onClose={() => { setShowLeaveWarning(false); setPendingNavigation(null); }}
+          footer={
+            <>
+              <button className="btn" onClick={() => { setShowLeaveWarning(false); setPendingNavigation(null); }}>Stay</button>
+              <button className="btn btn-danger" onClick={() => { setShowLeaveWarning(false); if (pendingNavigation) pendingNavigation(); }}>Leave Without Saving</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13 }}>You have unsaved settings changes. Leave without saving?</p>
         </Modal>
       )}
     </div>

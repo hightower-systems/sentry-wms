@@ -14,7 +14,7 @@ import { colors, fonts, radii, screenStyles, buttonStyles, listStyles, doneStyle
 
 const MODE_KEY = 'sentry_receive_mode';
 
-export default function ReceiveScreen({ navigation }) {
+export default function ReceiveScreen({ navigation, route }) {
   const { warehouseId } = useAuth();
 
   // Phase: 'scan_pos' → 'receiving' → 'done'
@@ -22,7 +22,7 @@ export default function ReceiveScreen({ navigation }) {
 
   // Phase 1: PO queue
   const [poQueue, setPoQueue] = useState([]);
-  const { error, scanDisabled, showError, clearError } = useScreenError();
+  const { error, scanDisabled, showError, clearError, errorRef } = useScreenError();
 
   // Phase 2: Receiving
   const [currentPoIndex, setCurrentPoIndex] = useState(0);
@@ -69,6 +69,14 @@ export default function ReceiveScreen({ navigation }) {
       .catch(() => {});
   }, []);
 
+  // Auto-load PO if navigated from home screen scan
+  useEffect(() => {
+    const poNumber = route?.params?.po_number;
+    if (poNumber) {
+      handleScanPO(poNumber);
+    }
+  }, []);
+
   const changeMode = (newMode) => {
     setMode(newMode);
     setShowModeMenu(false);
@@ -78,6 +86,7 @@ export default function ReceiveScreen({ navigation }) {
   // --- Phase 1: Scan POs to build queue ---
 
   const handleScanPO = async (barcode) => {
+    console.log('[SCAN_DEBUG] ReceiveScreen.handleScanPO received:', JSON.stringify(barcode));
     // Duplicate check
     if (poQueue.find((p) => p.po_barcode === barcode || p.po_number === barcode)) {
       showError('Already scanned');
@@ -88,14 +97,31 @@ export default function ReceiveScreen({ navigation }) {
       const resp = await client.get(`/api/receiving/po/${encodeURIComponent(barcode)}`);
       const poData = resp.data.purchase_order || resp.data.po || resp.data;
       const poLines = resp.data.lines || [];
-      setPoQueue((prev) => [...prev, {
+      const newEntry = {
         po_id: poData.po_id,
         po_number: poData.po_number,
         po_barcode: poData.po_barcode || barcode,
         vendor_name: poData.vendor_name,
         line_count: poLines.length,
         total_units: poLines.reduce((sum, l) => sum + (l.quantity_ordered || 0), 0),
-      }]);
+      };
+      setPoQueue((prev) => [...prev, newEntry]);
+
+      // If navigated with a PO param, auto-load it
+      if (route?.params?.po_number === barcode) {
+        // Load this PO directly
+        try {
+          setPo(poData);
+          setLines(poLines);
+          setActiveItem(null);
+          setTurboStatus('');
+          setCurrentPoIndex(0);
+          setPhase('receiving');
+          setPoQueue([newEntry]);
+        } catch {
+          // Fall through to normal queue flow
+        }
+      }
     } catch (err) {
       if (err.response?.status === 404) {
         showError('PO not found');
@@ -153,6 +179,7 @@ export default function ReceiveScreen({ navigation }) {
 
   // Standard mode
   const handleScanItemStandard = (barcode) => {
+    console.log('[SCAN_DEBUG] ReceiveScreen.handleScanItemStandard received:', JSON.stringify(barcode));
     const match = lines.find(
       (l) => l.upc === barcode || l.sku === barcode || l.item_barcode === barcode
     );
@@ -186,17 +213,19 @@ export default function ReceiveScreen({ navigation }) {
     const qty = parseInt(quantity, 10);
     if (!qty || qty <= 0) return;
 
-    const remaining = activeItem.quantity_ordered - activeItem.quantity_received;
+    const totalAfterReceive = activeItem.quantity_received + qty;
 
-    if (qty > remaining && remaining > 0) {
+    if (totalAfterReceive > activeItem.quantity_ordered) {
       if (!allowOverReceiving) {
-        showError(`Cannot receive more than ordered (${remaining} remaining)`);
+        const remaining = activeItem.quantity_ordered - activeItem.quantity_received;
+        showError(`Cannot receive more than ordered (${remaining > 0 ? remaining : 0} remaining)`);
         return;
       }
-      // Show warning but allow
+      // Show warning but allow — EVERY time
+      const overAmount = totalAfterReceive - activeItem.quantity_ordered;
       Alert.alert(
         'Over-Receiving',
-        `You are receiving ${qty - remaining} more than expected. Continue?`,
+        `You are receiving ${overAmount} more than expected. Continue?`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Continue', onPress: () => doReceiveStandard(qty) },
@@ -210,11 +239,19 @@ export default function ReceiveScreen({ navigation }) {
 
   // Turbo mode
   const processTurboScan = useCallback(async (barcode) => {
+    console.log('[SCAN_DEBUG] ReceiveScreen.processTurboScan received:', JSON.stringify(barcode));
     const match = lines.find(
       (l) => l.upc === barcode || l.sku === barcode || l.item_barcode === barcode
     );
     if (!match) {
       showError('Item not on this PO');
+      return;
+    }
+
+    // Over-receive check for turbo mode
+    const totalAfterReceive = match.quantity_received + 1;
+    if (totalAfterReceive > match.quantity_ordered && !allowOverReceiving) {
+      showError('Cannot receive more than ordered');
       return;
     }
 
@@ -238,9 +275,9 @@ export default function ReceiveScreen({ navigation }) {
     } catch (err) {
       showError(err.response?.data?.error || 'Failed to receive');
     }
-  }, [lines, po, warehouseId, receivingBinId, showError]);
+  }, [lines, po, warehouseId, receivingBinId, showError, allowOverReceiving]);
 
-  const [enqueueTurbo, turboProcessing] = useScanQueue(processTurboScan);
+  const [enqueueTurbo, turboProcessing] = useScanQueue(processTurboScan, errorRef);
 
   const handleScanItem = mode === 'turbo' ? enqueueTurbo : handleScanItemStandard;
 
@@ -331,7 +368,7 @@ export default function ReceiveScreen({ navigation }) {
 
             <View style={screenStyles.bottomBar}>
               <TouchableOpacity
-                style={[buttonStyles.buttonPrimary, poQueue.length === 0 && buttonStyles.buttonDisabled]}
+                style={[buttonStyles.buttonPrimary, { flex: 1 }, poQueue.length === 0 && buttonStyles.buttonDisabled]}
                 onPress={handleLoadAll}
                 disabled={poQueue.length === 0}
               >
@@ -369,7 +406,7 @@ export default function ReceiveScreen({ navigation }) {
                 <Text style={styles.poCompleteText}>PO Complete</Text>
                 <Text style={styles.poCompleteDetail}>{po.po_number} - all items received</Text>
                 {currentPoIndex < poQueue.length - 1 && (
-                  <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleNextPO}>
+                  <TouchableOpacity style={[buttonStyles.buttonPrimary, { width: '100%' }]} onPress={handleNextPO}>
                     <Text style={buttonStyles.buttonPrimaryText}>NEXT PO</Text>
                   </TouchableOpacity>
                 )}
@@ -405,7 +442,7 @@ export default function ReceiveScreen({ navigation }) {
                         placeholderTextColor={colors.textPlaceholder}
                       />
                     </View>
-                    <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmStandard}>
+                    <TouchableOpacity style={[buttonStyles.buttonPrimary, { width: '100%' }]} onPress={handleConfirmStandard}>
                       <Text style={buttonStyles.buttonPrimaryText}>RECEIVE</Text>
                     </TouchableOpacity>
                   </View>
@@ -430,10 +467,10 @@ export default function ReceiveScreen({ navigation }) {
           </ScrollView>
 
           <View style={screenStyles.bottomBar}>
-            <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleSubmit}>
+            <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleSubmit}>
               <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleCancel}>
+            <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={handleCancel}>
               <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
             </TouchableOpacity>
           </View>
@@ -448,10 +485,10 @@ export default function ReceiveScreen({ navigation }) {
           <Text style={doneStyles.detail}>
             {poQueue.length} PO{poQueue.length !== 1 ? 's' : ''} processed
           </Text>
-          <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={resetAll}>
+          <TouchableOpacity style={[buttonStyles.buttonPrimary, { width: '100%' }]} onPress={resetAll}>
             <Text style={buttonStyles.buttonPrimaryText}>RECEIVE MORE</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 8 }]} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 8, width: '100%' }]} onPress={() => navigation.goBack()}>
             <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
         </View>
@@ -489,6 +526,7 @@ export default function ReceiveScreen({ navigation }) {
             <ScanInput
               placeholder="SCAN BIN"
               onScan={async (barcode) => {
+                console.log('[SCAN_DEBUG] ReceiveScreen.binPicker received:', JSON.stringify(barcode));
                 try {
                   const resp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
                   if (resp.data?.bin) {

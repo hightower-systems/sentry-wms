@@ -1,4 +1,4 @@
-"""Users, Audit Log, Dashboard Stats, Settings, and Cycle Counts endpoints."""
+"""Users, Audit Log, Dashboard Stats, Settings, Cycle Counts, and Adjustment Approval endpoints."""
 
 import math
 
@@ -15,16 +15,19 @@ from routes.admin import VALID_ROLES, admin_bp
 
 @admin_bp.route("/users", methods=["GET"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def list_users():
     rows = g.db.execute(
-        text("SELECT user_id, username, full_name, role, warehouse_id, is_active, created_at, last_login FROM users ORDER BY user_id")
+        text("SELECT user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at, last_login FROM users ORDER BY user_id")
     ).fetchall()
     return jsonify({
         "users": [
             {"user_id": r.user_id, "username": r.username, "full_name": r.full_name,
-             "role": r.role, "warehouse_id": r.warehouse_id, "is_active": r.is_active,
+             "role": r.role, "warehouse_id": r.warehouse_id,
+             "warehouse_ids": list(r.warehouse_ids) if r.warehouse_ids else [],
+             "allowed_functions": list(r.allowed_functions) if r.allowed_functions else [],
+             "is_active": r.is_active,
              "created_at": r.created_at.isoformat() if r.created_at else None,
              "last_login": r.last_login.isoformat() if r.last_login else None}
             for r in rows
@@ -34,7 +37,7 @@ def list_users():
 
 @admin_bp.route("/users", methods=["POST"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def create_user():
     data = request.get_json()
@@ -48,28 +51,36 @@ def create_user():
     if dup:
         return jsonify({"error": f"Duplicate username: {data['username']}"}), 400
 
+    warehouse_ids = data.get("warehouse_ids", [])
+    warehouse_id = warehouse_ids[0] if warehouse_ids else data.get("warehouse_id")
+    allowed_functions = data.get("allowed_functions", [])
+
     pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     result = g.db.execute(
         text("""
-            INSERT INTO users (username, password_hash, full_name, role, warehouse_id)
-            VALUES (:u, :pw, :name, :role, :wid)
-            RETURNING user_id, username, full_name, role, warehouse_id, is_active, created_at
+            INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, allowed_functions)
+            VALUES (:u, :pw, :name, :role, :wid, :wids, :funcs)
+            RETURNING user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at
         """),
         {"u": data["username"], "pw": pw_hash, "name": data["full_name"],
-         "role": data["role"], "wid": data.get("warehouse_id")},
+         "role": data["role"], "wid": warehouse_id, "wids": warehouse_ids,
+         "funcs": allowed_functions},
     )
     row = result.fetchone()
     g.db.commit()
     return jsonify({
         "user_id": row.user_id, "username": row.username, "full_name": row.full_name,
-        "role": row.role, "warehouse_id": row.warehouse_id, "is_active": row.is_active,
+        "role": row.role, "warehouse_id": row.warehouse_id,
+        "warehouse_ids": list(row.warehouse_ids) if row.warehouse_ids else [],
+        "allowed_functions": list(row.allowed_functions) if row.allowed_functions else [],
+        "is_active": row.is_active,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }), 201
 
 
 @admin_bp.route("/users/<int:user_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def update_user(user_id):
     data = request.get_json()
@@ -89,7 +100,19 @@ def update_user(user_id):
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
-    if "password" in data:
+    if "warehouse_ids" in data:
+        fields.append("warehouse_ids = :warehouse_ids")
+        params["warehouse_ids"] = data["warehouse_ids"]
+        # Keep warehouse_id in sync (first warehouse)
+        if data["warehouse_ids"]:
+            fields.append("warehouse_id = :wid_sync")
+            params["wid_sync"] = data["warehouse_ids"][0]
+
+    if "allowed_functions" in data:
+        fields.append("allowed_functions = :allowed_functions")
+        params["allowed_functions"] = data["allowed_functions"]
+
+    if "password" in data and data["password"]:
         pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         fields.append("password_hash = :pw_hash")
         params["pw_hash"] = pw_hash
@@ -101,12 +124,15 @@ def update_user(user_id):
     g.db.commit()
 
     row = g.db.execute(
-        text("SELECT user_id, username, full_name, role, warehouse_id, is_active, created_at, last_login FROM users WHERE user_id = :uid"),
+        text("SELECT user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at, last_login FROM users WHERE user_id = :uid"),
         {"uid": user_id},
     ).fetchone()
     return jsonify({
         "user_id": row.user_id, "username": row.username, "full_name": row.full_name,
-        "role": row.role, "warehouse_id": row.warehouse_id, "is_active": row.is_active,
+        "role": row.role, "warehouse_id": row.warehouse_id,
+        "warehouse_ids": list(row.warehouse_ids) if row.warehouse_ids else [],
+        "allowed_functions": list(row.allowed_functions) if row.allowed_functions else [],
+        "is_active": row.is_active,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "last_login": row.last_login.isoformat() if row.last_login else None,
     })
@@ -114,7 +140,7 @@ def update_user(user_id):
 
 @admin_bp.route("/users/<int:user_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN", "MANAGER")
+@require_role("ADMIN")
 @with_db
 def delete_user(user_id):
     existing = g.db.execute(text("SELECT user_id FROM users WHERE user_id = :uid"), {"uid": user_id}).fetchone()
@@ -253,6 +279,11 @@ def dashboard():
         wh_params,
     ).scalar()
 
+    # Pending adjustments count
+    pending_adjustments = g.db.execute(
+        text("SELECT COUNT(*) FROM inventory_adjustments WHERE status = 'PENDING'")
+    ).scalar()
+
     result = {
         "open_pos": open_pos,
         "pending_receipts": int(pending_receipts),
@@ -266,6 +297,7 @@ def dashboard():
         "total_bins": total_bins,
         "short_picks_7d": short_pick_count,
         "low_stock_items": low_stock,
+        "pending_adjustments": pending_adjustments,
         "recent_activity": [
             {"action": r.action_type, "user": r.user_id,
              "detail": str(r.details) if r.details else None,
@@ -369,7 +401,7 @@ def list_cycle_counts():
             text(
                 """
                 SELECT ccl.count_line_id, i.sku, i.item_name,
-                       ccl.expected_quantity, ccl.counted_quantity,
+                       ccl.expected_quantity, ccl.counted_quantity, ccl.unexpected,
                        (ccl.counted_quantity - ccl.expected_quantity) AS variance
                 FROM cycle_count_lines ccl
                 JOIN items i ON i.item_id = ccl.item_id
@@ -394,6 +426,7 @@ def list_cycle_counts():
                     "item_name": l.item_name,
                     "expected_quantity": l.expected_quantity,
                     "counted_quantity": l.counted_quantity,
+                    "unexpected": l.unexpected,
                     "variance": l.variance,
                 }
                 for l in lines
@@ -401,3 +434,111 @@ def list_cycle_counts():
         })
 
     return jsonify({"cycle_counts": counts})
+
+
+# ── Inventory Adjustment Approval ────────────────────────────────────────────
+
+@admin_bp.route("/adjustments/pending", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def list_pending_adjustments():
+    """Return pending inventory adjustments grouped by cycle count."""
+    rows = g.db.execute(
+        text("""
+            SELECT ia.adjustment_id, ia.item_id, ia.bin_id, ia.warehouse_id,
+                   ia.quantity_change, ia.reason_code, ia.reason_detail,
+                   ia.status, ia.adjusted_by, ia.adjusted_at, ia.cycle_count_id,
+                   i.sku, i.item_name, b.bin_code
+            FROM inventory_adjustments ia
+            JOIN items i ON i.item_id = ia.item_id
+            JOIN bins b ON b.bin_id = ia.bin_id
+            WHERE ia.status = 'PENDING'
+            ORDER BY ia.cycle_count_id, ia.adjustment_id
+        """)
+    ).fetchall()
+
+    return jsonify({
+        "adjustments": [
+            {
+                "adjustment_id": r.adjustment_id,
+                "item_id": r.item_id,
+                "bin_id": r.bin_id,
+                "warehouse_id": r.warehouse_id,
+                "quantity_change": r.quantity_change,
+                "reason_code": r.reason_code,
+                "reason_detail": r.reason_detail,
+                "status": r.status,
+                "adjusted_by": r.adjusted_by,
+                "adjusted_at": r.adjusted_at.isoformat() if r.adjusted_at else None,
+                "cycle_count_id": r.cycle_count_id,
+                "sku": r.sku,
+                "item_name": r.item_name,
+                "bin_code": r.bin_code,
+            }
+            for r in rows
+        ]
+    })
+
+
+@admin_bp.route("/adjustments/review", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def review_adjustments():
+    """Approve or reject individual adjustments. Approved adjustments update inventory."""
+    data = request.get_json()
+    if not data or not data.get("decisions"):
+        return jsonify({"error": "decisions array is required"}), 400
+
+    approved = 0
+    rejected = 0
+
+    for decision in data["decisions"]:
+        adj_id = decision.get("adjustment_id")
+        action = decision.get("action")  # 'approve' or 'reject'
+
+        if not adj_id or action not in ("approve", "reject"):
+            continue
+
+        row = g.db.execute(
+            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status FROM inventory_adjustments WHERE adjustment_id = :aid"),
+            {"aid": adj_id},
+        ).fetchone()
+
+        if not row or row.status != "PENDING":
+            continue
+
+        if action == "approve":
+            # Apply the inventory adjustment
+            existing = g.db.execute(
+                text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid"),
+                {"iid": row.item_id, "bid": row.bin_id},
+            ).fetchone()
+
+            if existing:
+                new_qty = max(0, existing.quantity_on_hand + row.quantity_change)
+                g.db.execute(
+                    text("UPDATE inventory SET quantity_on_hand = :qty, updated_at = NOW() WHERE inventory_id = :inv_id"),
+                    {"qty": new_qty, "inv_id": existing.inventory_id},
+                )
+            elif row.quantity_change > 0:
+                g.db.execute(
+                    text("INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES (:iid, :bid, :wid, :qty)"),
+                    {"iid": row.item_id, "bid": row.bin_id, "wid": row.warehouse_id, "qty": row.quantity_change},
+                )
+
+            g.db.execute(
+                text("UPDATE inventory_adjustments SET status = 'APPROVED' WHERE adjustment_id = :aid"),
+                {"aid": adj_id},
+            )
+            approved += 1
+        else:
+            g.db.execute(
+                text("UPDATE inventory_adjustments SET status = 'REJECTED' WHERE adjustment_id = :aid"),
+                {"aid": adj_id},
+            )
+            rejected += 1
+
+    g.db.commit()
+    return jsonify({"approved": approved, "rejected": rejected})

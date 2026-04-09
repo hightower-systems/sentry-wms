@@ -10,7 +10,7 @@ admin_bp = Blueprint("admin", __name__)
 
 VALID_ZONE_TYPES = ("RECEIVING", "STORAGE", "PICKING", "STAGING", "SHIPPING")
 VALID_BIN_TYPES = ("Staging", "PickableStaging", "Pickable")
-VALID_ROLES = ("ADMIN", "MANAGER", "PICKER", "RECEIVER", "PACKER")
+VALID_ROLES = ("ADMIN", "USER")
 
 
 def _paginate(query_base, count_base, params, page, per_page):

@@ -17,10 +17,18 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      await login(username, password);
+      const userData = await login(username, password);
+      if (userData && userData.role !== 'ADMIN') {
+        // Non-admin users cannot access the admin panel
+        localStorage.removeItem('sentry_token');
+        localStorage.removeItem('sentry_user');
+        setError('Not authorized, contact admin');
+        setLoading(false);
+        return;
+      }
       navigate('/');
     } catch (err) {
-      setError('Wrong Username/Password');
+      setError(err.message === 'Not authorized' ? 'Not authorized, contact admin' : 'Wrong Username/Password');
     } finally {
       setLoading(false);
     }

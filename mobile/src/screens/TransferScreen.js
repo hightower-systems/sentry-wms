@@ -22,6 +22,7 @@ export default function TransferScreen({ navigation }) {
   const [success, setSuccess] = useState(false);
 
   const handleScan = async (barcode) => {
+    console.log('[SCAN_DEBUG] TransferScreen.handleScan received:', JSON.stringify(barcode), 'step:', step);
     if (step === 0) {
       // Scan item
       try {
@@ -153,7 +154,15 @@ export default function TransferScreen({ navigation }) {
 
             {fromBin && (
               <View style={styles.infoCard}>
-                <Text style={listStyles.label}>FROM BIN</Text>
+                <View style={styles.infoCardHeader}>
+                  <Text style={listStyles.label}>FROM BIN</Text>
+                  <TouchableOpacity
+                    style={styles.clearBtn}
+                    onPress={() => { setFromBin(null); setToBin(null); setStep(1); }}
+                  >
+                    <Text style={styles.clearBtnText}>X</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.binValue}>{fromBin.bin_code}</Text>
                 <Text style={styles.available}>Available: {fromBin.available}</Text>
               </View>
@@ -161,7 +170,15 @@ export default function TransferScreen({ navigation }) {
 
             {toBin && (
               <View style={styles.infoCard}>
-                <Text style={listStyles.label}>TO BIN</Text>
+                <View style={styles.infoCardHeader}>
+                  <Text style={listStyles.label}>TO BIN</Text>
+                  <TouchableOpacity
+                    style={styles.clearBtn}
+                    onPress={() => { setToBin(null); setStep(2); }}
+                  >
+                    <Text style={styles.clearBtnText}>X</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.binValue}>{toBin.bin_code}</Text>
               </View>
             )}
@@ -216,6 +233,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 12, marginBottom: 12,
   },
+  infoCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  clearBtn: {
+    padding: 4, minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center',
+  },
+  clearBtnText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
   itemName: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   locationList: { marginTop: 8 },
   locationText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 2 },

@@ -1,0 +1,4 @@
+sku,name,description,upc,default_bin
+WIDGET-001,Blue Widget,Standard blue widget,012345678901,A-01-01-01
+WIDGET-002,Red Widget,Standard red widget,012345678902,A-01-01-02
+GADGET-001,Mini Gadget,Compact gadget device,012345678903,B-02-01-01

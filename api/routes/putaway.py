@@ -210,7 +210,9 @@ def confirm_putaway():
         warehouse_id=warehouse_id,
         details={
             "from_bin_id": from_bin_id,
+            "from_bin_code": from_bin.bin_code,
             "to_bin_id": to_bin_id,
+            "to_bin_code": to_bin.bin_code,
             "quantity": quantity,
             "transfer_id": transfer_id,
         },

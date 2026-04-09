@@ -5,6 +5,9 @@ export default function DataTable({
   onPageChange,
   onRowClick,
   emptyMessage = 'No records found',
+  sortKey,
+  sortDir,
+  onSort,
 }) {
   function exportCSV() {
     if (!data || data.length === 0) return;
@@ -30,9 +33,24 @@ export default function DataTable({
       <table className="data-table">
         <thead>
           <tr>
-            {columns.map((col) => (
-              <th key={col.key || col.label}>{col.label}</th>
-            ))}
+            {columns.map((col) => {
+              const isSortable = col.sortable && onSort;
+              const isActive = sortKey === col.key;
+              return (
+                <th
+                  key={col.key || col.label}
+                  style={isSortable ? { cursor: 'pointer', userSelect: 'none' } : undefined}
+                  onClick={isSortable ? () => onSort(col.key) : undefined}
+                >
+                  {col.label}
+                  {isActive && (
+                    <span style={{ marginLeft: 4, fontSize: 10 }}>
+                      {sortDir === 'asc' ? '\u25B2' : '\u25BC'}
+                    </span>
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>

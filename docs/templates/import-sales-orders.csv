@@ -1,0 +1,4 @@
+so_number,customer,sku,quantity
+SO-5001,John Smith,WIDGET-001,2
+SO-5001,John Smith,GADGET-001,1
+SO-5002,Jane Doe,WIDGET-002,3

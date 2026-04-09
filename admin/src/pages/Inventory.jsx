@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -8,6 +8,8 @@ export default function Inventory() {
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
 
   useEffect(() => {
     const params = new URLSearchParams({ warehouse_id: 1, page, per_page: 50 });
@@ -20,15 +22,38 @@ export default function Inventory() {
     });
   }, [page, search]);
 
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return data;
+    return [...data].sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      if (av == null) av = '';
+      if (bv == null) bv = '';
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return sortDir === 'asc' ? av - bv : bv - av;
+      }
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [data, sortKey, sortDir]);
+
   const columns = [
-    { key: 'sku', label: 'SKU', mono: true },
-    { key: 'item_name', label: 'Item Name' },
-    { key: 'bin_code', label: 'Bin Code', mono: true },
-    { key: 'zone_name', label: 'Zone' },
-    { key: 'quantity_on_hand', label: 'On Hand' },
-    { key: 'quantity_allocated', label: 'Allocated' },
-    { key: 'available', label: 'Available', render: (r) => (r.quantity_on_hand || 0) - (r.quantity_allocated || 0) },
-    { key: 'last_counted_at', label: 'Last Counted', mono: true, render: (r) => r.last_counted_at ? new Date(r.last_counted_at).toLocaleDateString() : '-' },
+    { key: 'sku', label: 'SKU', mono: true, sortable: true },
+    { key: 'item_name', label: 'Item Name', sortable: true },
+    { key: 'bin_code', label: 'Bin Code', mono: true, sortable: true },
+    { key: 'zone_name', label: 'Zone', sortable: true },
+    { key: 'quantity_on_hand', label: 'On Hand', sortable: true },
+    { key: 'quantity_allocated', label: 'Allocated', sortable: true },
+    { key: 'available', label: 'Available', sortable: true, render: (r) => (r.quantity_on_hand || 0) - (r.quantity_allocated || 0) },
+    { key: 'last_counted_at', label: 'Last Counted', mono: true, sortable: true, render: (r) => r.last_counted_at ? new Date(r.last_counted_at).toLocaleDateString() : '-' },
   ];
 
   return (
@@ -44,9 +69,12 @@ export default function Inventory() {
       </div>
       <DataTable
         columns={columns}
-        data={data}
+        data={sorted}
         pagination={pagination}
         onPageChange={setPage}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
       />
     </div>
   );

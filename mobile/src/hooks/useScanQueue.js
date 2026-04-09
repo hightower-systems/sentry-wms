@@ -5,10 +5,12 @@ import { useRef, useCallback, useState } from 'react';
  * Enqueues barcodes and processes them sequentially so rapid scans
  * don't race or get dropped while an API call is in-flight.
  *
- * Returns [enqueue, isProcessing] — use isProcessing to disable
- * the scan input while an API call is in-flight.
+ * Pass errorRef (from useScreenError) so the queue pauses while an
+ * error popup is visible — prevents stacked popups and crashes.
+ *
+ * Returns [enqueue, isProcessing]
  */
-export default function useScanQueue(processFn) {
+export default function useScanQueue(processFn, errorRef) {
   const queue = useRef([]);
   const processingRef = useRef(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -19,7 +21,20 @@ export default function useScanQueue(processFn) {
     setIsProcessing(true);
 
     while (queue.current.length > 0) {
+      // Pause while an error popup is visible
+      if (errorRef?.current) {
+        await new Promise((resolve) => {
+          const check = setInterval(() => {
+            if (!errorRef.current) {
+              clearInterval(check);
+              resolve();
+            }
+          }, 100);
+        });
+      }
+
       const barcode = queue.current.shift();
+      console.log('[SCAN_DEBUG] useScanQueue processing:', JSON.stringify(barcode), 'remaining:', queue.current.length);
       try {
         await processFn(barcode);
       } catch {
@@ -29,7 +44,7 @@ export default function useScanQueue(processFn) {
 
     processingRef.current = false;
     setIsProcessing(false);
-  }, [processFn]);
+  }, [processFn, errorRef]);
 
   const enqueue = useCallback((barcode) => {
     queue.current.push(barcode);

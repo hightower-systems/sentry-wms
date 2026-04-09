@@ -300,6 +300,7 @@ CREATE TABLE cycle_count_lines (
     counted_quantity INT,
     -- variance computed in queries: (counted_quantity - expected_quantity)
     scanned BOOLEAN DEFAULT FALSE,
+    unexpected BOOLEAN DEFAULT FALSE,
     counted_by VARCHAR(100),
     counted_at TIMESTAMPTZ
 );
@@ -343,6 +344,7 @@ CREATE TABLE inventory_adjustments (
     quantity_change INT NOT NULL,           -- positive = add, negative = remove
     reason_code VARCHAR(50) NOT NULL,      -- 'CYCLE_COUNT', 'DAMAGE', 'FOUND', 'LOST', 'CORRECTION'
     reason_detail VARCHAR(500),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',  -- 'PENDING', 'APPROVED', 'REJECTED'
     adjusted_by VARCHAR(100) NOT NULL,
     adjusted_at TIMESTAMPTZ DEFAULT NOW(),
     cycle_count_id INT REFERENCES cycle_counts(count_id)
@@ -376,9 +378,10 @@ CREATE TABLE users (
     username VARCHAR(50) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(100) NOT NULL,
-    role VARCHAR(20) NOT NULL DEFAULT 'PICKER',  -- 'ADMIN', 'MANAGER', 'PICKER', 'RECEIVER', 'PACKER'
+    role VARCHAR(20) NOT NULL DEFAULT 'USER',  -- 'ADMIN', 'USER'
     warehouse_id INT REFERENCES warehouses(warehouse_id),
-    allowed_functions TEXT[] DEFAULT '{}',
+    warehouse_ids INT[] DEFAULT '{}',          -- multi-warehouse assignment
+    allowed_functions TEXT[] DEFAULT '{}',      -- mobile module access: receive, putaway, pick, pack, ship, count, transfer
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_login TIMESTAMPTZ

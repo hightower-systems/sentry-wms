@@ -11,7 +11,14 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem('sentry_token');
     const saved = localStorage.getItem('sentry_user');
     if (token && saved) {
-      setUser(JSON.parse(saved));
+      const parsed = JSON.parse(saved);
+      // Only allow ADMIN users in the admin panel
+      if (parsed.role === 'ADMIN') {
+        setUser(parsed);
+      } else {
+        localStorage.removeItem('sentry_token');
+        localStorage.removeItem('sentry_user');
+      }
     }
     setLoading(false);
   }, []);
@@ -23,9 +30,13 @@ export function AuthProvider({ children }) {
       throw new Error(data.error || 'Login failed');
     }
     const data = await res.json();
+    if (data.user.role !== 'ADMIN') {
+      throw new Error('Not authorized');
+    }
     localStorage.setItem('sentry_token', data.token);
     localStorage.setItem('sentry_user', JSON.stringify(data.user));
     setUser(data.user);
+    return data.user;
   }
 
   function logout() {

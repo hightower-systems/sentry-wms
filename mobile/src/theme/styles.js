@@ -66,7 +66,7 @@ export const screenStyles = StyleSheet.create({
   },
   content: { flex: 1 },
   contentInner: { padding: 16 },
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
+  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8, flexDirection: 'row' },
   menuBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center', alignItems: 'center' },
   menuIcon: { fontSize: 20, color: colors.textPrimary, fontWeight: '700' },
 });
@@ -109,7 +109,7 @@ export const modalStyles = StyleSheet.create({
   subtitle: { fontSize: 13, color: colors.textMuted, marginBottom: 16 },
   divider: { height: 1, backgroundColor: colors.cardBorder, marginVertical: 16 },
   body: { fontSize: 14, color: colors.textPrimary, marginBottom: 20 },
-  actions: { gap: 8 },
+  actions: { gap: 8, flexDirection: 'row' },
 });
 
 // ── Shared list row patterns ─────────────────────────────────
