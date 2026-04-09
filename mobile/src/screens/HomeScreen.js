@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../auth/AuthContext';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
+import useScreenError from '../hooks/useScreenError';
 import ActiveBatchBanner from '../components/ActiveBatchBanner';
 import WarehouseSelector from '../components/WarehouseSelector';
 import client from '../api/client';
@@ -36,9 +37,9 @@ export default function HomeScreen({ navigation }) {
   const [warehouseName, setWarehouseName] = useState('');
   const [showWarehousePicker, setShowWarehousePicker] = useState(false);
   const [requirePacking, setRequirePacking] = useState(true);
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     if (!warehouseId) return;
@@ -79,6 +80,8 @@ export default function HomeScreen({ navigation }) {
       }
     } catch {
       // Silent fail on refresh - data shows stale
+    } finally {
+      setInitialLoading(false);
     }
   }, [warehouseId, batchDismissed]);
 
@@ -90,8 +93,13 @@ export default function HomeScreen({ navigation }) {
   );
 
   const handleScan = async (barcode) => {
+    const cleaned = barcode.replace(/[\r\n\t]/g, '').trim();
+    if (!cleaned) return;
+    const encoded = encodeURIComponent(cleaned);
+
+    // Try item lookup (UPC or SKU)
     try {
-      const itemResp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
+      const itemResp = await client.get(`/api/lookup/item/${encoded}`);
       if (itemResp.data && itemResp.data.item) {
         const item = itemResp.data.item;
         const locations = (itemResp.data.locations || [])
@@ -104,11 +112,12 @@ export default function HomeScreen({ navigation }) {
         return;
       }
     } catch {
-      // Not an item, try bin
+      // Not an item
     }
 
+    // Try bin lookup
     try {
-      const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
+      const binResp = await client.get(`/api/lookup/bin/${encoded}`);
       if (binResp.data && binResp.data.bin) {
         const bin = binResp.data.bin;
         const contents = (binResp.data.items || [])
@@ -121,11 +130,44 @@ export default function HomeScreen({ navigation }) {
         return;
       }
     } catch {
-      // Not a bin either
+      // Not a bin
     }
 
-    setError('Barcode not recognized');
-    setScanDisabled(true);
+    // Try PO lookup
+    try {
+      const poResp = await client.get(`/api/receiving/po/${encoded}`);
+      if (poResp.data && poResp.data.purchase_order) {
+        const po = poResp.data.purchase_order;
+        navigation.navigate('Receive', { po_number: po.po_number });
+        return;
+      }
+    } catch {
+      // Not a PO
+    }
+
+    // Try SO lookup
+    try {
+      const soResp = await client.get(`/api/shipping/order/${encoded}`);
+      if (soResp.data && soResp.data.sales_order) {
+        const so = soResp.data.sales_order;
+        navigation.navigate('Ship', { so_number: so.so_number });
+        return;
+      }
+    } catch {
+      // Not an SO either — also try packing endpoint for PICKED status orders
+      try {
+        const packResp = await client.get(`/api/packing/order/${encoded}`);
+        if (packResp.data && packResp.data.sales_order) {
+          const so = packResp.data.sales_order;
+          navigation.navigate('Pack', { so_number: so.so_number });
+          return;
+        }
+      } catch {
+        // Not found anywhere
+      }
+    }
+
+    showError('Barcode not recognized');
   };
 
   const visibleFunctions = FUNCTIONS.filter(
@@ -189,6 +231,9 @@ export default function HomeScreen({ navigation }) {
 
         <Text style={styles.operationsLabel}>OPERATIONS</Text>
 
+        {initialLoading ? (
+          <ActivityIndicator size="large" color={colors.accentRed} style={{ marginTop: 32 }} />
+        ) : (
         <View style={styles.grid}>
           {visibleFunctions.map((fn, index) => {
             const accentColor = ACCENT_COLORS[fn.accent];
@@ -215,6 +260,7 @@ export default function HomeScreen({ navigation }) {
             );
           })}
         </View>
+        )}
       </ScrollView>
 
       <View style={styles.footer}>
@@ -224,10 +270,7 @@ export default function HomeScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
 
       <WarehouseSelector

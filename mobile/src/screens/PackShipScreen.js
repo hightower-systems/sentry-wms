@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
+import ScreenHeader from '../components/ScreenHeader';
 import ErrorPopup from '../components/ErrorPopup';
+import useScreenError from '../hooks/useScreenError';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import { colors, fonts, radii, screenStyles, buttonStyles, listStyles } from '../theme/styles';
 
 export default function PackShipScreen({ navigation }) {
   const [order, setOrder] = useState(null);
@@ -11,8 +13,7 @@ export default function PackShipScreen({ navigation }) {
   const [phase, setPhase] = useState('scan_order'); // scan_order | packing | shipping | done
   const [carrier, setCarrier] = useState('');
   const [tracking, setTracking] = useState('');
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
 
   const handleScanOrder = async (barcode) => {
     try {
@@ -21,8 +22,7 @@ export default function PackShipScreen({ navigation }) {
       setItems((resp.data.items || []).map((item) => ({ ...item, verified: 0 })));
       setPhase('packing');
     } catch (err) {
-      setError(err.response?.data?.error || 'Order not found');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Order not found');
     }
   };
 
@@ -40,9 +40,7 @@ export default function PackShipScreen({ navigation }) {
         return item;
       }));
     } catch (err) {
-      const msg = err.response?.data?.error || 'Verification failed';
-      setError(msg);
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Verification failed');
     }
   };
 
@@ -55,15 +53,13 @@ export default function PackShipScreen({ navigation }) {
       await client.post('/api/packing/complete', { so_id: order.so_id });
       setPhase('shipping');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to complete pack');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to complete pack');
     }
   };
 
   const handleShip = async () => {
     if (!carrier.trim() || !tracking.trim()) {
-      setError('Carrier and tracking number are required');
-      setScanDisabled(true);
+      showError('Carrier and tracking number are required');
       return;
     }
     try {
@@ -75,8 +71,7 @@ export default function PackShipScreen({ navigation }) {
       });
       resetScreen();
     } catch (err) {
-      setError(err.response?.data?.error || 'Shipment failed');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Shipment failed');
     }
   };
 
@@ -89,16 +84,10 @@ export default function PackShipScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>PACK / SHIP</Text>
-        <View style={{ width: 32 }} />
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader title="PACK / SHIP" onBack={() => navigation.goBack()} />
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {phase === 'scan_order' && (
           <ScanInput placeholder="SCAN ORDER" onScan={handleScanOrder} disabled={scanDisabled} />
         )}
@@ -117,10 +106,10 @@ export default function PackShipScreen({ navigation }) {
               const done = item.verified || 0;
               const complete = done >= expected;
               return (
-                <View key={idx} style={[styles.itemRow, complete && styles.itemRowComplete]}>
+                <View key={idx} style={[listStyles.row, complete && styles.itemRowComplete]}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.sku}>{item.sku}</Text>
-                    <Text style={styles.itemName}>{item.item_name}</Text>
+                    <Text style={listStyles.sku}>{item.sku}</Text>
+                    <Text style={listStyles.itemName}>{item.item_name}</Text>
                   </View>
                   <View style={styles.itemQty}>
                     <Text style={[styles.itemQtyText, complete && styles.itemQtyComplete]}>
@@ -133,8 +122,8 @@ export default function PackShipScreen({ navigation }) {
             })}
 
             {allVerified && (
-              <TouchableOpacity style={styles.buttonPrimary} onPress={handleCompletePack}>
-                <Text style={styles.buttonPrimaryText}>COMPLETE PACK</Text>
+              <TouchableOpacity style={[buttonStyles.buttonPrimary, { marginTop: 16 }]} onPress={handleCompletePack}>
+                <Text style={buttonStyles.buttonPrimaryText}>COMPLETE PACK</Text>
               </TouchableOpacity>
             )}
           </>
@@ -166,8 +155,8 @@ export default function PackShipScreen({ navigation }) {
               autoCapitalize="characters"
             />
 
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleShip}>
-              <Text style={styles.buttonPrimaryText}>SHIP</Text>
+            <TouchableOpacity style={[buttonStyles.buttonPrimary, { marginTop: 16 }]} onPress={handleShip}>
+              <Text style={buttonStyles.buttonPrimaryText}>SHIP</Text>
             </TouchableOpacity>
           </>
         )}
@@ -176,38 +165,18 @@ export default function PackShipScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
   orderInfo: { marginBottom: 16 },
   soNumber: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   customer: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   packedLabel: { fontFamily: fonts.mono, fontSize: 12, color: colors.success, letterSpacing: 0.3, marginTop: 4 },
-  itemRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    backgroundColor: colors.cardBg, padding: 12, marginBottom: 8, minHeight: 48,
-  },
   itemRowComplete: { borderColor: colors.success, backgroundColor: '#f0f9f0' },
-  sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  itemName: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   itemQty: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   itemQtyText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   itemQtyComplete: { color: colors.success },
@@ -221,9 +190,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 14,
     color: colors.textPrimary, backgroundColor: colors.inputBg, minHeight: 48, marginBottom: 8,
   },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 16,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
 });

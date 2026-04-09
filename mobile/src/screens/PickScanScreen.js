@@ -3,22 +3,22 @@ import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'rea
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import PagedList from '../components/PagedList';
+import useScreenError from '../hooks/useScreenError';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import ScreenHeader from '../components/ScreenHeader';
+import { colors, fonts, radii, screenStyles, buttonStyles, listStyles } from '../theme/styles';
 
 export default function PickScanScreen({ navigation }) {
   const { warehouseId } = useAuth();
   const [orders, setOrders] = useState([]);
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
   const [loading, setLoading] = useState(false);
 
   const handleScan = async (barcode) => {
     // Client-side duplicate check
     if (orders.find((o) => o.so_barcode === barcode || o.so_number === barcode)) {
-      setError('Already scanned');
-      setScanDisabled(true);
+      showError('Already scanned');
       return;
     }
 
@@ -39,13 +39,12 @@ export default function PickScanScreen({ navigation }) {
     } catch (err) {
       const data = err.response?.data;
       if (err.response?.status === 409) {
-        setError(data?.error || `Order already in batch #${data?.batch_id}`);
+        showError(data?.error || `Order already in batch #${data?.batch_id}`);
       } else if (err.response?.status === 404) {
-        setError('Order not found');
+        showError('Order not found');
       } else {
-        setError(data?.error || 'Validation failed');
+        showError(data?.error || 'Validation failed');
       }
-      setScanDisabled(true);
     }
   };
 
@@ -66,8 +65,7 @@ export default function PickScanScreen({ navigation }) {
         batch: resp.data,
       });
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create batch');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to create batch');
       setLoading(false);
     }
   };
@@ -84,20 +82,20 @@ export default function PickScanScreen({ navigation }) {
   }
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>PICK ORDERS</Text>
-        {orders.length > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{orders.length}</Text>
-          </View>
-        )}
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader
+        title="PICK ORDERS"
+        onBack={() => navigation.goBack()}
+        right={
+          orders.length > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{orders.length}</Text>
+            </View>
+          ) : undefined
+        }
+      />
 
-      <View style={styles.content}>
+      <View style={screenStyles.content}>
         <View style={{ padding: 16, paddingBottom: 0 }}>
           <ScanInput placeholder="SCAN SO" onScan={handleScan} disabled={scanDisabled} />
         </View>
@@ -107,7 +105,7 @@ export default function PickScanScreen({ navigation }) {
             items={orders}
             pageSize={20}
             renderItem={(order) => (
-              <View style={styles.orderRow}>
+              <View style={[listStyles.row, { padding: 14 }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.soNumber}>{order.so_number}</Text>
                   <Text style={styles.orderDetail}>
@@ -115,23 +113,23 @@ export default function PickScanScreen({ navigation }) {
                   </Text>
                 </View>
                 <TouchableOpacity
-                  style={styles.removeBtn}
+                  style={listStyles.removeBtn}
                   onPress={() => removeOrder(order.so_id)}
                 >
-                  <Text style={styles.removeText}>X</Text>
+                  <Text style={listStyles.removeText}>X</Text>
                 </TouchableOpacity>
               </View>
             )}
           />
         </View>
 
-        <View style={styles.bottomBar}>
+        <View style={screenStyles.bottomBar}>
           <TouchableOpacity
-            style={[styles.buttonPrimary, orders.length === 0 && styles.buttonDisabled]}
+            style={[buttonStyles.buttonPrimary, orders.length === 0 && buttonStyles.buttonDisabled]}
             onPress={handleLoadAll}
             disabled={orders.length === 0}
           >
-            <Text style={styles.buttonPrimaryText}>LOAD ALL ORDERS</Text>
+            <Text style={buttonStyles.buttonPrimaryText}>LOAD ALL ORDERS</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -139,46 +137,20 @@ export default function PickScanScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
   badge: {
     backgroundColor: colors.accentRed, borderRadius: 10,
     paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
   },
   badgeText: { color: '#FFFFFF', fontFamily: fonts.mono, fontSize: 12, fontWeight: '700' },
-  content: { flex: 1 },
-  orderRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 14, marginBottom: 8, minHeight: 48,
-  },
   soNumber: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   orderDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  removeBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonDisabled: { opacity: 0.5 },
   loadingScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background, padding: 32 },
   loadingText: { fontFamily: fonts.mono, fontSize: 14, color: colors.textMuted, marginTop: 16, textAlign: 'center' },
 });

@@ -2,6 +2,31 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.4] - 2026-04-08
+
+### Refactored
+- Extracted `inventory_service.py` with `add_inventory()` and `move_inventory()` — inventory math now lives in one place instead of 3 route files
+- Created `@with_db` decorator — eliminates manual db session boilerplate from all 10 route files + 43 admin routes
+- Split 1,925-line `admin.py` monolith into 4 focused modules: `admin_warehouse.py`, `admin_items.py`, `admin_orders.py`, `admin_users.py`
+- Extracted shared mobile StyleSheets: `screenStyles`, `buttonStyles`, `modalStyles`, `listStyles`, `doneStyles` — removed ~360 lines of duplicate styles across 12 screens
+- Created `useScreenError` hook — consolidated error + scanDisabled state in 10 screens
+- Created `ScreenHeader` component — replaced ~20 lines of duplicated header JSX per screen
+- Created `ModeSelector` component — reusable Standard/Turbo toggle for Receive and Count screens
+- Added `ActivityIndicator` loading states to HomeScreen and PickWalkScreen
+
+### Fixed
+- ReceiveScreen hardcoded `warehouse_id=1` now uses auth context (multi-warehouse support)
+- Removed `console.log` statements from ScanInput and HomeScreen
+
+### Stats
+- 261 tests passing
+- Net: +2,081 / -12,918 lines (mostly deduplication)
+
+## [v0.9.3] - 2026-04-08
+
+### Fixed
+- UI revamp: tan cards, 12px radius, accent stripes, NEXT pick preview, blind cycle counts, carrier picker, password clear on bad login
+
 ## [v0.9.2] - 2026-04-08
 
 ### Fixed

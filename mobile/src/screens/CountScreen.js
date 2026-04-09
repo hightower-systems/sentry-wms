@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Pressable, Vibration, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, Vibration, StyleSheet } from 'react-native';
+import ModeSelector from '../components/ModeSelector';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import useScanQueue from '../hooks/useScanQueue';
+import useScreenError from '../hooks/useScreenError';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import ScreenHeader from '../components/ScreenHeader';
+import { colors, fonts, radii, screenStyles, buttonStyles, listStyles, doneStyles } from '../theme/styles';
 
 const MODE_KEY = 'sentry_count_mode';
 
@@ -15,8 +18,7 @@ export default function CountScreen({ navigation }) {
   const [countId, setCountId] = useState(null);
   const [binCode, setBinCode] = useState('');
   const [lines, setLines] = useState([]);
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
   const [submitted, setSubmitted] = useState(false);
   const [mode, setMode] = useState('standard');
   const [showModeMenu, setShowModeMenu] = useState(false);
@@ -38,8 +40,7 @@ export default function CountScreen({ navigation }) {
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (!binResp.data?.bin) {
-        setError('Bin not found');
-        setScanDisabled(true);
+        showError('Bin not found');
         return;
       }
       const binId = binResp.data.bin.bin_id;
@@ -62,8 +63,7 @@ export default function CountScreen({ navigation }) {
       setSubmitted(false);
       setTurboStatus('');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create count');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to create count');
     }
   };
 
@@ -77,8 +77,7 @@ export default function CountScreen({ navigation }) {
       (l) => l.upc === barcode || l.sku === barcode
     );
     if (index === -1) {
-      setError('Item not in this bin');
-      setScanDisabled(true);
+      showError('Item not in this bin');
       return;
     }
 
@@ -114,8 +113,7 @@ export default function CountScreen({ navigation }) {
       });
       setSubmitted(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to submit count');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to submit count');
     }
   };
 
@@ -128,27 +126,25 @@ export default function CountScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>CYCLE COUNT</Text>
-        {countId && !submitted ? (
-          <TouchableOpacity style={styles.menuBtn} onPress={() => setShowModeMenu(true)}>
-            <Text style={styles.menuIcon}>{'\u22ee'}</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 32 }} />
-        )}
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader
+        title="CYCLE COUNT"
+        onBack={() => navigation.goBack()}
+        right={
+          countId && !submitted ? (
+            <TouchableOpacity style={screenStyles.menuBtn} onPress={() => setShowModeMenu(true)}>
+              <Text style={screenStyles.menuIcon}>{'\u22ee'}</Text>
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {!countId ? (
           <ScanInput placeholder="SCAN BIN" onScan={handleScanBin} disabled={scanDisabled} />
         ) : submitted ? (
           <View style={styles.doneSection}>
-            <Text style={styles.doneCheck}>{'\u2713'}</Text>
+            <Text style={doneStyles.check}>{'\u2713'}</Text>
             <Text style={styles.doneText}>Count submitted for {binCode}</Text>
             {lines.some((l) => parseInt(l.counted_quantity, 10) !== l.expected_quantity) && (
               <Text style={styles.varianceNote}>Variances recorded and adjustments created</Text>
@@ -181,11 +177,11 @@ export default function CountScreen({ navigation }) {
               return (
                 <View
                   key={line.count_line_id || index}
-                  style={[styles.lineRow, hasVariance && styles.lineVariance]}
+                  style={[listStyles.row, hasVariance && styles.lineVariance]}
                 >
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.sku}>{line.sku}</Text>
-                    <Text style={styles.itemName}>{line.item_name}</Text>
+                    <Text style={listStyles.sku}>{line.sku}</Text>
+                    <Text style={listStyles.itemName}>{line.item_name}</Text>
                   </View>
                   {mode === 'standard' ? (
                     <TextInput
@@ -209,76 +205,48 @@ export default function CountScreen({ navigation }) {
 
       {/* Bottom bar */}
       {countId && !submitted && (
-        <View style={styles.bottomBar}>
-          <TouchableOpacity style={styles.buttonPrimary} onPress={handleSubmit}>
-            <Text style={styles.buttonPrimaryText}>SUBMIT COUNT</Text>
+        <View style={screenStyles.bottomBar}>
+          <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleSubmit}>
+            <Text style={buttonStyles.buttonPrimaryText}>SUBMIT COUNT</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.buttonCancel} onPress={() => navigation.goBack()}>
-            <Text style={styles.buttonCancelText}>CANCEL</Text>
+          <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={() => navigation.goBack()}>
+            <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {submitted && (
-        <View style={styles.bottomBar}>
-          <TouchableOpacity style={styles.buttonPrimary} onPress={resetCount}>
-            <Text style={styles.buttonPrimaryText}>COUNT ANOTHER BIN</Text>
+        <View style={screenStyles.bottomBar}>
+          <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={resetCount}>
+            <Text style={buttonStyles.buttonPrimaryText}>COUNT ANOTHER BIN</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.buttonCancel} onPress={() => navigation.goBack()}>
-            <Text style={styles.buttonCancelText}>DONE</Text>
+          <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={() => navigation.goBack()}>
+            <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {/* Mode selector */}
-      <Modal visible={showModeMenu} transparent animationType="fade">
-        <Pressable style={styles.modeOverlay} onPress={() => setShowModeMenu(false)}>
-          <View style={styles.modeCard}>
-            <Text style={styles.modeTitle}>COUNT MODE</Text>
-            <TouchableOpacity
-              style={[styles.modeOption, mode === 'standard' && styles.modeOptionActive]}
-              onPress={() => changeMode('standard')}
-            >
-              <Text style={[styles.modeOptionLabel, mode === 'standard' && styles.modeOptionLabelActive]}>STANDARD</Text>
-              <Text style={styles.modeOptionDesc}>Enter quantity for each item</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modeOption, mode === 'turbo' && styles.modeOptionActive]}
-              onPress={() => changeMode('turbo')}
-            >
-              <Text style={[styles.modeOptionLabel, mode === 'turbo' && styles.modeOptionLabelActive]}>TURBO</Text>
-              <Text style={styles.modeOptionDesc}>Each scan = +1 to item count</Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
+      <ModeSelector
+        visible={showModeMenu}
+        onClose={() => setShowModeMenu(false)}
+        title="COUNT MODE"
+        mode={mode}
+        onChangeMode={changeMode}
+        standardDesc="Enter quantity for each item"
+        turboDesc="Each scan = +1 to item count"
+      />
 
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
-  menuBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center', alignItems: 'center' },
-  menuIcon: { fontSize: 20, color: colors.textPrimary, fontWeight: '700' },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
-
   binHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   binHeader: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.textPrimary },
   modeBadge: {
@@ -294,14 +262,7 @@ const styles = StyleSheet.create({
   },
   turboText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.success },
 
-  lineRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    backgroundColor: colors.cardBg, padding: 12, marginBottom: 8, minHeight: 48,
-  },
   lineVariance: { borderColor: colors.copper },
-  sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  itemName: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
   countInput: {
     fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
@@ -315,38 +276,8 @@ const styles = StyleSheet.create({
   },
   turboCountVariance: { color: colors.copper },
 
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonCancel: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonCancelText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
-
   doneSection: { alignItems: 'center', paddingVertical: 32 },
-  doneCheck: { fontSize: 64, color: colors.success, marginBottom: 16 },
   doneText: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '600', color: colors.success, marginBottom: 8 },
   varianceNote: { fontSize: 13, color: colors.textMuted },
 
-  modeOverlay: {
-    flex: 1, backgroundColor: colors.overlay,
-    justifyContent: 'flex-start', alignItems: 'flex-end',
-    paddingTop: 100, paddingRight: 16,
-  },
-  modeCard: {
-    backgroundColor: colors.background, borderRadius: radii.card, padding: 16, minWidth: 220,
-    borderWidth: 1, borderColor: colors.cardBorder,
-  },
-  modeTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.textMuted, letterSpacing: 0.5, marginBottom: 12 },
-  modeOption: {
-    padding: 12, borderRadius: radii.card, borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 8,
-  },
-  modeOptionActive: { borderColor: colors.accentRed, backgroundColor: '#fdf6f4' },
-  modeOptionLabel: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
-  modeOptionLabelActive: { color: colors.accentRed },
-  modeOptionDesc: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
 });

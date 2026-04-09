@@ -3,7 +3,7 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.9.2-8e2716)
+  ![Version](https://img.shields.io/badge/version-0.9.4-8e2716)
   ![Tests](https://img.shields.io/badge/tests-261%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -36,8 +36,8 @@ Sentry is not an ERP. It does not manage orders, products, or customers. It conn
 
 | Layer | Technology |
 |-------|-----------|
-| Mobile App | React Native (Expo) |
-| API | Python / Flask |
+| Mobile App | React Native (Expo) — shared hooks (`useScreenError`), reusable components (`ScreenHeader`, `ModeSelector`, `ScanInput`) |
+| API | Python / Flask — `@with_db` middleware, `inventory_service` + `picking_service` service layer |
 | Database | PostgreSQL 16 (dev Docker) · PostgreSQL Cloud (prod) |
 | Admin Panel | React Web App |
 
@@ -238,6 +238,8 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.9.0 | Mobile scanner app (10 screens, C6000 support) | ✅ Complete |
 | v0.9.1 | Apartment lab testing, preferred bins, bug fixes | ✅ Complete |
 | v0.9.2 | Test infrastructure, bin type simplification, short pick reporting | ✅ Complete |
+| v0.9.3 | UI revamp — tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
+| v0.9.4 | Structural refactor — service layer, admin split, shared styles/hooks | ✅ Complete |
 | v1.0.0 | ERP integration + public release | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -250,4 +252,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.2
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.4

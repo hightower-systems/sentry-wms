@@ -3,9 +3,11 @@ import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Alert, Styl
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import PagedList from '../components/PagedList';
+import useScreenError from '../hooks/useScreenError';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import ScreenHeader from '../components/ScreenHeader';
+import { colors, fonts, radii, screenStyles, buttonStyles, modalStyles, listStyles, doneStyles } from '../theme/styles';
 
 export default function PutAwayScreen({ navigation }) {
   const { warehouseId } = useAuth();
@@ -15,7 +17,7 @@ export default function PutAwayScreen({ navigation }) {
 
   // Load phase: queue of items to put away
   const [queue, setQueue] = useState([]);
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
 
   // Process phase: working through queue
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -31,7 +33,6 @@ export default function PutAwayScreen({ navigation }) {
 
   // Session history
   const [history, setHistory] = useState([]);
-  const [error, setError] = useState('');
 
   // --- Load Phase ---
 
@@ -45,8 +46,7 @@ export default function PutAwayScreen({ navigation }) {
           // Load all items from this staging bin
           const items = binResp.data.items || [];
           if (items.length === 0) {
-            setError('No items in this staging bin');
-            setScanDisabled(true);
+            showError('No items in this staging bin');
             return;
           }
           const newEntries = items
@@ -62,8 +62,7 @@ export default function PutAwayScreen({ navigation }) {
               lot_number: it.lot_number || null,
             }));
           if (newEntries.length === 0) {
-            setError('All items from this bin already loaded');
-            setScanDisabled(true);
+            showError('All items from this bin already loaded');
             return;
           }
           setQueue((prev) => [...prev, ...newEntries]);
@@ -78,8 +77,7 @@ export default function PutAwayScreen({ navigation }) {
     try {
       const itemResp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
       if (!itemResp.data?.item) {
-        setError('Item not found');
-        setScanDisabled(true);
+        showError('Item not found');
         return;
       }
 
@@ -90,15 +88,13 @@ export default function PutAwayScreen({ navigation }) {
       );
 
       if (!stagingLoc) {
-        setError('Item not in a staging bin');
-        setScanDisabled(true);
+        showError('Item not in a staging bin');
         return;
       }
 
       // Duplicate check
       if (queue.find((q) => q.item_id === scannedItem.item_id && q.from_bin_id === stagingLoc.bin_id)) {
-        setError('Already added');
-        setScanDisabled(true);
+        showError('Already added');
         return;
       }
 
@@ -113,8 +109,7 @@ export default function PutAwayScreen({ navigation }) {
         lot_number: stagingLoc.lot_number || null,
       }]);
     } catch {
-      setError('Item not found');
-      setScanDisabled(true);
+      showError('Item not found');
     }
   };
 
@@ -156,15 +151,13 @@ export default function PutAwayScreen({ navigation }) {
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (!binResp.data?.bin) {
-        setError('Bin not found');
-        setScanDisabled(true);
+        showError('Bin not found');
         return;
       }
       setScannedBin(binResp.data.bin);
       setProcessPhase('enter_qty');
     } catch {
-      setError('Bin not found');
-      setScanDisabled(true);
+      showError('Bin not found');
     }
   };
 
@@ -201,8 +194,7 @@ export default function PutAwayScreen({ navigation }) {
         setShowPreferredPrompt(true);
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Put-away failed');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Put-away failed');
     }
   };
 
@@ -233,33 +225,31 @@ export default function PutAwayScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>PUT-AWAY</Text>
-        {phase === 'load' && queue.length > 0 ? (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{queue.length}</Text>
-          </View>
-        ) : phase === 'process' ? (
-          <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted }}>
-            {currentIndex + 1} / {queue.length}
-          </Text>
-        ) : history.length > 0 ? (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{history.length}</Text>
-          </View>
-        ) : (
-          <View style={{ width: 32 }} />
-        )}
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader
+        title="PUT-AWAY"
+        onBack={() => navigation.goBack()}
+        right={
+          phase === 'load' && queue.length > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{queue.length}</Text>
+            </View>
+          ) : phase === 'process' ? (
+            <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted }}>
+              {currentIndex + 1} / {queue.length}
+            </Text>
+          ) : history.length > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{history.length}</Text>
+            </View>
+          ) : undefined
+        }
+      />
 
       {/* Load Phase */}
       {phase === 'load' && (
         <>
-          <View style={styles.content}>
+          <View style={screenStyles.content}>
             <View style={{ padding: 16, paddingBottom: 0 }}>
               <ScanInput placeholder="SCAN ITEM OR STAGING BIN" onScan={handleScanItem} disabled={scanDisabled} />
             </View>
@@ -269,28 +259,28 @@ export default function PutAwayScreen({ navigation }) {
                 items={queue}
                 pageSize={20}
                 renderItem={(entry, index) => (
-                  <View style={styles.queueRow}>
+                  <View style={[listStyles.row, { padding: 14 }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.queueSku}>{entry.sku}</Text>
                       <Text style={styles.queueDetail}>
                         {entry.item_name} {'\u00b7'} QTY: {entry.quantity} {'\u00b7'} from {entry.from_bin_code}
                       </Text>
                     </View>
-                    <TouchableOpacity style={styles.removeBtn} onPress={() => removeFromQueue(index)}>
-                      <Text style={styles.removeText}>X</Text>
+                    <TouchableOpacity style={listStyles.removeBtn} onPress={() => removeFromQueue(index)}>
+                      <Text style={listStyles.removeText}>X</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               />
             </View>
 
-            <View style={styles.bottomBar}>
+            <View style={screenStyles.bottomBar}>
               <TouchableOpacity
-                style={[styles.buttonPrimary, queue.length === 0 && styles.buttonDisabled]}
+                style={[buttonStyles.buttonPrimary, queue.length === 0 && buttonStyles.buttonDisabled]}
                 onPress={handleLoadAll}
                 disabled={queue.length === 0}
               >
-                <Text style={styles.buttonPrimaryText}>LOAD ALL ITEMS</Text>
+                <Text style={buttonStyles.buttonPrimaryText}>LOAD ALL ITEMS</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -300,7 +290,7 @@ export default function PutAwayScreen({ navigation }) {
       {/* Process Phase */}
       {phase === 'process' && activeItem && (
         <>
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+          <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
             {/* Item info */}
             <View style={styles.itemCard}>
               <Text style={styles.itemName}>{activeItem.item_name}</Text>
@@ -335,29 +325,29 @@ export default function PutAwayScreen({ navigation }) {
                 <View style={styles.qtyRow}>
                   <Text style={styles.qtyLabel}>QUANTITY</Text>
                   <TextInput
-                    style={styles.qtyInput}
+                    style={listStyles.qtyInput}
                     value={putQty}
                     onChangeText={setPutQty}
                     keyboardType="number-pad"
                     placeholderTextColor={colors.textPlaceholder}
                   />
                 </View>
-                <TouchableOpacity style={styles.buttonPrimary} onPress={handleConfirmPutAway}>
-                  <Text style={styles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
+                <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmPutAway}>
+                  <Text style={buttonStyles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.buttonSecondary, { marginTop: 8 }]}
+                  style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
                   onPress={() => { setScannedBin(null); setProcessPhase('scan_bin'); }}
                 >
-                  <Text style={styles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
+                  <Text style={buttonStyles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
                 </TouchableOpacity>
               </View>
             )}
           </ScrollView>
 
-          <View style={styles.bottomBar}>
-            <TouchableOpacity style={styles.buttonSecondary} onPress={handleSkipItem}>
-              <Text style={styles.buttonSecondaryText}>SKIP ITEM</Text>
+          <View style={screenStyles.bottomBar}>
+            <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleSkipItem}>
+              <Text style={buttonStyles.buttonSecondaryText}>SKIP ITEM</Text>
             </TouchableOpacity>
           </View>
         </>
@@ -365,10 +355,10 @@ export default function PutAwayScreen({ navigation }) {
 
       {/* Done Phase */}
       {phase === 'done' && (
-        <View style={styles.doneSection}>
-          <Text style={styles.doneCheck}>{'\u2713'}</Text>
-          <Text style={styles.doneText}>Put-Away Complete</Text>
-          <Text style={styles.doneDetail}>
+        <View style={[doneStyles.section, { paddingTop: 40 }]}>
+          <Text style={doneStyles.check}>{'\u2713'}</Text>
+          <Text style={doneStyles.title}>Put-Away Complete</Text>
+          <Text style={[doneStyles.detail, { marginBottom: 16 }]}>
             {history.length} item{history.length !== 1 ? 's' : ''} put away
           </Text>
 
@@ -387,26 +377,26 @@ export default function PutAwayScreen({ navigation }) {
             </View>
           ))}
 
-          <TouchableOpacity style={[styles.buttonPrimary, { marginTop: 24, width: '100%' }]} onPress={() => { setPhase('load'); setQueue([]); }}>
-            <Text style={styles.buttonPrimaryText}>PUT AWAY MORE</Text>
+          <TouchableOpacity style={[buttonStyles.buttonPrimary, { marginTop: 24, width: '100%' }]} onPress={() => { setPhase('load'); setQueue([]); }}>
+            <Text style={buttonStyles.buttonPrimaryText}>PUT AWAY MORE</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.buttonSecondary, { marginTop: 8, width: '100%' }]} onPress={() => navigation.goBack()}>
-            <Text style={styles.buttonSecondaryText}>DONE</Text>
+          <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 8, width: '100%' }]} onPress={() => navigation.goBack()}>
+            <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {/* Preferred bin prompt modal */}
       <Modal visible={showPreferredPrompt} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.card}>
             {promptData?.type === 'set_new' ? (
               <>
                 <Text style={styles.modalTitle}>Set preferred bin for</Text>
                 <Text style={styles.modalItemName}>{promptData.item.item_name}</Text>
                 <Text style={styles.modalSku}>{promptData.item.sku}</Text>
-                <View style={styles.modalDivider} />
-                <Text style={styles.modalBody}>
+                <View style={modalStyles.divider} />
+                <Text style={modalStyles.body}>
                   Set {promptData.newBin.bin_code} as preferred bin?
                 </Text>
               </>
@@ -415,21 +405,21 @@ export default function PutAwayScreen({ navigation }) {
                 <Text style={styles.modalTitle}>Set preferred bin for</Text>
                 <Text style={styles.modalItemName}>{promptData?.item?.item_name}</Text>
                 <Text style={styles.modalSku}>{promptData?.item?.sku}</Text>
-                <View style={styles.modalDivider} />
-                <Text style={styles.modalBody}>
+                <View style={modalStyles.divider} />
+                <Text style={modalStyles.body}>
                   Change preferred bin from {promptData?.oldBin?.bin_code} to {promptData?.newBin?.bin_code}?
                 </Text>
               </>
             )}
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.buttonPrimary} onPress={handleUpdatePreferred}>
-                <Text style={styles.buttonPrimaryText}>
+            <View style={modalStyles.actions}>
+              <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleUpdatePreferred}>
+                <Text style={buttonStyles.buttonPrimaryText}>
                   {promptData?.type === 'set_new' ? 'YES, SET' : 'YES, UPDATE'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.buttonSecondary} onPress={handleSkipPreferred}>
-                <Text style={styles.buttonSecondaryText}>
+              <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleSkipPreferred}>
+                <Text style={buttonStyles.buttonSecondaryText}>
                   {promptData?.type === 'set_new' ? 'NO, SKIP' : 'NO, KEEP CURRENT'}
                 </Text>
               </TouchableOpacity>
@@ -441,42 +431,23 @@ export default function PutAwayScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
+  // Header extras
   badge: {
     backgroundColor: colors.copper, borderRadius: 10,
     paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
   },
   badgeText: { color: '#FFFFFF', fontFamily: fonts.mono, fontSize: 12, fontWeight: '700' },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
 
   // Load phase
-  queueRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 14, marginBottom: 8, minHeight: 48,
-  },
   queueSku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   queueDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  removeBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
 
   // Process phase
   itemCard: {
@@ -510,17 +481,6 @@ const styles = StyleSheet.create({
   confirmBinCode: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.success, marginBottom: 12 },
   qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   qtyLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
-  qtyInput: {
-    fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
-    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
-    paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
-  },
-
-  // Done phase
-  doneSection: { flex: 1, alignItems: 'center', padding: 32, paddingTop: 40 },
-  doneCheck: { fontSize: 64, color: colors.success, marginBottom: 16 },
-  doneText: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
-  doneDetail: { fontSize: 15, color: colors.textMuted, marginBottom: 16 },
 
   // Session history
   sessionHistoryLabel: {
@@ -537,30 +497,8 @@ const styles = StyleSheet.create({
   historyDetail: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
   historyBin: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '700', color: colors.textPrimary },
 
-  // Bottom bar
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonDisabled: { opacity: 0.5 },
-  buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
-
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  modalCard: {
-    backgroundColor: colors.background, borderRadius: radii.card, padding: 24, width: '100%', maxWidth: 320,
-    borderWidth: 1, borderColor: colors.cardBorder,
-  },
+  // Modal (screen-specific)
   modalTitle: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
   modalItemName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary, marginTop: 4 },
   modalSku: { fontFamily: fonts.mono, fontSize: 14, color: colors.textMuted, marginTop: 2 },
-  modalDivider: { height: 1, backgroundColor: colors.cardBorder, marginVertical: 16 },
-  modalBody: { fontSize: 14, color: colors.textPrimary, marginBottom: 20 },
-  modalActions: { gap: 8 },
 });

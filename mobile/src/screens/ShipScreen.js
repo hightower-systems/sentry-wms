@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Pressable, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
+import ScreenHeader from '../components/ScreenHeader';
 import ErrorPopup from '../components/ErrorPopup';
+import useScreenError from '../hooks/useScreenError';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import { colors, fonts, radii, screenStyles, buttonStyles } from '../theme/styles';
 
 export default function ShipScreen({ navigation }) {
   const [order, setOrder] = useState(null);
@@ -14,8 +16,7 @@ export default function ShipScreen({ navigation }) {
   const [isCustomCarrier, setIsCustomCarrier] = useState(false);
   const [showCarrierPicker, setShowCarrierPicker] = useState(false);
   const [tracking, setTracking] = useState('');
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
 
   const CARRIERS = ['UPS', 'FedEx', 'USPS', 'DHL', 'Amazon', 'Other'];
 
@@ -28,15 +29,13 @@ export default function ShipScreen({ navigation }) {
       setTotalItems(data.total_items || 0);
       setPhase('shipping');
     } catch (err) {
-      setError(err.response?.data?.error || 'Order not found');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Order not found');
     }
   };
 
   const handleShip = async () => {
     if (!carrier.trim() || !tracking.trim()) {
-      setError('Carrier and tracking number are required');
-      setScanDisabled(true);
+      showError('Carrier and tracking number are required');
       return;
     }
     try {
@@ -48,8 +47,7 @@ export default function ShipScreen({ navigation }) {
       });
       setPhase('done');
     } catch (err) {
-      setError(err.response?.data?.error || 'Shipment failed');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Shipment failed');
     }
   };
 
@@ -63,16 +61,10 @@ export default function ShipScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>SHIP</Text>
-        <View style={{ width: 32 }} />
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader title="SHIP" onBack={() => navigation.goBack()} />
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {phase === 'scan_order' && (
           <ScanInput placeholder="SCAN ORDER" onScan={handleScanOrder} disabled={scanDisabled} />
         )}
@@ -126,8 +118,8 @@ export default function ShipScreen({ navigation }) {
               autoCapitalize="characters"
             />
 
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleShip}>
-              <Text style={styles.buttonPrimaryText}>SHIP</Text>
+            <TouchableOpacity style={[buttonStyles.buttonPrimary, { marginTop: 16, width: '100%' }]} onPress={handleShip}>
+              <Text style={buttonStyles.buttonPrimaryText}>SHIP</Text>
             </TouchableOpacity>
           </>
         )}
@@ -137,11 +129,11 @@ export default function ShipScreen({ navigation }) {
             <Text style={styles.doneIcon}>&#10003;</Text>
             <Text style={styles.doneTitle}>Order {order.so_number} shipped!</Text>
             <Text style={styles.doneDetail}>{carrier} - {tracking}</Text>
-            <TouchableOpacity style={styles.buttonPrimary} onPress={resetScreen}>
-              <Text style={styles.buttonPrimaryText}>SHIP ANOTHER ORDER</Text>
+            <TouchableOpacity style={[buttonStyles.buttonPrimary, { marginTop: 16, width: '100%' }]} onPress={resetScreen}>
+              <Text style={buttonStyles.buttonPrimaryText}>SHIP ANOTHER ORDER</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.buttonSecondary} onPress={() => navigation.goBack()}>
-              <Text style={styles.buttonSecondaryText}>DONE</Text>
+            <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 8, width: '100%' }]} onPress={() => navigation.goBack()}>
+              <Text style={[buttonStyles.buttonSecondaryText, { fontWeight: '700' }]}>DONE</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -177,26 +169,13 @@ export default function ShipScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
   orderInfo: { marginBottom: 16 },
   soNumber: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   customer: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
@@ -223,16 +202,6 @@ const styles = StyleSheet.create({
   doneIcon: { fontSize: 48, color: colors.success, marginBottom: 16 },
   doneTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, marginBottom: 4 },
   doneDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24 },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 16, width: '100%',
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48, marginTop: 8, width: '100%',
-  },
-  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   pickerBtn: {
     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     paddingHorizontal: 12, paddingVertical: 12, minHeight: 48, marginBottom: 8,

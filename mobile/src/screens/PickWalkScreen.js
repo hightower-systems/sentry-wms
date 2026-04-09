@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
+import useScreenError from '../hooks/useScreenError';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import { colors, fonts, radii, screenStyles, buttonStyles, modalStyles } from '../theme/styles';
 
 export default function PickWalkScreen({ navigation, route }) {
   const { batch_id, batch } = route.params;
@@ -13,8 +14,7 @@ export default function PickWalkScreen({ navigation, route }) {
   const [totalPicks, setTotalPicks] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
 
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
   const [showShortModal, setShowShortModal] = useState(false);
   const [shortQty, setShortQty] = useState('0');
   const [roundComplete, setRoundComplete] = useState(false);
@@ -49,8 +49,7 @@ export default function PickWalkScreen({ navigation, route }) {
       if (resp.data.total_picks) setTotalPicks(resp.data.total_picks);
       if (resp.data.total_orders) setTotalOrders(resp.data.total_orders);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load next task');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to load next task');
     }
   };
 
@@ -60,8 +59,7 @@ export default function PickWalkScreen({ navigation, route }) {
     const expectedUpc = task.upc || '';
     const expectedSku = task.sku || '';
     if (barcode !== expectedUpc && barcode !== expectedSku) {
-      setError(`Wrong item \u2014 expected ${task.sku}`);
-      setScanDisabled(true);
+      showError(`Wrong item \u2014 expected ${task.sku}`);
       return;
     }
 
@@ -78,8 +76,7 @@ export default function PickWalkScreen({ navigation, route }) {
         setScannedCount(0);
         await loadNextTask();
       } catch (err) {
-        setError(err.response?.data?.error || 'Pick failed');
-        setScanDisabled(true);
+        showError(err.response?.data?.error || 'Pick failed');
       }
     } else {
       setScannedCount(newCount);
@@ -102,8 +99,7 @@ export default function PickWalkScreen({ navigation, route }) {
       await loadNextTask();
     } catch (err) {
       setShowShortModal(false);
-      setError(err.response?.data?.error || 'Short pick failed');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Short pick failed');
     }
   };
 
@@ -167,7 +163,7 @@ export default function PickWalkScreen({ navigation, route }) {
     taskList.findIndex((t) => t.pick_task_id === task.pick_task_id) === taskList.length - 1;
 
   return (
-    <View style={styles.screen}>
+    <View style={screenStyles.screen}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>
@@ -188,8 +184,12 @@ export default function PickWalkScreen({ navigation, route }) {
             {totalOrders} order{totalOrders !== 1 ? 's' : ''} ready for packing
           </Text>
         </View>
-      ) : task && (
-        <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+      ) : !task ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={colors.accentRed} />
+        </View>
+      ) : (
+        <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
           {/* Bin hero card */}
           <View style={styles.binCard}>
             <Text style={styles.binLabel}>GO TO BIN</Text>
@@ -277,21 +277,21 @@ export default function PickWalkScreen({ navigation, route }) {
       )}
 
       {/* Bottom buttons */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity style={styles.buttonPrimary} onPress={handleSubmit}>
-          <Text style={styles.buttonPrimaryText}>SUBMIT</Text>
+      <View style={screenStyles.bottomBar}>
+        <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleSubmit}>
+          <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.buttonSecondary} onPress={handleCancel}>
-          <Text style={styles.buttonSecondaryText}>CANCEL</Text>
+        <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleCancel}>
+          <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
         </TouchableOpacity>
       </View>
 
       {/* Short pick modal */}
       <Modal visible={showShortModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>SHORT PICK</Text>
-            <Text style={styles.modalSubtitle}>
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.card}>
+            <Text style={modalStyles.title}>SHORT PICK</Text>
+            <Text style={modalStyles.subtitle}>
               Expected: {task?.quantity_to_pick} - Enter actual quantity available:
             </Text>
             <TextInput
@@ -301,15 +301,15 @@ export default function PickWalkScreen({ navigation, route }) {
               keyboardType="number-pad"
               autoFocus
             />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.buttonPrimary} onPress={handleShort}>
-                <Text style={styles.buttonPrimaryText}>CONFIRM</Text>
+            <View style={modalStyles.actions}>
+              <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleShort}>
+                <Text style={buttonStyles.buttonPrimaryText}>CONFIRM</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.buttonSecondary}
+                style={buttonStyles.buttonSecondary}
                 onPress={() => setShowShortModal(false)}
               >
-                <Text style={styles.buttonSecondaryText}>CANCEL</Text>
+                <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -318,10 +318,10 @@ export default function PickWalkScreen({ navigation, route }) {
 
       {/* Early submit warning */}
       <Modal visible={showEarlySubmit} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>INCOMPLETE BATCH</Text>
-            <Text style={styles.modalSubtitle}>
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.card}>
+            <Text style={modalStyles.title}>INCOMPLETE BATCH</Text>
+            <Text style={modalStyles.subtitle}>
               Are you sure you want to submit? Not all orders are fulfilled.
             </Text>
             <ScrollView style={styles.earlySubmitList}>
@@ -334,15 +334,15 @@ export default function PickWalkScreen({ navigation, route }) {
                 </View>
               ))}
             </ScrollView>
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.buttonPrimary} onPress={() => { setShowEarlySubmit(false); doSubmit(); }}>
-                <Text style={styles.buttonPrimaryText}>SUBMIT ANYWAY</Text>
+            <View style={modalStyles.actions}>
+              <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={() => { setShowEarlySubmit(false); doSubmit(); }}>
+                <Text style={buttonStyles.buttonPrimaryText}>SUBMIT ANYWAY</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.buttonSecondary}
+                style={buttonStyles.buttonSecondary}
                 onPress={() => setShowEarlySubmit(false)}
               >
-                <Text style={styles.buttonSecondaryText}>BACK TO PICKING</Text>
+                <Text style={buttonStyles.buttonSecondaryText}>BACK TO PICKING</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -351,9 +351,9 @@ export default function PickWalkScreen({ navigation, route }) {
 
       {/* Item detail modal */}
       <Modal visible={showItemDetail} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>ITEM DETAILS</Text>
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.card}>
+            <Text style={modalStyles.title}>ITEM DETAILS</Text>
             {task && (
               <View>
                 <View style={styles.detailRow}>
@@ -399,12 +399,12 @@ export default function PickWalkScreen({ navigation, route }) {
                 )}
               </View>
             )}
-            <View style={styles.modalActions}>
+            <View style={modalStyles.actions}>
               <TouchableOpacity
-                style={styles.buttonPrimary}
+                style={buttonStyles.buttonPrimary}
                 onPress={() => setShowItemDetail(false)}
               >
-                <Text style={styles.buttonPrimaryText}>CLOSE</Text>
+                <Text style={buttonStyles.buttonPrimaryText}>CLOSE</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -414,17 +414,13 @@ export default function PickWalkScreen({ navigation, route }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
@@ -434,8 +430,6 @@ const styles = StyleSheet.create({
   headerOrderRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   headerOrders: { fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted },
   greenDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success, marginLeft: 6 },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
 
   roundComplete: {
     flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32,
@@ -488,22 +482,6 @@ const styles = StyleSheet.create({
     textAlign: 'center', letterSpacing: 0.5, paddingVertical: 8,
   },
 
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
-
-  modalOverlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  modalCard: { backgroundColor: colors.background, borderRadius: radii.card, padding: 24, width: '100%', maxWidth: 320, borderWidth: 1, borderColor: colors.cardBorder },
-  modalTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
-  modalSubtitle: { fontSize: 13, color: colors.textMuted, marginBottom: 16 },
   shortInput: {
     fontFamily: fonts.mono, fontSize: 24, fontWeight: '700', color: colors.textPrimary,
     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
@@ -511,7 +489,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 12, textAlign: 'center', minHeight: 48,
     marginBottom: 16,
   },
-  modalActions: { gap: 8 },
   earlySubmitList: { maxHeight: 200, marginBottom: 16 },
   earlySubmitRow: {
     flexDirection: 'row', justifyContent: 'space-between',

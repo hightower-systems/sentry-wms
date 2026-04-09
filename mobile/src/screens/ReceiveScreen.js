@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Pressable, Vibration, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Vibration, Alert, StyleSheet } from 'react-native';
+import ModeSelector from '../components/ModeSelector';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import PagedList from '../components/PagedList';
 import useScanQueue from '../hooks/useScanQueue';
+import useScreenError from '../hooks/useScreenError';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import ScreenHeader from '../components/ScreenHeader';
+import { colors, fonts, radii, screenStyles, buttonStyles, listStyles, doneStyles } from '../theme/styles';
 
 const MODE_KEY = 'sentry_receive_mode';
 
@@ -19,7 +22,7 @@ export default function ReceiveScreen({ navigation }) {
 
   // Phase 1: PO queue
   const [poQueue, setPoQueue] = useState([]);
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
 
   // Phase 2: Receiving
   const [currentPoIndex, setCurrentPoIndex] = useState(0);
@@ -30,8 +33,6 @@ export default function ReceiveScreen({ navigation }) {
   const [mode, setMode] = useState('standard');
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [turboStatus, setTurboStatus] = useState('');
-
-  const [error, setError] = useState('');
   const [receivingBinId, setReceivingBinId] = useState(null);
   const [receivingBinCode, setReceivingBinCode] = useState('');
   const [showBinPicker, setShowBinPicker] = useState(false);
@@ -56,7 +57,7 @@ export default function ReceiveScreen({ navigation }) {
         if (binId) {
           setReceivingBinId(binId);
           // Look up bin code via admin bins list
-          client.get('/api/admin/bins?warehouse_id=1')
+          client.get(`/api/admin/bins?warehouse_id=${warehouseId}`)
             .then((r) => {
               const bins = r.data?.bins || [];
               const match = bins.find((b) => b.id === binId);
@@ -79,8 +80,7 @@ export default function ReceiveScreen({ navigation }) {
   const handleScanPO = async (barcode) => {
     // Duplicate check
     if (poQueue.find((p) => p.po_barcode === barcode || p.po_number === barcode)) {
-      setError('Already scanned');
-      setScanDisabled(true);
+      showError('Already scanned');
       return;
     }
 
@@ -98,11 +98,10 @@ export default function ReceiveScreen({ navigation }) {
       }]);
     } catch (err) {
       if (err.response?.status === 404) {
-        setError('PO not found');
+        showError('PO not found');
       } else {
-        setError(err.response?.data?.error || 'Validation failed');
+        showError(err.response?.data?.error || 'Validation failed');
       }
-      setScanDisabled(true);
     }
   };
 
@@ -134,8 +133,7 @@ export default function ReceiveScreen({ navigation }) {
       setCurrentPoIndex(index);
       setPhase('receiving');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load PO');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to load PO');
     }
   };
 
@@ -159,8 +157,7 @@ export default function ReceiveScreen({ navigation }) {
       (l) => l.upc === barcode || l.sku === barcode || l.item_barcode === barcode
     );
     if (!match) {
-      setError('Item not on this PO');
-      setScanDisabled(true);
+      showError('Item not on this PO');
       return;
     }
     const remaining = match.quantity_ordered - match.quantity_received;
@@ -180,8 +177,7 @@ export default function ReceiveScreen({ navigation }) {
       setActiveItem(null);
       setQuantity('');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to receive');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to receive');
     }
   };
 
@@ -194,8 +190,7 @@ export default function ReceiveScreen({ navigation }) {
 
     if (qty > remaining && remaining > 0) {
       if (!allowOverReceiving) {
-        setError(`Cannot receive more than ordered (${remaining} remaining)`);
-        setScanDisabled(true);
+        showError(`Cannot receive more than ordered (${remaining} remaining)`);
         return;
       }
       // Show warning but allow
@@ -219,8 +214,7 @@ export default function ReceiveScreen({ navigation }) {
       (l) => l.upc === barcode || l.sku === barcode || l.item_barcode === barcode
     );
     if (!match) {
-      setError('Item not on this PO');
-      setScanDisabled(true);
+      showError('Item not on this PO');
       return;
     }
 
@@ -242,10 +236,9 @@ export default function ReceiveScreen({ navigation }) {
         try { Vibration.vibrate(200); } catch {}
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to receive');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Failed to receive');
     }
-  }, [lines, po, warehouseId, receivingBinId]);
+  }, [lines, po, warehouseId, receivingBinId, showError]);
 
   const [enqueueTurbo, turboProcessing] = useScanQueue(processTurboScan);
 
@@ -288,29 +281,27 @@ export default function ReceiveScreen({ navigation }) {
   // --- Render ---
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>RECEIVE</Text>
-        {phase === 'scan_pos' && poQueue.length > 0 ? (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{poQueue.length}</Text>
-          </View>
-        ) : phase === 'receiving' ? (
-          <TouchableOpacity style={styles.menuBtn} onPress={() => setShowModeMenu(true)}>
-            <Text style={styles.menuIcon}>{'\u22ee'}</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 32 }} />
-        )}
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader
+        title="RECEIVE"
+        onBack={() => navigation.goBack()}
+        right={
+          phase === 'scan_pos' && poQueue.length > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{poQueue.length}</Text>
+            </View>
+          ) : phase === 'receiving' ? (
+            <TouchableOpacity style={screenStyles.menuBtn} onPress={() => setShowModeMenu(true)}>
+              <Text style={screenStyles.menuIcon}>{'\u22ee'}</Text>
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
 
       {/* Phase 1: Scan POs */}
       {phase === 'scan_pos' && (
         <>
-          <View style={styles.content}>
+          <View style={screenStyles.content}>
             <View style={{ padding: 16, paddingBottom: 0 }}>
               <ScanInput placeholder="SCAN PO" onScan={handleScanPO} disabled={scanDisabled} />
             </View>
@@ -320,7 +311,7 @@ export default function ReceiveScreen({ navigation }) {
                 items={poQueue}
                 pageSize={20}
                 renderItem={(entry) => (
-                  <View style={styles.queueRow}>
+                  <View style={[listStyles.row, { padding: 14 }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.poNumber}>{entry.po_number}</Text>
                       <Text style={styles.poDetail}>
@@ -328,23 +319,23 @@ export default function ReceiveScreen({ navigation }) {
                       </Text>
                     </View>
                     <TouchableOpacity
-                      style={styles.removeBtn}
+                      style={listStyles.removeBtn}
                       onPress={() => removePO(entry.po_id)}
                     >
-                      <Text style={styles.removeText}>X</Text>
+                      <Text style={listStyles.removeText}>X</Text>
                     </TouchableOpacity>
                   </View>
                 )}
               />
             </View>
 
-            <View style={styles.bottomBar}>
+            <View style={screenStyles.bottomBar}>
               <TouchableOpacity
-                style={[styles.buttonPrimary, poQueue.length === 0 && styles.buttonDisabled]}
+                style={[buttonStyles.buttonPrimary, poQueue.length === 0 && buttonStyles.buttonDisabled]}
                 onPress={handleLoadAll}
                 disabled={poQueue.length === 0}
               >
-                <Text style={styles.buttonPrimaryText}>LOAD ALL POs</Text>
+                <Text style={buttonStyles.buttonPrimaryText}>LOAD ALL POs</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -354,7 +345,7 @@ export default function ReceiveScreen({ navigation }) {
       {/* Phase 2: Receiving */}
       {phase === 'receiving' && (
         <>
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+          <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
             <View style={styles.poHeader}>
               <View style={styles.poHeaderRow}>
                 <Text style={styles.poHeaderNumber}>{po.po_number}</Text>
@@ -378,8 +369,8 @@ export default function ReceiveScreen({ navigation }) {
                 <Text style={styles.poCompleteText}>PO Complete</Text>
                 <Text style={styles.poCompleteDetail}>{po.po_number} - all items received</Text>
                 {currentPoIndex < poQueue.length - 1 && (
-                  <TouchableOpacity style={styles.buttonPrimary} onPress={handleNextPO}>
-                    <Text style={styles.buttonPrimaryText}>NEXT PO</Text>
+                  <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleNextPO}>
+                    <Text style={buttonStyles.buttonPrimaryText}>NEXT PO</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -399,23 +390,23 @@ export default function ReceiveScreen({ navigation }) {
 
                 {mode === 'standard' && activeItem && (
                   <View style={styles.receiveCard}>
-                    <Text style={styles.sku}>{activeItem.sku}</Text>
-                    <Text style={styles.itemName}>{activeItem.item_name}</Text>
+                    <Text style={listStyles.sku}>{activeItem.sku}</Text>
+                    <Text style={[listStyles.itemName, { fontSize: 13 }]}>{activeItem.item_name}</Text>
                     <Text style={styles.expectedText}>
                       Expected: {activeItem.quantity_ordered} | Received: {activeItem.quantity_received}
                     </Text>
                     <View style={styles.qtyRow}>
-                      <Text style={styles.label}>QUANTITY</Text>
+                      <Text style={listStyles.label}>QUANTITY</Text>
                       <TextInput
-                        style={styles.qtyInput}
+                        style={listStyles.qtyInput}
                         value={quantity}
                         onChangeText={setQuantity}
                         keyboardType="number-pad"
                         placeholderTextColor={colors.textPlaceholder}
                       />
                     </View>
-                    <TouchableOpacity style={styles.buttonPrimary} onPress={handleConfirmStandard}>
-                      <Text style={styles.buttonPrimaryText}>RECEIVE</Text>
+                    <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmStandard}>
+                      <Text style={buttonStyles.buttonPrimaryText}>RECEIVE</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -423,10 +414,10 @@ export default function ReceiveScreen({ navigation }) {
                 {lines.map((line) => {
                   const done = line.quantity_received >= line.quantity_ordered;
                   return (
-                    <View key={line.po_line_id || line.item_id} style={[styles.lineRow, done && styles.lineRowDone]}>
+                    <View key={line.po_line_id || line.item_id} style={[listStyles.row, done && styles.lineRowDone]}>
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.sku, done ? styles.textDone : styles.textPending]}>{line.sku}</Text>
-                        <Text style={styles.itemName}>{line.item_name}</Text>
+                        <Text style={[listStyles.sku, done ? styles.textDone : styles.textPending]}>{line.sku}</Text>
+                        <Text style={[listStyles.itemName, { fontSize: 13 }]}>{line.item_name}</Text>
                       </View>
                       <Text style={[styles.lineQty, done ? styles.textDone : styles.textPending]}>
                         {line.quantity_received}/{line.quantity_ordered}
@@ -438,12 +429,12 @@ export default function ReceiveScreen({ navigation }) {
             )}
           </ScrollView>
 
-          <View style={styles.bottomBar}>
-            <TouchableOpacity style={styles.buttonPrimary} onPress={handleSubmit}>
-              <Text style={styles.buttonPrimaryText}>SUBMIT</Text>
+          <View style={screenStyles.bottomBar}>
+            <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleSubmit}>
+              <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.buttonCancel} onPress={handleCancel}>
-              <Text style={styles.buttonCancelText}>CANCEL</Text>
+            <TouchableOpacity style={buttonStyles.buttonSecondary} onPress={handleCancel}>
+              <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
             </TouchableOpacity>
           </View>
         </>
@@ -451,52 +442,41 @@ export default function ReceiveScreen({ navigation }) {
 
       {/* Phase 3: Done */}
       {phase === 'done' && (
-        <View style={styles.doneSection}>
-          <Text style={styles.doneCheck}>{'\u2713'}</Text>
-          <Text style={styles.doneText}>Receiving Complete</Text>
-          <Text style={styles.doneDetail}>
+        <View style={doneStyles.section}>
+          <Text style={doneStyles.check}>{'\u2713'}</Text>
+          <Text style={doneStyles.title}>Receiving Complete</Text>
+          <Text style={doneStyles.detail}>
             {poQueue.length} PO{poQueue.length !== 1 ? 's' : ''} processed
           </Text>
-          <TouchableOpacity style={styles.buttonPrimary} onPress={resetAll}>
-            <Text style={styles.buttonPrimaryText}>RECEIVE MORE</Text>
+          <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={resetAll}>
+            <Text style={buttonStyles.buttonPrimaryText}>RECEIVE MORE</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.buttonCancel, { marginTop: 8 }]} onPress={() => navigation.goBack()}>
-            <Text style={styles.buttonCancelText}>DONE</Text>
+          <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 8 }]} onPress={() => navigation.goBack()}>
+            <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {/* Mode selector modal */}
-      <Modal visible={showModeMenu} transparent animationType="fade">
-        <Pressable style={styles.modeOverlay} onPress={() => setShowModeMenu(false)}>
-          <View style={styles.modeCard}>
-            <Text style={styles.modeTitle}>RECEIVE MODE</Text>
-            <TouchableOpacity
-              style={[styles.modeOption, mode === 'standard' && styles.modeOptionActive]}
-              onPress={() => changeMode('standard')}
-            >
-              <Text style={[styles.modeOptionLabel, mode === 'standard' && styles.modeOptionLabelActive]}>STANDARD</Text>
-              <Text style={styles.modeOptionDesc}>Scan item, enter qty, confirm</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modeOption, mode === 'turbo' && styles.modeOptionActive]}
-              onPress={() => changeMode('turbo')}
-            >
-              <Text style={[styles.modeOptionLabel, mode === 'turbo' && styles.modeOptionLabelActive]}>TURBO</Text>
-              <Text style={styles.modeOptionDesc}>Each scan = 1 unit received</Text>
-            </TouchableOpacity>
-            <View style={{ height: 1, backgroundColor: colors.cardBorder, marginVertical: 8 }} />
-            <Text style={styles.modeTitle}>RECEIVING BIN</Text>
-            <TouchableOpacity
-              style={styles.modeOption}
-              onPress={() => { setShowModeMenu(false); setBinPickerValue(''); setShowBinPicker(true); }}
-            >
-              <Text style={styles.modeOptionLabel}>{receivingBinCode || 'Not Set'}</Text>
-              <Text style={styles.modeOptionDesc}>Tap to change destination bin</Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
+      <ModeSelector
+        visible={showModeMenu}
+        onClose={() => setShowModeMenu(false)}
+        title="RECEIVE MODE"
+        mode={mode}
+        onChangeMode={changeMode}
+        standardDesc="Scan item, enter qty, confirm"
+        turboDesc="Each scan = 1 unit received"
+      >
+        <View style={{ height: 1, backgroundColor: colors.cardBorder, marginVertical: 8 }} />
+        <Text style={styles.modeTitle}>RECEIVING BIN</Text>
+        <TouchableOpacity
+          style={styles.modeOption}
+          onPress={() => { setShowModeMenu(false); setBinPickerValue(''); setShowBinPicker(true); }}
+        >
+          <Text style={styles.modeOptionLabel}>{receivingBinCode || 'Not Set'}</Text>
+          <Text style={styles.modeOptionDesc}>Tap to change destination bin</Text>
+        </TouchableOpacity>
+      </ModeSelector>
 
       {/* Bin picker modal */}
       <Modal visible={showBinPicker} transparent animationType="fade">
@@ -516,21 +496,19 @@ export default function ReceiveScreen({ navigation }) {
                     setReceivingBinCode(resp.data.bin.bin_code);
                     setShowBinPicker(false);
                   } else {
-                    setError('Bin not found');
-                    setScanDisabled(true);
+                    showError('Bin not found');
                   }
                 } catch {
-                  setError('Bin not found');
-                  setScanDisabled(true);
+                  showError('Bin not found');
                 }
               }}
               disabled={false}
             />
             <TouchableOpacity
-              style={[styles.buttonCancel, { marginTop: 8 }]}
+              style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
               onPress={() => setShowBinPicker(false)}
             >
-              <Text style={styles.buttonCancelText}>CANCEL</Text>
+              <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -539,56 +517,22 @@ export default function ReceiveScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
   badge: {
     backgroundColor: colors.accentRed, borderRadius: 10,
     paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
   },
   badgeText: { color: '#FFFFFF', fontFamily: fonts.mono, fontSize: 12, fontWeight: '700' },
-  menuBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center', alignItems: 'center' },
-  menuIcon: { fontSize: 20, color: colors.textPrimary, fontWeight: '700' },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
 
   // Phase 1: PO queue
-  queueRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 14, marginBottom: 8, minHeight: 48,
-  },
   poNumber: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   poDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  removeBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  removeText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textMuted },
-  bottomBar: { padding: 16, borderTopWidth: 1, borderTopColor: colors.cardBorder, gap: 8 },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonDisabled: { opacity: 0.5 },
-  buttonCancel: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonCancelText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
 
   // Phase 2: Receiving
   poHeader: { marginBottom: 16 },
@@ -612,21 +556,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: radii.card,
     padding: 16, marginBottom: 16,
   },
-  sku: { fontFamily: fonts.mono, fontSize: 14, color: colors.textPrimary, fontWeight: '600' },
-  itemName: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   expectedText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 6 },
   qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 12 },
-  label: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
-  qtyInput: {
-    fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
-    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
-    paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
-  },
-  lineRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 12, marginBottom: 8, minHeight: 48,
-  },
   lineQty: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   lineRowDone: { borderColor: colors.success },
   textDone: { color: colors.success },
@@ -636,12 +567,6 @@ const styles = StyleSheet.create({
   poCompleteCard: { alignItems: 'center', paddingVertical: 24 },
   poCompleteText: { fontFamily: fonts.mono, fontSize: 20, fontWeight: '700', color: colors.success, marginBottom: 4 },
   poCompleteDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24 },
-
-  // Phase 3: Done
-  doneSection: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  doneCheck: { fontSize: 64, color: colors.success, marginBottom: 16 },
-  doneText: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
-  doneDetail: { fontSize: 15, color: colors.textMuted, marginBottom: 32 },
 
   // Mode selector
   modeOverlay: {
@@ -657,8 +582,6 @@ const styles = StyleSheet.create({
   modeOption: {
     padding: 12, borderRadius: radii.badge, borderWidth: 1, borderColor: colors.cardBorder, marginBottom: 8,
   },
-  modeOptionActive: { borderColor: colors.accentRed, backgroundColor: '#fdf6f4' },
   modeOptionLabel: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
-  modeOptionLabelActive: { color: colors.accentRed },
   modeOptionDesc: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
 });

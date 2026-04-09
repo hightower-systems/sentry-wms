@@ -1,16 +1,16 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, fonts, radii } from '../theme/styles';
+import { colors, fonts, radii, screenStyles, buttonStyles, doneStyles } from '../theme/styles';
 
 export default function PickCompleteScreen({ navigation, route }) {
   const { total_picks = 0, total_orders = 0, shorts = 0 } = route.params || {};
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.center}>
-        <Text style={styles.checkmark}>&#10003;</Text>
-        <Text style={styles.title}>Batch complete!</Text>
-        <Text style={styles.subtitle}>
+    <View style={screenStyles.screen}>
+      <View style={doneStyles.section}>
+        <Text style={doneStyles.check}>&#10003;</Text>
+        <Text style={doneStyles.title}>Batch complete!</Text>
+        <Text style={doneStyles.detail}>
           {total_orders} order{total_orders !== 1 ? 's' : ''} ready for packing
         </Text>
 
@@ -28,17 +28,17 @@ export default function PickCompleteScreen({ navigation, route }) {
         </View>
 
         <TouchableOpacity
-          style={styles.buttonPrimary}
+          style={[buttonStyles.buttonPrimary, { width: '100%', marginBottom: 12, paddingHorizontal: 32 }]}
           onPress={() => navigation.replace('PickScan')}
         >
-          <Text style={styles.buttonPrimaryText}>START NEW BATCH</Text>
+          <Text style={buttonStyles.buttonPrimaryText}>START NEW BATCH</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.buttonSecondary}
+          style={[buttonStyles.buttonSecondary, { width: '100%', paddingHorizontal: 32 }]}
           onPress={() => navigation.navigate('Home')}
         >
-          <Text style={styles.buttonSecondaryText}>DONE</Text>
+          <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -46,25 +46,6 @@ export default function PickCompleteScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  checkmark: {
-    fontSize: 64,
-    color: colors.success,
-    marginBottom: 16,
-  },
-  title: {
-    fontFamily: fonts.mono,
-    fontSize: 22,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: colors.textMuted,
-    marginBottom: 32,
-  },
   summary: {
     width: '100%',
     marginBottom: 32,
@@ -89,40 +70,5 @@ const styles = StyleSheet.create({
   },
   shortValue: {
     color: colors.copper,
-  },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed,
-    borderRadius: radii.button,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-    minHeight: 48,
-    width: '100%',
-    marginBottom: 12,
-  },
-  buttonPrimaryText: {
-    color: colors.cream,
-    fontFamily: fonts.mono,
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  buttonSecondary: {
-    backgroundColor: colors.background,
-    borderWidth: 1.5,
-    borderColor: colors.cardBorder,
-    borderRadius: radii.button,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-    minHeight: 48,
-    width: '100%',
-  },
-  buttonSecondaryText: {
-    color: colors.textSecondary,
-    fontFamily: fonts.mono,
-    fontSize: 14,
-    fontWeight: '600',
-    letterSpacing: 0.5,
   },
 });

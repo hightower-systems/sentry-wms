@@ -30,26 +30,38 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
     return () => clearInterval(interval);
   }, [disabled]);
 
+  const scanInFlightRef = useRef(false);
+
   const handleSubmit = () => {
-    const trimmed = value.trim();
+    if (timerRef.current) clearTimeout(timerRef.current);
+    const trimmed = value.replace(/[\r\n\t]/g, '').trim();
     setValue('');
     bufferRef.current = '';
-    if (trimmed && onScan) {
-      onScan(trimmed);
+    if (trimmed && onScan && !scanInFlightRef.current) {
+      scanInFlightRef.current = true;
+      Promise.resolve(onScan(trimmed)).finally(() => {
+        scanInFlightRef.current = false;
+      });
     }
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   const handleChangeText = (text) => {
-    setValue(text);
-    bufferRef.current = text;
+    // Strip control characters that hardware scanners may inject
+    const cleaned = text.replace(/[\r\n\t]/g, '');
+    setValue(cleaned);
+    bufferRef.current = cleaned;
+    // Wait for Enter key (onSubmitEditing) — do NOT auto-submit on timer.
+    // Hardware scanners send chars incrementally; a short timer causes partial submits.
+    // Fallback: if scanner doesn't send Enter, auto-submit after 300ms of no input
+    // and only if we have a reasonable barcode length.
     if (timerRef.current) clearTimeout(timerRef.current);
-    if (text.length > 0) {
+    if (cleaned.length >= 3) {
       timerRef.current = setTimeout(() => {
-        if (bufferRef.current === text && text.trim().length >= 3) {
+        if (bufferRef.current === cleaned) {
           handleSubmit();
         }
-      }, 100);
+      }, 300);
     }
   };
 

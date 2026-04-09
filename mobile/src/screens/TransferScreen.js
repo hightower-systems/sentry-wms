@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
+import ScreenHeader from '../components/ScreenHeader';
 import ErrorPopup from '../components/ErrorPopup';
+import useScreenError from '../hooks/useScreenError';
 import { useAuth } from '../auth/AuthContext';
 import client from '../api/client';
-import { colors, fonts, radii } from '../theme/styles';
+import { colors, fonts, radii, screenStyles, buttonStyles, listStyles } from '../theme/styles';
 
 const STEPS = ['SCAN ITEM', 'SCAN FROM BIN', 'SCAN TO BIN'];
 
@@ -16,8 +18,7 @@ export default function TransferScreen({ navigation }) {
   const [fromBin, setFromBin] = useState(null);
   const [toBin, setToBin] = useState(null);
   const [quantity, setQuantity] = useState('1');
-  const [error, setError] = useState('');
-  const [scanDisabled, setScanDisabled] = useState(false);
+  const { error, scanDisabled, showError, clearError } = useScreenError();
   const [success, setSuccess] = useState(false);
 
   const handleScan = async (barcode) => {
@@ -26,24 +27,21 @@ export default function TransferScreen({ navigation }) {
       try {
         const resp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
         if (!resp.data?.item) {
-          setError('Item not found');
-          setScanDisabled(true);
+          showError('Item not found');
           return;
         }
         setItem(resp.data.item);
         setLocations(resp.data.locations || []);
         setStep(1);
       } catch {
-        setError('Item not found');
-        setScanDisabled(true);
+        showError('Item not found');
       }
     } else if (step === 1) {
       // Scan from bin
       try {
         const resp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
         if (!resp.data?.bin) {
-          setError('Bin not found');
-          setScanDisabled(true);
+          showError('Bin not found');
           return;
         }
         const bin = resp.data.bin;
@@ -52,31 +50,27 @@ export default function TransferScreen({ navigation }) {
           (l) => l.bin_id === bin.bin_id || l.bin_code === bin.bin_code
         );
         if (!inBin) {
-          setError('Item not found in this bin');
-          setScanDisabled(true);
+          showError('Item not found in this bin');
           return;
         }
         setFromBin({ ...bin, available: inBin.quantity_on_hand });
         setQuantity('1');
         setStep(2);
       } catch {
-        setError('Bin not found');
-        setScanDisabled(true);
+        showError('Bin not found');
       }
     } else if (step === 2) {
       // Scan to bin
       try {
         const resp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
         if (!resp.data?.bin) {
-          setError('Bin not found');
-          setScanDisabled(true);
+          showError('Bin not found');
           return;
         }
         setToBin(resp.data.bin);
         setStep(3);
       } catch {
-        setError('Bin not found');
-        setScanDisabled(true);
+        showError('Bin not found');
       }
     }
   };
@@ -95,8 +89,7 @@ export default function TransferScreen({ navigation }) {
       });
       setSuccess(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Transfer failed');
-      setScanDisabled(true);
+      showError(err.response?.data?.error || 'Transfer failed');
     }
   };
 
@@ -111,27 +104,21 @@ export default function TransferScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>{'<'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>TRANSFER</Text>
-        <View style={{ width: 32 }} />
-      </View>
+    <View style={screenStyles.screen}>
+      <ScreenHeader title="TRANSFER" onBack={() => navigation.goBack()} />
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {success ? (
           <View style={styles.successSection}>
             <Text style={styles.successText}>Transfer complete</Text>
             <Text style={styles.successDetail}>
               {quantity}x {item?.sku} moved from {fromBin?.bin_code} to {toBin?.bin_code}
             </Text>
-            <TouchableOpacity style={[styles.buttonPrimary, { width: '100%' }]} onPress={resetAll}>
-              <Text style={styles.buttonPrimaryText}>NEW TRANSFER</Text>
+            <TouchableOpacity style={[buttonStyles.buttonPrimary, { width: '100%' }]} onPress={resetAll}>
+              <Text style={buttonStyles.buttonPrimaryText}>NEW TRANSFER</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.buttonSecondary, { width: '100%', marginTop: 8 }]} onPress={() => navigation.goBack()}>
-              <Text style={styles.buttonSecondaryText}>DONE</Text>
+            <TouchableOpacity style={[buttonStyles.buttonSecondary, { width: '100%', marginTop: 8 }]} onPress={() => navigation.goBack()}>
+              <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -149,8 +136,8 @@ export default function TransferScreen({ navigation }) {
             {/* Confirmed info */}
             {item && (
               <View style={styles.infoCard}>
-                <Text style={styles.label}>ITEM</Text>
-                <Text style={styles.sku}>{item.sku}</Text>
+                <Text style={listStyles.label}>ITEM</Text>
+                <Text style={listStyles.sku}>{item.sku}</Text>
                 <Text style={styles.itemName}>{item.item_name}</Text>
                 {locations.length > 0 && (
                   <View style={styles.locationList}>
@@ -166,7 +153,7 @@ export default function TransferScreen({ navigation }) {
 
             {fromBin && (
               <View style={styles.infoCard}>
-                <Text style={styles.label}>FROM BIN</Text>
+                <Text style={listStyles.label}>FROM BIN</Text>
                 <Text style={styles.binValue}>{fromBin.bin_code}</Text>
                 <Text style={styles.available}>Available: {fromBin.available}</Text>
               </View>
@@ -174,7 +161,7 @@ export default function TransferScreen({ navigation }) {
 
             {toBin && (
               <View style={styles.infoCard}>
-                <Text style={styles.label}>TO BIN</Text>
+                <Text style={listStyles.label}>TO BIN</Text>
                 <Text style={styles.binValue}>{toBin.bin_code}</Text>
               </View>
             )}
@@ -192,16 +179,16 @@ export default function TransferScreen({ navigation }) {
             {step === 3 && (
               <>
                 <View style={styles.qtyRow}>
-                  <Text style={styles.label}>QUANTITY</Text>
+                  <Text style={listStyles.label}>QUANTITY</Text>
                   <TextInput
-                    style={styles.qtyInput}
+                    style={listStyles.qtyInput}
                     value={quantity}
                     onChangeText={setQuantity}
                     keyboardType="number-pad"
                   />
                 </View>
-                <TouchableOpacity style={styles.buttonPrimary} onPress={handleConfirm}>
-                  <Text style={styles.buttonPrimaryText}>CONFIRM TRANSFER</Text>
+                <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirm}>
+                  <Text style={buttonStyles.buttonPrimaryText}>CONFIRM TRANSFER</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -212,26 +199,13 @@ export default function TransferScreen({ navigation }) {
       <ErrorPopup
         visible={!!error}
         message={error}
-        onDismiss={() => {
-          setError('');
-          setScanDisabled(false);
-        }}
+        onDismiss={clearError}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12,
-  },
-  backBtn: { padding: 4, minWidth: 32, minHeight: 48, justifyContent: 'center' },
-  backText: { fontSize: 22, color: colors.textPrimary },
-  headerTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, letterSpacing: 0.5 },
-  content: { flex: 1 },
-  contentInner: { padding: 16 },
   steps: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   stepItem: { alignItems: 'center', flex: 1 },
   stepDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.cardBorder, marginBottom: 4 },
@@ -242,29 +216,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
     padding: 12, marginBottom: 12,
   },
-  label: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
-  sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   itemName: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   locationList: { marginTop: 8 },
   locationText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 2 },
   binValue: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary },
   available: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 2 },
   qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  qtyInput: {
-    fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
-    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
-    paddingHorizontal: 12, paddingVertical: 8, width: 80, textAlign: 'center', minHeight: 48,
-  },
-  buttonPrimary: {
-    backgroundColor: colors.accentRed, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonPrimaryText: { color: colors.cream, fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  buttonSecondary: {
-    backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder, borderRadius: radii.button,
-    paddingVertical: 14, alignItems: 'center', minHeight: 48,
-  },
-  buttonSecondaryText: { color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', letterSpacing: 0.5 },
   successSection: { alignItems: 'center', paddingVertical: 32 },
   successText: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.success, marginBottom: 8 },
   successDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24, textAlign: 'center' },
