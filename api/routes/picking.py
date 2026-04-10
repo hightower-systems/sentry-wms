@@ -220,3 +220,65 @@ def complete():
     except ValueError as e:
         g.db.rollback()
         return jsonify({"error": str(e)}), 400
+
+
+@picking_bp.route("/cancel-batch", methods=["POST"])
+@require_auth
+@with_db
+def cancel_batch():
+    """Cancel/delete a batch — releases allocated inventory and resets SO statuses."""
+    data = request.get_json()
+    if not data or not data.get("batch_id"):
+        return jsonify({"error": "batch_id is required"}), 400
+
+    batch_id = data["batch_id"]
+    batch = g.db.execute(
+        text("SELECT batch_id, status FROM pick_batches WHERE batch_id = :bid"),
+        {"bid": batch_id},
+    ).fetchone()
+    if not batch:
+        return jsonify({"error": "Batch not found"}), 404
+
+    # Release allocated inventory for pending tasks
+    pending_tasks = g.db.execute(
+        text("""
+            SELECT pick_task_id, item_id, bin_id, quantity_to_pick
+            FROM pick_tasks
+            WHERE batch_id = :bid AND status = 'PENDING'
+        """),
+        {"bid": batch_id},
+    ).fetchall()
+
+    for task in pending_tasks:
+        g.db.execute(
+            text("""
+                UPDATE inventory
+                SET quantity_allocated = GREATEST(0, quantity_allocated - :qty)
+                WHERE item_id = :iid AND bin_id = :bid
+            """),
+            {"qty": task.quantity_to_pick, "iid": task.item_id, "bid": task.bin_id},
+        )
+
+    # Reset SO statuses back to OPEN for orders that haven't been picked
+    g.db.execute(
+        text("""
+            UPDATE sales_orders SET status = 'OPEN'
+            WHERE so_id IN (
+                SELECT DISTINCT so_id FROM pick_tasks WHERE batch_id = :bid
+            ) AND status IN ('PICKING', 'OPEN')
+        """),
+        {"bid": batch_id},
+    )
+
+    # Mark batch and all pending tasks as cancelled
+    g.db.execute(
+        text("UPDATE pick_tasks SET status = 'SKIPPED' WHERE batch_id = :bid AND status = 'PENDING'"),
+        {"bid": batch_id},
+    )
+    g.db.execute(
+        text("UPDATE pick_batches SET status = 'CANCELLED' WHERE batch_id = :bid"),
+        {"bid": batch_id},
+    )
+
+    g.db.commit()
+    return jsonify({"message": "Batch cancelled"})

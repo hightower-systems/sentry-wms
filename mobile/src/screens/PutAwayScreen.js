@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import PagedList from '../components/PagedList';
@@ -25,6 +25,9 @@ export default function PutAwayScreen({ navigation }) {
   const [scannedBin, setScannedBin] = useState(null);
   const [putQty, setPutQty] = useState('');
   const [processPhase, setProcessPhase] = useState('scan_bin'); // scan_bin | enter_qty
+
+  // Track qty field focus to suppress scan input auto-refocus (#13)
+  const [qtyFocused, setQtyFocused] = useState(false);
 
   // Preferred bin prompt
   const [showPreferredPrompt, setShowPreferredPrompt] = useState(false);
@@ -246,7 +249,17 @@ export default function PutAwayScreen({ navigation }) {
     <View style={screenStyles.screen}>
       <ScreenHeader
         title="PUT-AWAY"
-        onBack={() => navigation.goBack()}
+        onBack={() => {
+          if (phase === 'process' && activeItem) {
+            // Back from item detail to queue list
+            setActiveItem(null); setPreferredBin(null); setScannedBin(null); setProcessPhase('scan_bin'); setQtyFocused(false);
+          } else if (phase === 'process') {
+            // Back from queue list to load phase
+            setPhase('load');
+          } else {
+            navigation.goBack();
+          }
+        }}
         right={
           phase === 'load' && queue.length > 0 ? (
             <View style={styles.badge}>
@@ -308,77 +321,82 @@ export default function PutAwayScreen({ navigation }) {
       {/* Process Phase */}
       {phase === 'process' && (
         <>
-          <View style={screenStyles.content}>
-            <View style={{ padding: 16, paddingBottom: 0 }}>
+          {/* Active item detail — scrollable for small screens */}
+          {activeItem ? (
+            <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
               <ScanInput
-                placeholder={activeItem ? 'SCAN DESTINATION BIN' : 'SCAN ITEM'}
-                onScan={activeItem ? (processPhase === 'scan_bin' ? handleProcessScan : handleProcessScan) : handleProcessScan}
+                placeholder="SCAN DESTINATION BIN"
+                onScan={handleProcessScan}
                 disabled={scanDisabled}
+                suppressRefocus={qtyFocused}
               />
-            </View>
 
-            {/* Active item detail */}
-            {activeItem && (
-              <View style={{ paddingHorizontal: 16 }}>
-                <View style={styles.itemCard}>
-                  <Text style={styles.itemName}>{activeItem.item_name}</Text>
-                  <Text style={styles.sku}>{activeItem.sku}</Text>
-                  <Text style={styles.fromBin}>FROM: {activeItem.from_bin_code} {'\u00b7'} QTY: {activeItem.quantity}</Text>
-                </View>
-
-                {/* Suggested bin */}
-                {preferredBin ? (
-                  <View style={styles.suggestCard}>
-                    <Text style={styles.suggestLabel}>SUGGESTED BIN</Text>
-                    <Text style={styles.suggestBinCode}>{preferredBin.bin_code}</Text>
-                    {preferredBin.zone_name && (
-                      <Text style={styles.suggestZone}>{preferredBin.zone_name}</Text>
-                    )}
-                  </View>
-                ) : processPhase === 'scan_bin' ? (
-                  <View style={styles.noPreferredCard}>
-                    <Text style={styles.noPreferredText}>No preferred bin set.</Text>
-                    <Text style={styles.noPreferredSub}>Scan any bin to put away.</Text>
-                  </View>
-                ) : null}
-
-                {processPhase === 'enter_qty' && scannedBin && (
-                  <View style={styles.confirmCard}>
-                    <Text style={styles.confirmLabel}>DESTINATION</Text>
-                    <Text style={styles.confirmBinCode}>{scannedBin.bin_code}</Text>
-                    <View style={styles.qtyRow}>
-                      <Text style={styles.qtyLabel}>QUANTITY</Text>
-                      <TextInput
-                        style={listStyles.qtyInput}
-                        value={putQty}
-                        onChangeText={setPutQty}
-                        keyboardType="number-pad"
-                        placeholderTextColor={colors.textPlaceholder}
-                      />
-                    </View>
-                    <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmPutAway}>
-                      <Text style={buttonStyles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
-                      onPress={() => { setScannedBin(null); setProcessPhase('scan_bin'); }}
-                    >
-                      <Text style={buttonStyles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                <TouchableOpacity
-                  style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
-                  onPress={() => { setActiveItem(null); setPreferredBin(null); setScannedBin(null); setProcessPhase('scan_bin'); }}
-                >
-                  <Text style={buttonStyles.buttonSecondaryText}>BACK TO LIST</Text>
-                </TouchableOpacity>
+              <View style={styles.itemCard}>
+                <Text style={styles.itemName}>{activeItem.item_name}</Text>
+                <Text style={styles.sku}>{activeItem.sku}</Text>
+                <Text style={styles.fromBin}>FROM: {activeItem.from_bin_code} {'\u00b7'} QTY: {activeItem.quantity}</Text>
               </View>
-            )}
 
-            {/* Scrollable queue list (when no item is selected) */}
-            {!activeItem && (
+              {preferredBin ? (
+                <View style={styles.suggestCard}>
+                  <Text style={styles.suggestLabel}>SUGGESTED BIN</Text>
+                  <Text style={styles.suggestBinCode}>{preferredBin.bin_code}</Text>
+                  {preferredBin.zone_name && (
+                    <Text style={styles.suggestZone}>{preferredBin.zone_name}</Text>
+                  )}
+                </View>
+              ) : processPhase === 'scan_bin' ? (
+                <View style={styles.noPreferredCard}>
+                  <Text style={styles.noPreferredText}>No preferred bin set.</Text>
+                  <Text style={styles.noPreferredSub}>Scan any bin to put away.</Text>
+                </View>
+              ) : null}
+
+              {processPhase === 'enter_qty' && scannedBin && (
+                <View style={styles.confirmCard}>
+                  <Text style={styles.confirmLabel}>DESTINATION</Text>
+                  <Text style={styles.confirmBinCode}>{scannedBin.bin_code}</Text>
+                  <View style={styles.qtyRow}>
+                    <Text style={styles.qtyLabel}>QUANTITY</Text>
+                    <TextInput
+                      style={listStyles.qtyInput}
+                      value={putQty}
+                      onChangeText={setPutQty}
+                      keyboardType="number-pad"
+                      placeholderTextColor={colors.textPlaceholder}
+                      onFocus={() => setQtyFocused(true)}
+                      onBlur={() => setQtyFocused(false)}
+                    />
+                  </View>
+                  <TouchableOpacity style={buttonStyles.buttonPrimary} onPress={handleConfirmPutAway}>
+                    <Text style={buttonStyles.buttonPrimaryText}>CONFIRM PUT-AWAY</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
+                    onPress={() => { setScannedBin(null); setProcessPhase('scan_bin'); }}
+                  >
+                    <Text style={buttonStyles.buttonSecondaryText}>SCAN DIFFERENT BIN</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
+                onPress={() => { setActiveItem(null); setPreferredBin(null); setScannedBin(null); setProcessPhase('scan_bin'); }}
+              >
+                <Text style={buttonStyles.buttonSecondaryText}>BACK TO LIST</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          ) : (
+            /* Queue list — tap any item to select */
+            <View style={screenStyles.content}>
+              <View style={{ padding: 16, paddingBottom: 0 }}>
+                <ScanInput
+                  placeholder="SCAN ITEM"
+                  onScan={handleProcessScan}
+                  disabled={scanDisabled}
+                />
+              </View>
               <View style={{ flex: 1, paddingHorizontal: 16 }}>
                 <PagedList
                   items={queue}
@@ -399,8 +417,8 @@ export default function PutAwayScreen({ navigation }) {
                   )}
                 />
               </View>
-            )}
-          </View>
+            </View>
+          )}
 
           <View style={screenStyles.bottomBar}>
             <TouchableOpacity
@@ -515,30 +533,30 @@ const styles = StyleSheet.create({
   // Process phase
   itemCard: {
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 16, marginBottom: 16,
+    padding: 12, marginBottom: 10,
   },
-  itemName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
-  sku: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted, marginTop: 2 },
-  fromBin: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 4 },
+  itemName: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
+  sku: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '600', color: colors.textMuted, marginTop: 1 },
+  fromBin: { fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted, marginTop: 2 },
 
   suggestCard: {
     borderWidth: 2, borderStyle: 'dashed', borderColor: colors.copper, borderRadius: 0,
-    padding: 20, marginBottom: 16, alignItems: 'center',
+    padding: 12, marginBottom: 10, alignItems: 'center',
   },
-  suggestLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
-  suggestBinCode: { fontFamily: fonts.mono, fontSize: 30, fontWeight: '700', color: colors.copper },
-  suggestZone: { fontFamily: fonts.mono, fontSize: 12, color: colors.copper, letterSpacing: 0.3, marginTop: 4, textTransform: 'uppercase' },
+  suggestLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
+  suggestBinCode: { fontFamily: fonts.mono, fontSize: 24, fontWeight: '700', color: colors.copper },
+  suggestZone: { fontFamily: fonts.mono, fontSize: 11, color: colors.copper, letterSpacing: 0.3, marginTop: 2, textTransform: 'uppercase' },
 
   noPreferredCard: {
     borderWidth: 2, borderStyle: 'dashed', borderColor: colors.copper, borderRadius: 0,
-    padding: 20, marginBottom: 16, alignItems: 'center',
+    padding: 12, marginBottom: 10, alignItems: 'center',
   },
   noPreferredText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted },
   noPreferredSub: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
 
   confirmCard: {
     borderWidth: 1, borderColor: colors.success, borderRadius: radii.card,
-    padding: 16, marginTop: 8,
+    padding: 12, marginTop: 6,
   },
   confirmLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
   confirmBinCode: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.success, marginBottom: 12 },

@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import * as SplashScreen from 'expo-splash-screen';
 import { useAuth } from '../auth/AuthContext';
 import { colors } from '../theme/styles';
+
+// Keep splash visible while auth state loads
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from '../screens/HomeScreen';
@@ -23,12 +27,14 @@ const Stack = createNativeStackNavigator();
 export default function AppNavigator() {
   const { user, isLoading } = useAuth();
 
+  useEffect(() => {
+    if (!isLoading) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [isLoading]);
+
   if (isLoading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
-        <ActivityIndicator size="large" color={colors.accentRed} />
-      </View>
-    );
+    return null; // Splash screen stays visible
   }
 
   return (

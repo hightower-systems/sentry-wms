@@ -31,7 +31,7 @@ export default function Warehouses() {
 
   function openEdit(wh) {
     setEditId(wh.warehouse_id);
-    setForm({ warehouse_code: wh.warehouse_code, warehouse_name: wh.warehouse_name, address: wh.address });
+    setForm({ warehouse_code: wh.warehouse_code, warehouse_name: wh.warehouse_name, address: wh.address, is_active: wh.is_active });
     setError('');
     setShowModal(true);
   }
@@ -41,7 +41,7 @@ export default function Warehouses() {
     if (!form.warehouse_name) { setError('Name is required'); return; }
     if (!editId && !form.warehouse_code) { setError('Code is required'); return; }
     const res = editId
-      ? await api.put(`/admin/warehouses/${editId}`, { warehouse_name: form.warehouse_name, address: form.address })
+      ? await api.put(`/admin/warehouses/${editId}`, { warehouse_name: form.warehouse_name, address: form.address, is_active: form.is_active })
       : await api.post('/admin/warehouses', { warehouse_code: form.warehouse_code, warehouse_name: form.warehouse_name, address: form.address });
     if (res?.ok) {
       setShowModal(false);
@@ -116,6 +116,14 @@ export default function Warehouses() {
             <label>Address</label>
             <input className="form-input" value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </div>
+          {editId && (
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.is_active === false} onChange={(e) => setForm({ ...form, is_active: !e.target.checked })} />
+                Inactive
+              </label>
+            </div>
+          )}
         </Modal>
       )}
 
@@ -130,7 +138,8 @@ export default function Warehouses() {
             </>
           }
         >
-          <p style={{ fontSize: 13 }}>Are you sure? This will deactivate the warehouse.</p>
+          <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--danger)' }}>Are you sure? This permanently deletes the warehouse. There is no undo.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>To temporarily disable a warehouse, use the Inactive checkbox in Edit instead.</p>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 8 }}>
             Warehouse: <span className="mono">{confirmDelete.warehouse_code}</span> &mdash; {confirmDelete.warehouse_name}
           </p>

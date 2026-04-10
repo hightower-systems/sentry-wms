@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Vibration, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Vibration, Alert, BackHandler, StyleSheet } from 'react-native';
 import ModeSelector from '../components/ModeSelector';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScanInput from '../components/ScanInput';
@@ -38,6 +38,8 @@ export default function ReceiveScreen({ navigation, route }) {
   const [showBinPicker, setShowBinPicker] = useState(false);
   const [binPickerValue, setBinPickerValue] = useState('');
   const [allowOverReceiving, setAllowOverReceiving] = useState(true);
+  // Track qty field focus to suppress scan input auto-refocus
+  const [qtyFocused, setQtyFocused] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(MODE_KEY).then((saved) => {
@@ -76,6 +78,17 @@ export default function ReceiveScreen({ navigation, route }) {
       handleScanPO(poNumber);
     }
   }, []);
+
+  // Prevent hardware back button from exiting screen during active receiving
+  useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (phase === 'receiving') {
+        return true; // consumed — prevent back-out during scan
+      }
+      return false;
+    });
+    return () => handler.remove();
+  }, [phase]);
 
   const changeMode = (newMode) => {
     setMode(newMode);
@@ -188,8 +201,23 @@ export default function ReceiveScreen({ navigation, route }) {
       return;
     }
     const remaining = match.quantity_ordered - match.quantity_received;
+    if (remaining <= 0 && !allowOverReceiving) {
+      showError(`${match.sku} already fully received (${match.quantity_received}/${match.quantity_ordered})`);
+      return;
+    }
+    if (remaining <= 0 && allowOverReceiving) {
+      Alert.alert(
+        'Item Fully Received',
+        `${match.sku} is already fully received (${match.quantity_received}/${match.quantity_ordered}). Over-receive?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Continue', onPress: () => { setActiveItem(match); setQuantity('1'); } },
+        ]
+      );
+      return;
+    }
     setActiveItem(match);
-    setQuantity(String(remaining > 0 ? remaining : 1));
+    setQuantity(String(remaining));
   };
 
   const doReceiveStandard = async (qty) => {
@@ -297,10 +325,10 @@ export default function ReceiveScreen({ navigation, route }) {
     }
     Alert.alert(
       'Cancel Receiving',
-      'Are you sure you want to cancel? Received items will not be saved.',
+      'Items already received have been saved. You can resume this PO later.',
       [
-        { text: 'Go Back', style: 'cancel' },
-        { text: 'Yes, Cancel', style: 'destructive', onPress: () => navigation.goBack() },
+        { text: 'Stay', style: 'cancel' },
+        { text: 'Exit', style: 'destructive', onPress: () => navigation.goBack() },
       ]
     );
   };
@@ -417,6 +445,7 @@ export default function ReceiveScreen({ navigation, route }) {
                   placeholder="SCAN ITEM"
                   onScan={handleScanItem}
                   disabled={scanDisabled || (mode === 'standard' && !!activeItem) || (mode === 'turbo' && turboProcessing)}
+                  suppressRefocus={qtyFocused}
                 />
 
                 {mode === 'turbo' && turboStatus !== '' && (
@@ -440,6 +469,8 @@ export default function ReceiveScreen({ navigation, route }) {
                         onChangeText={setQuantity}
                         keyboardType="number-pad"
                         placeholderTextColor={colors.textPlaceholder}
+                        onFocus={() => setQtyFocused(true)}
+                        onBlur={() => setQtyFocused(false)}
                       />
                     </View>
                     <TouchableOpacity style={[buttonStyles.buttonPrimary, { width: '100%' }]} onPress={handleConfirmStandard}>
@@ -448,7 +479,11 @@ export default function ReceiveScreen({ navigation, route }) {
                   </View>
                 )}
 
-                {lines.map((line) => {
+                {[...lines].sort((a, b) => {
+                  const aDone = a.quantity_received >= a.quantity_ordered ? 1 : 0;
+                  const bDone = b.quantity_received >= b.quantity_ordered ? 1 : 0;
+                  return aDone - bDone;
+                }).map((line) => {
                   const done = line.quantity_received >= line.quantity_ordered;
                   return (
                     <View key={line.po_line_id || line.item_id} style={[listStyles.row, done && styles.lineRowDone]}>

@@ -171,28 +171,40 @@ def list_audit_log():
     end_date = request.args.get("end_date")
 
     if action_type:
-        where_clauses.append("action_type = :action_type")
+        where_clauses.append("al.action_type = :action_type")
         params["action_type"] = action_type
     if user_id:
-        where_clauses.append("user_id = :user_id")
-        params["user_id"] = user_id
+        where_clauses.append("al.user_id = :filter_user_id")
+        params["filter_user_id"] = user_id
     if start_date:
-        where_clauses.append("created_at >= :start_date")
+        where_clauses.append("al.created_at >= :start_date")
         params["start_date"] = start_date
     if end_date:
-        where_clauses.append("created_at <= :end_date")
+        where_clauses.append("al.created_at <= :end_date")
         params["end_date"] = end_date
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    total = g.db.execute(text(f"SELECT COUNT(*) FROM audit_log {where_sql}"), params).scalar()
+    total = g.db.execute(text(f"SELECT COUNT(*) FROM audit_log al {where_sql}"), params).scalar()
     pages = max(1, math.ceil(total / per_page))
 
     params["limit"] = per_page
     params["offset"] = (page - 1) * per_page
     rows = g.db.execute(
         text(f"""
-            SELECT log_id, action_type, entity_type, entity_id, user_id, device_id, warehouse_id, details, created_at
-            FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT :limit OFFSET :offset
+            SELECT al.log_id, al.action_type, al.entity_type, al.entity_id,
+                   al.user_id, al.device_id, al.warehouse_id, al.details, al.created_at,
+                   CASE al.entity_type
+                       WHEN 'ITEM' THEN (SELECT sku FROM items WHERE item_id = al.entity_id)
+                       WHEN 'SO' THEN (SELECT so_number FROM sales_orders WHERE so_id = al.entity_id)
+                       WHEN 'PO' THEN (SELECT po_number FROM purchase_orders WHERE po_id = al.entity_id)
+                       WHEN 'BIN' THEN (SELECT bin_code FROM bins WHERE bin_id = al.entity_id)
+                       ELSE NULL
+                   END AS entity_name,
+                   w.warehouse_code
+            FROM audit_log al
+            LEFT JOIN warehouses w ON w.warehouse_id = al.warehouse_id
+            {where_sql}
+            ORDER BY al.created_at DESC LIMIT :limit OFFSET :offset
         """),
         params,
     ).fetchall()
@@ -200,8 +212,10 @@ def list_audit_log():
     return jsonify({
         "entries": [
             {"log_id": r.log_id, "action_type": r.action_type, "entity_type": r.entity_type,
-             "entity_id": r.entity_id, "user_id": r.user_id, "device_id": r.device_id,
-             "warehouse_id": r.warehouse_id, "details": r.details,
+             "entity_id": r.entity_id, "entity_name": r.entity_name,
+             "username": r.user_id, "device_id": r.device_id,
+             "warehouse_id": r.warehouse_id, "warehouse_code": r.warehouse_code,
+             "details": r.details,
              "created_at": r.created_at.isoformat() if r.created_at else None}
             for r in rows
         ],

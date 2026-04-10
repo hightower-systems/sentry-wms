@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { colors, fonts, radii } from '../theme/styles';
 
-export default function ActiveBatchBanner({ batch, onResume, onDismiss }) {
+export default function ActiveBatchBanner({ batch, onResume, onDismiss, onDelete }) {
   if (!batch) return null;
 
   return (
@@ -21,6 +21,11 @@ export default function ActiveBatchBanner({ batch, onResume, onDismiss }) {
         <TouchableOpacity style={styles.dismissButton} onPress={onDismiss}>
           <Text style={styles.dismissText}>Dismiss</Text>
         </TouchableOpacity>
+        {onDelete && (
+          <TouchableOpacity style={styles.deleteButton} onPress={onDelete}>
+            <Text style={styles.deleteText}>Delete</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -89,6 +94,19 @@ const styles = StyleSheet.create({
   dismissText: {
     fontFamily: fonts.mono,
     color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  deleteButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteText: {
+    fontFamily: fonts.mono,
+    color: colors.accentRed,
     fontSize: 12,
     fontWeight: '600',
   },

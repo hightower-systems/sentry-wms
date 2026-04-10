@@ -1,11 +1,14 @@
 import React from 'react';
 import { AuthProvider } from './src/auth/AuthContext';
+import { ScanSettingsProvider } from './src/context/ScanSettingsContext';
 import AppNavigator from './src/navigation/AppNavigator';
 
 export default function App() {
   return (
     <AuthProvider>
-      <AppNavigator />
+      <ScanSettingsProvider>
+        <AppNavigator />
+      </ScanSettingsProvider>
     </AuthProvider>
   );
 }

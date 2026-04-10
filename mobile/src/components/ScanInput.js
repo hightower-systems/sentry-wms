@@ -1,22 +1,43 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { View, TextInput, StyleSheet } from 'react-native';
 import { colors, fonts, radii } from '../theme/styles';
+import { useScanSettingsContext } from '../context/ScanSettingsContext';
 
-export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabled = false, autoFocus = true }) {
+export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabled = false, autoFocus = true, suppressRefocus = false }) {
   const inputRef = useRef(null);
   const [value, setValue] = useState('');
+  const bufferRef = useRef('');
   const [processing, setProcessing] = useState(false);
+  const scanSettings = useScanSettingsContext();
+
+  // Register this ScanInput's onScan as the active intent handler
+  // when the component is mounted and not disabled
+  useEffect(() => {
+    if (!scanSettings || scanSettings.mode !== 'intent' || disabled) return;
+    const handler = (barcode) => {
+      if (disabled || processing) return;
+      const trimmed = barcode.replace(/[\r\n\s]+/g, '').trim();
+      if (!trimmed || !onScan) return;
+      setProcessing(true);
+      Promise.resolve(onScan(trimmed)).finally(() => {
+        setProcessing(false);
+      });
+    };
+    scanSettings.registerScanHandler(handler);
+    return () => scanSettings.unregisterScanHandler(handler);
+  }, [scanSettings?.mode, onScan, disabled, processing]);
 
   useEffect(() => {
-    if (autoFocus && !disabled && !processing) {
+    if (autoFocus && !disabled && !processing && !suppressRefocus) {
       const timer = setTimeout(() => inputRef.current?.focus(), 100);
       return () => clearTimeout(timer);
     }
-  }, [autoFocus, disabled, processing]);
+  }, [autoFocus, disabled, processing, suppressRefocus]);
 
   // Re-focus input when it loses focus (hardware scanner can steal focus)
+  // Suppressed when another input (e.g. qty field) has focus
   useEffect(() => {
-    if (disabled || processing) return;
+    if (disabled || processing || suppressRefocus) return;
     const interval = setInterval(() => {
       try {
         if (inputRef.current && typeof inputRef.current.isFocused === 'function' && !inputRef.current.isFocused()) {
@@ -27,20 +48,22 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [disabled, processing]);
+  }, [disabled, processing, suppressRefocus]);
 
   const scanInFlightRef = useRef(false);
 
   const handleSubmit = () => {
-    // DEBUG: log raw value with char codes to detect invisible characters
-    const charCodes = Array.from(value).map((c) => c.charCodeAt(0));
-    console.log('[SCAN_DEBUG] raw value:', JSON.stringify(value), 'charCodes:', charCodes);
+    // Use bufferRef (synchronous) instead of value (async React state)
+    // to avoid the C6000 race where Enter fires before the last onChangeText flushes
+    const raw = bufferRef.current;
+    const charCodes = Array.from(raw).map((c) => c.charCodeAt(0));
+    console.log('[SCAN_DEBUG] raw value:', JSON.stringify(raw), 'charCodes:', charCodes);
 
-    // Strip ALL whitespace, carriage returns, newlines, and non-printable chars
-    const trimmed = value.replace(/[\r\n\s]+/g, '').trim();
+    const trimmed = raw.replace(/[\r\n\s]+/g, '').trim();
     console.log('[SCAN_DEBUG] trimmed value:', JSON.stringify(trimmed), 'length:', trimmed.length);
 
     setValue('');
+    bufferRef.current = '';
     if (!trimmed || !onScan || scanInFlightRef.current) {
       console.log('[SCAN_DEBUG] SKIPPED — empty:', !trimmed, 'noHandler:', !onScan, 'inFlight:', scanInFlightRef.current);
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -59,6 +82,7 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
   const handleChangeText = (text) => {
     // Strip control characters that hardware scanners may inject (keep printable chars only)
     const cleaned = text.replace(/[\r\n\t]/g, '');
+    bufferRef.current = cleaned;
     setValue(cleaned);
     // NO auto-submit timer. Only process on Enter/Submit (onSubmitEditing).
     // C6000 scanners send characters one at a time; a timer causes partial submits.

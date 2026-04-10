@@ -23,6 +23,7 @@ export default function PickWalkScreen({ navigation, route }) {
   const [showEarlySubmit, setShowEarlySubmit] = useState(false);
   const [showItemDetail, setShowItemDetail] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [batchComplete, setBatchComplete] = useState(false);
 
   useEffect(() => {
     if (batch) {
@@ -131,18 +132,10 @@ export default function PickWalkScreen({ navigation, route }) {
   const doSubmit = async () => {
     try {
       await client.post('/api/picking/complete-batch', { batch_id });
-      navigation.replace('PickComplete', {
-        batch_id,
-        total_picks: totalPicks,
-        total_orders: totalOrders,
-      });
-    } catch (err) {
-      navigation.replace('PickComplete', {
-        batch_id,
-        total_picks: totalPicks,
-        total_orders: totalOrders,
-      });
+    } catch {
+      // Batch may already be complete — proceed to done state
     }
+    setBatchComplete(true);
   };
 
   const handleCancel = () => {
@@ -178,7 +171,33 @@ export default function PickWalkScreen({ navigation, route }) {
         </View>
       </View>
 
-      {roundComplete ? (
+      {batchComplete ? (
+        <View style={styles.roundComplete}>
+          <Text style={styles.roundCompleteCheck}>{'\u2713'}</Text>
+          <Text style={styles.roundCompleteText}>Round Complete</Text>
+          <Text style={styles.roundCompleteDetail}>
+            {totalOrders} order{totalOrders !== 1 ? 's' : ''} ready for packing
+          </Text>
+          <View style={styles.completeSummary}>
+            <View style={styles.completeSummaryRow}>
+              <Text style={styles.completeSummaryLabel}>Total picks</Text>
+              <Text style={styles.completeSummaryValue}>{totalPicks}</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={[buttonStyles.buttonPrimary, { width: '100%', marginBottom: 12 }]}
+            onPress={() => navigation.replace('PickScan')}
+          >
+            <Text style={buttonStyles.buttonPrimaryText}>START NEW BATCH</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[buttonStyles.buttonSecondary, { width: '100%' }]}
+            onPress={() => navigation.navigate('Home')}
+          >
+            <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
+          </TouchableOpacity>
+        </View>
+      ) : roundComplete ? (
         <View style={styles.roundComplete}>
           <Text style={styles.roundCompleteCheck}>{'\u2713'}</Text>
           <Text style={styles.roundCompleteText}>Round Complete</Text>
@@ -279,14 +298,16 @@ export default function PickWalkScreen({ navigation, route }) {
       )}
 
       {/* Bottom buttons */}
-      <View style={screenStyles.bottomBar}>
-        <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleSubmit}>
-          <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={handleCancel}>
-          <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
-        </TouchableOpacity>
-      </View>
+      {!batchComplete && (
+        <View style={screenStyles.bottomBar}>
+          <TouchableOpacity style={[buttonStyles.buttonPrimary, { flex: 1 }]} onPress={handleSubmit}>
+            <Text style={buttonStyles.buttonPrimaryText}>SUBMIT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[buttonStyles.buttonSecondary, { flex: 1 }]} onPress={handleCancel}>
+            <Text style={buttonStyles.buttonSecondaryText}>CANCEL</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Short pick modal */}
       <Modal visible={showShortModal} transparent animationType="fade">
@@ -558,4 +579,12 @@ const styles = StyleSheet.create({
   detailOrderRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, paddingLeft: 8 },
   detailOrderSo: { fontFamily: fonts.mono, fontSize: 12, color: colors.textPrimary },
   detailOrderQty: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.accentRed },
+
+  completeSummary: { width: '100%', marginBottom: 32 },
+  completeSummaryRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.cardBorder,
+  },
+  completeSummaryLabel: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted },
+  completeSummaryValue: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
 });

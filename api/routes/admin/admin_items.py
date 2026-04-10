@@ -293,11 +293,19 @@ def list_inventory():
             SELECT inv.inventory_id, inv.item_id, i.sku, i.item_name, inv.bin_id, b.bin_code, z.zone_name,
                    inv.quantity_on_hand, inv.quantity_allocated,
                    (inv.quantity_on_hand - inv.quantity_allocated) AS quantity_available,
+                   COALESCE((
+                       SELECT SUM(sol.quantity_ordered - sol.quantity_shipped)
+                       FROM sales_order_lines sol
+                       JOIN sales_orders so ON so.so_id = sol.so_id
+                       WHERE sol.item_id = inv.item_id
+                         AND so.status IN ('OPEN', 'PICKING', 'PICKED', 'PACKED')
+                         AND sol.quantity_ordered > sol.quantity_shipped
+                   ), 0) AS committed_to_orders,
                    inv.lot_number, inv.last_counted_at
             FROM inventory inv
             JOIN items i ON i.item_id = inv.item_id
             JOIN bins b ON b.bin_id = inv.bin_id
-            JOIN zones z ON z.zone_id = b.zone_id
+            LEFT JOIN zones z ON z.zone_id = b.zone_id
             {where_sql}
             ORDER BY inv.inventory_id LIMIT :limit OFFSET :offset
         """),
@@ -309,7 +317,9 @@ def list_inventory():
             {"inventory_id": r.inventory_id, "item_id": r.item_id, "sku": r.sku, "item_name": r.item_name,
              "bin_id": r.bin_id, "bin_code": r.bin_code, "zone_name": r.zone_name,
              "quantity_on_hand": r.quantity_on_hand, "quantity_allocated": r.quantity_allocated,
-             "quantity_available": r.quantity_available, "lot_number": r.lot_number,
+             "quantity_available": r.quantity_available,
+             "committed_to_orders": r.committed_to_orders,
+             "lot_number": r.lot_number,
              "last_counted_at": r.last_counted_at.isoformat() if r.last_counted_at else None}
             for r in rows
         ],
@@ -390,13 +400,27 @@ def _import_item(db, rec, idx, errors):
         if bin_row:
             default_bin_id = bin_row.bin_id
 
-    db.execute(
-        text("INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, default_bin_id) VALUES (:sku, :name, :desc, :upc, :cat, :weight, :bin)"),
+    result = db.execute(
+        text("INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, default_bin_id) VALUES (:sku, :name, :desc, :upc, :cat, :weight, :bin) RETURNING item_id"),
         {"sku": sku, "name": name, "desc": rec.get("description"),
          "upc": upc, "cat": rec.get("category"),
          "weight": rec.get("weight_lbs") or rec.get("weight") or None,
          "bin": default_bin_id},
     )
+
+    # If quantity provided, create inventory in default bin
+    qty = rec.get("quantity") or rec.get("qty")
+    if qty and default_bin_id:
+        item_id = result.fetchone()[0]
+        qty_int = int(qty)
+        if qty_int > 0:
+            # Get warehouse_id from the bin
+            wh_row = db.execute(text("SELECT warehouse_id FROM bins WHERE bin_id = :bid"), {"bid": default_bin_id}).fetchone()
+            wh_id = wh_row.warehouse_id if wh_row else 1
+            db.execute(
+                text("INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES (:iid, :bid, :wid, :qty)"),
+                {"iid": item_id, "bid": default_bin_id, "wid": wh_id, "qty": qty_int},
+            )
 
 
 def _import_bin(db, rec, idx, errors):
@@ -406,14 +430,17 @@ def _import_bin(db, rec, idx, errors):
 
     # Resolve zone by name or code if zone_id not provided
     zone_id = rec.get("zone_id")
-    if not zone_id and rec.get("zone"):
+    zone_value = rec.get("zone", "").strip()
+    if not zone_id and zone_value:
         zone_row = db.execute(
-            text("SELECT zone_id FROM zones WHERE zone_code = :z OR zone_name = :z LIMIT 1"),
-            {"z": rec["zone"]},
+            text("SELECT zone_id FROM zones WHERE LOWER(zone_code) = LOWER(:z) OR LOWER(zone_name) = LOWER(:z) LIMIT 1"),
+            {"z": zone_value},
         ).fetchone()
         if zone_row:
             zone_id = zone_row.zone_id
     if not zone_id:
+        if zone_value:
+            raise _SkipRow(f"Zone '{zone_value}' not found. Create the zone first, then import bins.")
         raise _SkipRow("Missing required field: zone (or zone_id)")
 
     # Get warehouse_id from zone if not provided
@@ -510,11 +537,11 @@ def _import_sales_order(db, rec, idx, errors):
     if not so_row:
         result = db.execute(
             text("""
-                INSERT INTO sales_orders (so_number, so_barcode, customer_name, warehouse_id, order_date, status)
-                VALUES (:sn, :sn, :cust, 1, NOW(), 'OPEN')
+                INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, order_date, status)
+                VALUES (:sn, :sn, :cust, :phone, :caddr, 1, NOW(), 'OPEN')
                 RETURNING so_id
             """),
-            {"sn": so_number, "cust": rec.get("customer")},
+            {"sn": so_number, "cust": rec.get("customer"), "phone": rec.get("customer_phone"), "caddr": rec.get("customer_address")},
         )
         so_id = result.fetchone()[0]
     else:

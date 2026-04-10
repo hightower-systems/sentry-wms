@@ -170,7 +170,7 @@ export default function Items() {
             <span className="detail-label">SKU</span><span className="mono">{detail.sku}</span>
             <span className="detail-label">UPC</span><span className="mono">{detail.upc || '-'}</span>
             <span className="detail-label">Category</span><span>{detail.category || '-'}</span>
-            <span className="detail-label">Weight</span><span>{detail.weight ? `${detail.weight} lb` : '-'}</span>
+            <span className="detail-label">Weight</span><span>{(detail.weight_lbs || detail.weight) ? `${detail.weight_lbs || detail.weight} lb` : '-'}</span>
             <span className="detail-label">Active</span><span>{detail.is_active ? 'Yes' : 'No'}</span>
           </div>
           {detail.preferred_bins && detail.preferred_bins.length > 0 && (
@@ -223,7 +223,7 @@ export default function Items() {
             </div>
             <div className="form-group">
               <label>Weight (lb)</label>
-              <input className="form-input" type="number" step="0.01" value={form.weight ?? ''} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+              <input className="form-input" type="number" step="0.01" value={form.weight_lbs ?? form.weight ?? ''} onChange={(e) => setForm({ ...form, weight_lbs: e.target.value, weight: e.target.value })} />
             </div>
           </div>
         </Modal>

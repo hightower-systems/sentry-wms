@@ -20,6 +20,7 @@ import Users from './pages/Users.jsx';
 import AuditLog from './pages/AuditLog.jsx';
 import PreferredBins from './pages/PreferredBins.jsx';
 import Settings from './pages/Settings.jsx';
+import Imports from './pages/Imports.jsx';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/users" element={<Users />} />
         <Route path="/audit-log" element={<AuditLog />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/imports" element={<Imports />} />
       </Route>
     </Routes>
   );

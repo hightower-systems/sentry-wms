@@ -163,6 +163,8 @@ CREATE TABLE sales_orders (
     so_barcode VARCHAR(100),               -- scannable pick ticket barcode
     customer_name VARCHAR(200),
     customer_id VARCHAR(50),
+    customer_phone VARCHAR(50),
+    customer_address TEXT,
     status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'
     priority INT DEFAULT 0,                -- higher = pick first
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),

@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Pressable, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ScreenHeader from '../components/ScreenHeader';
 import ErrorPopup from '../components/ErrorPopup';
 import useScreenError from '../hooks/useScreenError';
 import client from '../api/client';
-import { colors, fonts, radii, screenStyles, buttonStyles } from '../theme/styles';
+import { colors, fonts, radii, screenStyles, buttonStyles, modalStyles } from '../theme/styles';
 
-export default function ShipScreen({ navigation }) {
+export default function ShipScreen({ navigation, route }) {
   const [order, setOrder] = useState(null);
   const [lines, setLines] = useState([]);
   const [totalItems, setTotalItems] = useState(0);
@@ -17,8 +17,18 @@ export default function ShipScreen({ navigation }) {
   const [showCarrierPicker, setShowCarrierPicker] = useState(false);
   const [tracking, setTracking] = useState('');
   const { error, scanDisabled, showError, clearError } = useScreenError();
+  const [showSODetail, setShowSODetail] = useState(false);
+  const [soDetail, setSODetail] = useState(null);
 
   const CARRIERS = ['UPS', 'FedEx', 'USPS', 'DHL', 'Amazon', 'Other'];
+
+  // Auto-load SO if navigated from home screen scan
+  useEffect(() => {
+    const soNumber = route?.params?.so_number;
+    if (soNumber) {
+      handleScanOrder(soNumber);
+    }
+  }, []);
 
   const handleScanOrder = async (barcode) => {
     console.log('[SCAN_DEBUG] ShipScreen.handleScanOrder received:', JSON.stringify(barcode));
@@ -52,6 +62,17 @@ export default function ShipScreen({ navigation }) {
     }
   };
 
+  const showOrderDetail = async () => {
+    if (!order) return;
+    try {
+      const resp = await client.get(`/api/lookup/so/${encodeURIComponent(order.so_number)}`);
+      setSODetail(resp.data.sales_order);
+    } catch {
+      setSODetail({ so_number: order.so_number, customer_name: order.customer_name });
+    }
+    setShowSODetail(true);
+  };
+
   const resetScreen = () => {
     setOrder(null);
     setLines([]);
@@ -72,13 +93,14 @@ export default function ShipScreen({ navigation }) {
 
         {phase === 'shipping' && (
           <>
-            <View style={styles.orderInfo}>
+            <TouchableOpacity style={styles.orderInfo} onPress={showOrderDetail} activeOpacity={0.7}>
               <Text style={styles.soNumber}>{order.so_number}</Text>
               <Text style={styles.customer}>{order.customer_name}</Text>
               <Text style={styles.statusLabel}>
                 {order.status === 'PACKED' ? 'PACKED - READY TO SHIP' : 'READY TO SHIP'}
               </Text>
-            </View>
+              <Text style={styles.tapHint}>Tap for details</Text>
+            </TouchableOpacity>
 
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
@@ -167,6 +189,38 @@ export default function ShipScreen({ navigation }) {
         </Pressable>
       </Modal>
 
+      {/* SO Detail Modal */}
+      <Modal visible={showSODetail} transparent animationType="fade">
+        <Pressable style={modalStyles.overlay} onPress={() => setShowSODetail(false)}>
+          <View style={modalStyles.card}>
+            <Text style={modalStyles.title}>ORDER DETAILS</Text>
+            {soDetail && (
+              <ScrollView style={{ maxHeight: 300 }}>
+                <View style={styles.detailRow}><Text style={styles.detailLabel}>ORDER</Text><Text style={styles.detailValue}>{soDetail.so_number}</Text></View>
+                <View style={styles.detailRow}><Text style={styles.detailLabel}>CUSTOMER</Text><Text style={styles.detailValue}>{soDetail.customer_name || '-'}</Text></View>
+                {soDetail.customer_phone && <View style={styles.detailRow}><Text style={styles.detailLabel}>PHONE</Text><Text style={styles.detailValue}>{soDetail.customer_phone}</Text></View>}
+                {(soDetail.customer_address || soDetail.ship_address) && <View style={styles.detailRow}><Text style={styles.detailLabel}>ADDRESS</Text><Text style={styles.detailValue}>{soDetail.customer_address || soDetail.ship_address}</Text></View>}
+                <View style={styles.detailRow}><Text style={styles.detailLabel}>STATUS</Text><Text style={styles.detailValue}>{soDetail.status}</Text></View>
+                {soDetail.lines?.length > 0 && (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={styles.detailLabel}>ITEMS</Text>
+                    {soDetail.lines.map((l, i) => (
+                      <View key={i} style={styles.detailItemRow}>
+                        <Text style={styles.detailItemSku}>{l.sku}</Text>
+                        <Text style={styles.detailItemQty}>{l.quantity_ordered}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </ScrollView>
+            )}
+            <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 16 }]} onPress={() => setShowSODetail(false)}>
+              <Text style={buttonStyles.buttonSecondaryText}>CLOSE</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
       <ErrorPopup
         visible={!!error}
         message={error}
@@ -225,4 +279,11 @@ const styles = StyleSheet.create({
   pickerOptionActive: { borderColor: colors.accentRed, backgroundColor: '#fdf6f4' },
   pickerOptionText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   pickerOptionTextActive: { color: colors.accentRed },
+  tapHint: { fontFamily: fonts.mono, fontSize: 10, color: colors.textPlaceholder, marginTop: 2 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.cardBorder },
+  detailLabel: { fontFamily: fonts.mono, fontSize: 11, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
+  detailValue: { fontFamily: fonts.mono, fontSize: 13, color: colors.textPrimary, textAlign: 'right', flex: 1, marginLeft: 12 },
+  detailItemRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, paddingLeft: 8 },
+  detailItemSku: { fontFamily: fonts.mono, fontSize: 12, color: colors.textPrimary },
+  detailItemQty: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.accentRed },
 });

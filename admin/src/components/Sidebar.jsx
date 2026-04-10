@@ -43,6 +43,7 @@ const NAV = [
     items: [
       { to: '/users', label: 'Users' },
       { to: '/audit-log', label: 'Audit log' },
+      { to: '/imports', label: 'Import' },
       { to: '/settings', label: 'Settings' },
     ],
   },

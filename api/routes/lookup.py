@@ -92,7 +92,7 @@ def lookup_bin(barcode):
             SELECT b.bin_id, b.bin_code, b.bin_barcode, b.bin_type,
                    b.aisle, b.row_num, b.level_num, z.zone_name
             FROM bins b
-            JOIN zones z ON z.zone_id = b.zone_id
+            LEFT JOIN zones z ON z.zone_id = b.zone_id
             WHERE b.bin_barcode = :barcode OR b.bin_code = :barcode
             LIMIT 1
             """
@@ -119,7 +119,8 @@ def lookup_bin(barcode):
             """
             SELECT it.item_id, it.sku, it.item_name, it.upc,
                    inv.quantity_on_hand, inv.quantity_allocated,
-                   (inv.quantity_on_hand - inv.quantity_allocated) AS quantity_available
+                   (inv.quantity_on_hand - inv.quantity_allocated) AS quantity_available,
+                   inv.lot_number
             FROM inventory inv
             JOIN items it ON it.item_id = inv.item_id
             WHERE inv.bin_id = :bin_id
@@ -137,11 +138,76 @@ def lookup_bin(barcode):
             "quantity_on_hand": r.quantity_on_hand,
             "quantity_allocated": r.quantity_allocated,
             "quantity_available": r.quantity_available,
+            "lot_number": r.lot_number,
         }
         for r in item_rows
     ]
 
     return jsonify({"bin": bin_data, "items": items})
+
+
+@lookup_bp.route("/so/<barcode>")
+@require_auth
+@with_db
+def lookup_so(barcode):
+    """Generic SO lookup — returns SO data regardless of status."""
+    barcode = barcode.strip()
+    print(f"[LOOKUP] SO lookup received: '{barcode}' (len={len(barcode)})")
+
+    so_row = g.db.execute(
+        text(
+            """
+            SELECT so_id, so_number, so_barcode, customer_name, status,
+                   warehouse_id, customer_phone, customer_address, ship_address
+            FROM sales_orders
+            WHERE so_barcode = :barcode OR so_number = :barcode
+            LIMIT 1
+            """
+        ),
+        {"barcode": barcode},
+    ).fetchone()
+
+    if not so_row:
+        return jsonify({"error": "Sales order not found"}), 404
+
+    # Fetch SO lines for detail display
+    lines = g.db.execute(
+        text("""
+            SELECT sol.quantity_ordered, sol.quantity_picked, sol.quantity_packed,
+                   sol.quantity_shipped, sol.status AS line_status,
+                   i.sku, i.item_name
+            FROM sales_order_lines sol
+            JOIN items i ON i.item_id = sol.item_id
+            WHERE sol.so_id = :sid
+            ORDER BY sol.line_number
+        """),
+        {"sid": so_row.so_id},
+    ).fetchall()
+
+    return jsonify({
+        "sales_order": {
+            "so_id": so_row.so_id,
+            "so_number": so_row.so_number,
+            "so_barcode": so_row.so_barcode,
+            "customer_name": so_row.customer_name,
+            "customer_phone": so_row.customer_phone,
+            "customer_address": so_row.customer_address,
+            "ship_address": so_row.ship_address,
+            "status": so_row.status,
+            "warehouse_id": so_row.warehouse_id,
+            "lines": [
+                {
+                    "sku": l.sku,
+                    "item_name": l.item_name,
+                    "quantity_ordered": l.quantity_ordered,
+                    "quantity_picked": l.quantity_picked,
+                    "quantity_packed": l.quantity_packed,
+                    "quantity_shipped": l.quantity_shipped,
+                }
+                for l in lines
+            ],
+        }
+    })
 
 
 @lookup_bp.route("/item/search")
@@ -193,7 +259,7 @@ def search_bins():
             SELECT b.bin_id, b.bin_code, b.bin_barcode, b.bin_type,
                    b.aisle, b.row_num, b.level_num, z.zone_name
             FROM bins b
-            JOIN zones z ON z.zone_id = b.zone_id
+            LEFT JOIN zones z ON z.zone_id = b.zone_id
             WHERE b.bin_code ILIKE :q OR b.bin_barcode ILIKE :q
             LIMIT 50
             """

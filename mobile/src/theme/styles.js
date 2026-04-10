@@ -79,7 +79,7 @@ export const buttonStyles = StyleSheet.create({
   },
   buttonPrimaryText: {
     color: colors.cream, fontFamily: fonts.mono, fontSize: 14,
-    fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase',
+    fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', textAlign: 'center',
   },
   buttonSecondary: {
     backgroundColor: colors.background, borderWidth: 1.5, borderColor: colors.cardBorder,
@@ -87,7 +87,7 @@ export const buttonStyles = StyleSheet.create({
   },
   buttonSecondaryText: {
     color: colors.textSecondary, fontFamily: fonts.mono, fontSize: 14,
-    fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase',
+    fontWeight: '600', letterSpacing: 0.5, textTransform: 'uppercase', textAlign: 'center',
   },
   buttonDisabled: { opacity: 0.5 },
 });
@@ -219,6 +219,7 @@ export default StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+    textAlign: 'center',
   },
   buttonSecondary: {
     backgroundColor: colors.background,
@@ -238,6 +239,7 @@ export default StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+    textAlign: 'center',
   },
   buttonDisabled: {
     opacity: 0.5,

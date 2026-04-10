@@ -4,18 +4,18 @@ import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
 const CSV_TEMPLATES = {
-  items: `sku,name,description,upc,default_bin
-WIDGET-001,Blue Widget,Standard blue widget,012345678901,A-01-01-01
-WIDGET-002,Red Widget,Standard red widget,012345678902,A-01-01-02
-GADGET-001,Mini Gadget,Compact gadget device,012345678903,B-02-01-01`,
+  items: `sku,name,description,upc,default_bin,quantity
+WIDGET-001,Blue Widget,Standard blue widget,012345678901,A-01-01-01,100
+WIDGET-002,Red Widget,Standard red widget,012345678902,A-01-01-02,50
+GADGET-001,Mini Gadget,Compact gadget device,012345678903,B-02-01-01,200`,
   'purchase-orders': `po_number,vendor,sku,quantity,expected_date
 PO-1001,Acme Supply Co,WIDGET-001,100,2026-05-01
 PO-1001,Acme Supply Co,WIDGET-002,50,2026-05-01
 PO-1002,Global Parts Inc,GADGET-001,200,2026-05-15`,
-  'sales-orders': `so_number,customer,sku,quantity
-SO-5001,John Smith,WIDGET-001,2
-SO-5001,John Smith,GADGET-001,1
-SO-5002,Jane Doe,WIDGET-002,3`,
+  'sales-orders': `so_number,customer,customer_phone,customer_address,sku,quantity
+SO-5001,John Smith,555-0101,123 Main St,WIDGET-001,2
+SO-5001,John Smith,555-0101,123 Main St,GADGET-001,1
+SO-5002,Jane Doe,555-0102,456 Oak Ave,WIDGET-002,3`,
   bins: `bin_code,zone,aisle,bin_type,pick_sequence,description
 C-01-01-01,STORAGE,C,Pickable,100,Shelf C Row 1 Level 1
 C-01-02-01,STORAGE,C,Pickable,101,Shelf C Row 2 Level 1
@@ -391,7 +391,7 @@ export default function Settings() {
       <div className="settings-section">
         <h3>About</h3>
         <div className="detail-grid">
-          <span className="detail-label">Version</span><span className="mono">0.9.5</span>
+          <span className="detail-label">Version</span><span className="mono">0.9.6</span>
           <span className="detail-label">Repository</span><span><a href="https://github.com/hightower-systems/sentry-wms" target="_blank" rel="noopener noreferrer">github.com/hightower-systems/sentry-wms</a></span>
         </div>
       </div>

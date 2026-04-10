@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, Alert, TextInput } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../auth/AuthContext';
+import { useScanSettingsContext } from '../context/ScanSettingsContext';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
 import useScreenError from '../hooks/useScreenError';
 import ActiveBatchBanner from '../components/ActiveBatchBanner';
 import WarehouseSelector from '../components/WarehouseSelector';
-import client from '../api/client';
+import client, { getStoredApiUrl, setApiUrl } from '../api/client';
 import { colors, fonts, radii, spacing } from '../theme/styles';
 
 const FUNCTIONS = [
@@ -39,7 +40,10 @@ export default function HomeScreen({ navigation }) {
   const [requirePacking, setRequirePacking] = useState(true);
   const { error, scanDisabled, showError, clearError } = useScreenError();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showScanConfig, setShowScanConfig] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const scanSettings = useScanSettingsContext();
+  const [serverUrl, setServerUrl] = useState('');
 
   const loadData = useCallback(async () => {
     if (!warehouseId) return;
@@ -147,28 +151,33 @@ export default function HomeScreen({ navigation }) {
       // Not a PO
     }
 
-    // Try SO lookup — shipping
+    // Try SO lookup — generic first to check status, then route appropriately
     try {
-      const soResp = await client.get(`/api/shipping/order/${encoded}`);
+      const soResp = await client.get(`/api/lookup/so/${encoded}`);
       if (soResp.data && soResp.data.sales_order) {
         const so = soResp.data.sales_order;
-        navigation.navigate('Ship', { so_number: so.so_number });
+        if (so.status === 'PACKED') {
+          navigation.navigate('Ship', { so_number: so.so_number });
+          return;
+        }
+        if (so.status === 'PICKED') {
+          // Route to pack if packing required, otherwise to ship
+          if (requirePacking) {
+            navigation.navigate('Pack', { so_number: so.so_number });
+          } else {
+            navigation.navigate('Ship', { so_number: so.so_number });
+          }
+          return;
+        }
+        // SO exists but not in actionable status — show info
+        Alert.alert(
+          so.so_number,
+          `${so.customer_name}\nStatus: ${so.status}`
+        );
         return;
       }
     } catch {
-      // Not a shippable SO
-    }
-
-    // Try SO lookup — packing (PICKED status orders)
-    try {
-      const packResp = await client.get(`/api/packing/order/${encoded}`);
-      if (packResp.data && packResp.data.sales_order) {
-        const so = packResp.data.sales_order;
-        navigation.navigate('Pack', { so_number: so.so_number });
-        return;
-      }
-    } catch {
-      // Not a packable SO
+      // Not an SO
     }
 
     showError('Barcode not recognized');
@@ -202,10 +211,94 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.menuUser}>{user?.full_name || user?.username || 'User'}</Text>
             <Text style={styles.menuRole}>{user?.role}</Text>
             <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={() => {
+              setShowUserMenu(false);
+              getStoredApiUrl().then(setServerUrl);
+              setShowScanConfig(true);
+            }}>
+              <Text style={styles.menuItemText}>SETTINGS</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { setShowUserMenu(false); logout(); }}>
               <Text style={styles.menuItemTextDanger}>LOGOUT</Text>
             </TouchableOpacity>
           </View>
+        </Pressable>
+      </Modal>
+
+      {/* Scan Settings Modal */}
+      <Modal visible={showScanConfig} transparent animationType="fade">
+        <Pressable style={styles.menuOverlay} onPress={() => setShowScanConfig(false)}>
+          <Pressable style={styles.scanConfigCard} onPress={() => {}}>
+            <Text style={styles.scanConfigTitle}>SETTINGS</Text>
+
+            <Text style={styles.scanConfigLabel}>SERVER URL</Text>
+            <TextInput
+              style={styles.scanConfigInput}
+              value={serverUrl}
+              onChangeText={setServerUrl}
+              onBlur={() => { if (serverUrl.trim()) setApiUrl(serverUrl.trim()); }}
+              placeholder="http://10.1.10.150:5000"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              placeholderTextColor={colors.textPlaceholder}
+            />
+            <Text style={[styles.scanConfigHint, { marginBottom: 16 }]}>API server address — change requires re-login</Text>
+
+            <Text style={styles.scanConfigLabel}>SCAN MODE</Text>
+            <View style={styles.scanModeRow}>
+              <TouchableOpacity
+                style={[styles.scanModeBtn, scanSettings?.mode === 'keyboard' && styles.scanModeBtnActive]}
+                onPress={() => scanSettings?.setMode('keyboard')}
+              >
+                <Text style={[styles.scanModeBtnText, scanSettings?.mode === 'keyboard' && styles.scanModeBtnTextActive]}>KEYBOARD</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.scanModeBtn, scanSettings?.mode === 'intent' && styles.scanModeBtnActive]}
+                onPress={() => scanSettings?.setMode('intent')}
+              >
+                <Text style={[styles.scanModeBtnText, scanSettings?.mode === 'intent' && styles.scanModeBtnTextActive]}>INTENT</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.scanConfigHint}>
+              {scanSettings?.mode === 'keyboard'
+                ? 'Scanner types into focused text field (default)'
+                : 'Scanner sends broadcast intent (Chainway native)'}
+            </Text>
+
+            {scanSettings?.mode === 'intent' && (
+              <>
+                <Text style={[styles.scanConfigLabel, { marginTop: 16 }]}>INTENT ACTION</Text>
+                <TextInput
+                  style={styles.scanConfigInput}
+                  value={scanSettings.intentAction}
+                  onChangeText={scanSettings.setIntentAction}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholderTextColor={colors.textPlaceholder}
+                />
+                <Text style={[styles.scanConfigLabel, { marginTop: 8 }]}>EXTRA KEY</Text>
+                <TextInput
+                  style={styles.scanConfigInput}
+                  value={scanSettings.intentExtra}
+                  onChangeText={scanSettings.setIntentExtra}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholderTextColor={colors.textPlaceholder}
+                />
+                {!scanSettings.scannerAvailable && (
+                  <Text style={styles.scanConfigWarn}>Native module not available — intent mode requires a standalone APK build</Text>
+                )}
+              </>
+            )}
+
+            <TouchableOpacity style={styles.scanConfigDone} onPress={() => {
+              if (serverUrl.trim()) setApiUrl(serverUrl.trim());
+              setShowScanConfig(false);
+            }}>
+              <Text style={styles.scanConfigDoneText}>DONE</Text>
+            </TouchableOpacity>
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -227,6 +320,28 @@ export default function HomeScreen({ navigation }) {
                 [
                   { text: 'Keep', style: 'cancel' },
                   { text: 'Dismiss', onPress: () => setBatchDismissed(true) },
+                ]
+              );
+            }}
+            onDelete={() => {
+              Alert.alert(
+                'Delete Batch',
+                'Cancel this batch and release all allocated inventory? Orders will return to OPEN status.',
+                [
+                  { text: 'Keep', style: 'cancel' },
+                  {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                      try {
+                        await client.post('/api/picking/cancel-batch', { batch_id: activeBatch.batch_id });
+                        setActiveBatch(null);
+                        loadData();
+                      } catch {
+                        Alert.alert('Error', 'Failed to cancel batch');
+                      }
+                    },
+                  },
                 ]
               );
             }}
@@ -268,7 +383,7 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>v0.9.5 / {warehouseName}</Text>
+        <Text style={styles.footerText}>v0.9.6 / {warehouseName}</Text>
       </View>
 
       <ErrorPopup
@@ -320,8 +435,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.cardBorder,
     borderRadius: radii.badge,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 32,
+    justifyContent: 'center',
   },
   warehousePillText: {
     fontFamily: fonts.mono,
@@ -378,6 +495,13 @@ const styles = StyleSheet.create({
   },
   menuItem: {
     paddingVertical: 8,
+  },
+  menuItemText: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    letterSpacing: 0.3,
   },
   menuItemTextDanger: {
     fontFamily: fonts.mono,
@@ -477,5 +601,96 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono,
     fontSize: 9,
     color: colors.textPlaceholder,
+  },
+  // Scan config modal
+  scanConfigCard: {
+    backgroundColor: colors.background,
+    borderRadius: radii.card,
+    padding: 20,
+    width: '90%',
+    maxWidth: 340,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignSelf: 'center',
+    marginTop: 120,
+  },
+  scanConfigTitle: {
+    fontFamily: fonts.mono,
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.5,
+    marginBottom: 16,
+  },
+  scanConfigLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textMuted,
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  scanModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  scanModeBtn: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.button,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  scanModeBtnActive: {
+    borderColor: colors.accentRed,
+    backgroundColor: '#fdf6f4',
+  },
+  scanModeBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+  },
+  scanModeBtnTextActive: {
+    color: colors.accentRed,
+  },
+  scanConfigHint: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginBottom: 4,
+  },
+  scanConfigInput: {
+    borderWidth: 1,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 11,
+    fontFamily: fonts.mono,
+    color: colors.textPrimary,
+    backgroundColor: colors.inputBg,
+  },
+  scanConfigWarn: {
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    color: colors.copper,
+    marginTop: 8,
+  },
+  scanConfigDone: {
+    marginTop: 20,
+    backgroundColor: colors.accentRed,
+    borderRadius: radii.button,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  scanConfigDoneText: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.cream,
+    letterSpacing: 0.5,
   },
 });

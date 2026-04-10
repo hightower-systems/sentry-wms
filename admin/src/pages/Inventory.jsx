@@ -51,8 +51,7 @@ export default function Inventory() {
     { key: 'bin_code', label: 'Bin Code', mono: true, sortable: true },
     { key: 'zone_name', label: 'Zone', sortable: true },
     { key: 'quantity_on_hand', label: 'On Hand', sortable: true },
-    { key: 'quantity_allocated', label: 'Allocated', sortable: true },
-    { key: 'available', label: 'Available', sortable: true, render: (r) => (r.quantity_on_hand || 0) - (r.quantity_allocated || 0) },
+    { key: 'available', label: 'Available', sortable: true, render: (r) => (r.quantity_on_hand || 0) - (r.committed_to_orders || 0) },
     { key: 'last_counted_at', label: 'Last Counted', mono: true, sortable: true, render: (r) => r.last_counted_at ? new Date(r.last_counted_at).toLocaleDateString() : '-' },
   ];
 

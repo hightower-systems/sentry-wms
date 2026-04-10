@@ -48,7 +48,7 @@ export default function AuditLog() {
   const columns = [
     { key: 'created_at', label: 'Timestamp', mono: true, render: (r) => new Date(r.created_at).toLocaleString() },
     { key: 'action_type', label: 'Action' },
-    { key: 'entity_type', label: 'Entity' },
+    { key: 'entity_type', label: 'Entity', render: (r) => r.entity_name ? `${r.entity_type}: ${r.entity_name}` : r.entity_type },
     { key: 'username', label: 'User' },
     { key: 'details', label: 'Details', render: formatDetails },
   ];

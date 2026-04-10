@@ -29,6 +29,7 @@ export default function Login() {
       navigate('/');
     } catch (err) {
       setError(err.message === 'Not authorized' ? 'Not authorized, contact admin' : 'Wrong Username/Password');
+      setPassword('');
     } finally {
       setLoading(false);
     }

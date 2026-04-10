@@ -55,7 +55,7 @@ export default function Users() {
   }
 
   function openEdit(user) {
-    setEditId(user.id);
+    setEditId(user.user_id);
     setForm({
       ...user,
       password: '',
@@ -90,7 +90,7 @@ export default function Users() {
   }
 
   async function deactivate(id) {
-    if (id === currentUser?.id) { alert('Cannot deactivate yourself'); return; }
+    if (id === currentUser?.user_id) { alert('Cannot deactivate yourself'); return; }
     if (!confirm('Deactivate this user?')) return;
     const res = await api.delete(`/admin/users/${id}`);
     if (res?.ok) {
@@ -138,8 +138,8 @@ export default function Users() {
     { key: 'actions', label: '', render: (r) => (
       <div style={{ display: 'flex', gap: 4 }}>
         <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Edit</button>
-        {r.id !== currentUser?.id && r.is_active && (
-          <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deactivate(r.id); }}>Deactivate</button>
+        {r.user_id !== currentUser?.user_id && r.is_active && (
+          <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deactivate(r.user_id); }}>Deactivate</button>
         )}
       </div>
     )},

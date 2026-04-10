@@ -25,6 +25,8 @@ export default function CountScreen({ navigation }) {
   const [turboStatus, setTurboStatus] = useState('');
   const [showExpected, setShowExpected] = useState(true);
   const scanInputRef = useRef(null);
+  // Track qty field focus to suppress scan input auto-refocus (#21)
+  const [qtyFocused, setQtyFocused] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(MODE_KEY).then((saved) => {
@@ -244,7 +246,7 @@ export default function CountScreen({ navigation }) {
 
             {mode === 'turbo' ? (
               <>
-                <ScanInput placeholder="SCAN ITEM" onScan={handleScanItem} disabled={scanDisabled} />
+                <ScanInput placeholder="SCAN ITEM" onScan={handleScanItem} disabled={scanDisabled} suppressRefocus={qtyFocused} />
                 {turboStatus !== '' && (
                   <View style={styles.turboCard}>
                     <Text style={styles.turboText}>{turboStatus}</Text>
@@ -252,7 +254,7 @@ export default function CountScreen({ navigation }) {
                 )}
               </>
             ) : (
-              <ScanInput placeholder="SCAN UNEXPECTED ITEM" onScan={handleAddUnexpected} disabled={scanDisabled} />
+              <ScanInput placeholder="SCAN UNEXPECTED ITEM" onScan={handleAddUnexpected} disabled={scanDisabled} suppressRefocus={qtyFocused} />
             )}
 
             {lines.map((line, index) => {
@@ -285,6 +287,8 @@ export default function CountScreen({ navigation }) {
                       onChangeText={(val) => updateCount(index, val)}
                       keyboardType="number-pad"
                       placeholderTextColor={colors.textPlaceholder}
+                      onFocus={() => setQtyFocused(true)}
+                      onBlur={() => setQtyFocused(false)}
                     />
                   ) : (
                     <Text style={[styles.turboCount, hasVariance && styles.turboCountVariance]}>

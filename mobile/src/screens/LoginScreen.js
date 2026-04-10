@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingVi
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../auth/AuthContext';
 import WarehouseSelector from '../components/WarehouseSelector';
-import client from '../api/client';
+import client, { getStoredApiUrl, setApiUrl } from '../api/client';
 import { colors, fonts, radii } from '../theme/styles';
 
 export default function LoginScreen() {
@@ -15,6 +15,8 @@ export default function LoginScreen() {
   const [showWarehousePicker, setShowWarehousePicker] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [serverUrl, setServerUrlLocal] = useState('');
 
   useEffect(() => {
     // Restore cached username
@@ -111,7 +113,59 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
 
-        <Text style={styles.version}>v0.9.5</Text>
+        <TouchableOpacity
+          style={styles.versionBtn}
+          onPress={() => {
+            getStoredApiUrl().then(setServerUrlLocal);
+            setShowServerConfig(!showServerConfig);
+          }}
+        >
+          <Text style={styles.version}>v0.9.6</Text>
+        </TouchableOpacity>
+
+        {showServerConfig && (
+          <View style={styles.serverConfig}>
+            <Text style={styles.serverLabel}>SERVER</Text>
+            <TextInput
+              style={styles.serverInput}
+              value={serverUrl}
+              onChangeText={setServerUrlLocal}
+              onBlur={() => {
+                if (serverUrl.trim()) {
+                  setApiUrl(serverUrl.trim());
+                  // Reload warehouses with new server
+                  client.get('/api/warehouses/list')
+                    .then((resp) => {
+                      const list = resp.data.warehouses || [];
+                      setWarehouses(list);
+                      if (list.length === 1) setSelectedWarehouse(list[0].id);
+                      setError('');
+                    })
+                    .catch(() => setError('Could not connect to server'));
+                }
+              }}
+              placeholder="http://10.1.10.150:5000"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              placeholderTextColor={colors.textPlaceholder}
+              returnKeyType="done"
+              onSubmitEditing={() => {
+                if (serverUrl.trim()) {
+                  setApiUrl(serverUrl.trim());
+                  client.get('/api/warehouses/list')
+                    .then((resp) => {
+                      const list = resp.data.warehouses || [];
+                      setWarehouses(list);
+                      if (list.length === 1) setSelectedWarehouse(list[0].id);
+                      setError('');
+                    })
+                    .catch(() => setError('Could not connect to server'));
+                }
+              }}
+            />
+          </View>
+        )}
       </View>
 
       <WarehouseSelector
@@ -216,13 +270,41 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
+  versionBtn: {
+    position: 'absolute',
+    bottom: 24,
+    alignSelf: 'center',
+    padding: 8,
+  },
   version: {
     fontFamily: fonts.mono,
     fontSize: 11,
     color: colors.textPlaceholder,
     textAlign: 'center',
+  },
+  serverConfig: {
     position: 'absolute',
-    bottom: 32,
-    alignSelf: 'center',
+    bottom: 56,
+    left: 32,
+    right: 32,
+  },
+  serverLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    fontWeight: '600',
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  serverInput: {
+    borderWidth: 1,
+    borderColor: colors.inputBorder,
+    borderRadius: radii.input,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 12,
+    fontFamily: fonts.mono,
+    color: colors.textPrimary,
+    backgroundColor: colors.inputBg,
   },
 });

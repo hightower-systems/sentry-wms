@@ -315,13 +315,15 @@ def create_sales_order():
 
     result = g.db.execute(
         text("""
-            INSERT INTO sales_orders (so_number, so_barcode, customer_name, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status)
-            VALUES (:sn, :sb, :cust, :wid, :ship, :addr, :ship_by, NOW(), :created_by, 'OPEN')
+            INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status)
+            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, 'OPEN')
             RETURNING so_id
         """),
         {
             "sn": data["so_number"], "sb": data.get("so_barcode", data["so_number"]),
-            "cust": data.get("customer_name"), "wid": data["warehouse_id"],
+            "cust": data.get("customer_name"), "phone": data.get("customer_phone"),
+            "caddr": data.get("customer_address"),
+            "wid": data["warehouse_id"],
             "ship": data.get("ship_method"), "addr": data.get("ship_address"),
             "ship_by": data.get("ship_by_date"), "created_by": g.current_user["username"],
         },
@@ -359,7 +361,7 @@ def update_sales_order(so_id):
         return jsonify({"error": f"Can only update SOs with OPEN status. Current: {so.status}"}), 400
 
     fields, params = [], {"sid": so_id}
-    for col in ("so_number", "so_barcode", "customer_name", "ship_method", "ship_address", "ship_by_date", "priority"):
+    for col in ("so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority"):
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]

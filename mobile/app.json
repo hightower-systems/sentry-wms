@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sentry WMS",
     "slug": "sentry-wms",
-    "version": "0.9.5",
+    "version": "0.9.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,18 +14,30 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.sentrywms.mobile"
+      "bundleIdentifier": "com.hightowersystems.sentrywms"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.sentrywms.mobile"
+      "package": "com.hightowersystems.sentrywms",
+      "versionCode": 1,
+      "permissions": [
+        "INTERNET",
+        "VIBRATE"
+      ]
     },
     "plugins": [
       "expo-asset",
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      "expo-splash-screen",
+      "./plugins/chainway-scanner"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "sentry-wms"
+      }
+    }
   }
 }
