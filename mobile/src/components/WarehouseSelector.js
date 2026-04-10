@@ -1,25 +1,26 @@
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
+import { Modal, View, Text, Pressable, FlatList, StyleSheet } from 'react-native';
 import { colors, fonts, radii } from '../theme/styles';
 
-export default function WarehouseSelector({ visible, warehouses, selected, onSelect }) {
+export default function WarehouseSelector({ visible, warehouses, selected, onSelect, onClose }) {
   const renderItem = ({ item }) => {
     const isSelected = item.id === selected;
     return (
-      <TouchableOpacity
-        style={[styles.item, isSelected && styles.itemSelected]}
+      <Pressable
+        style={({ pressed }) => [styles.item, isSelected && styles.itemSelected, pressed && styles.itemPressed]}
         onPress={() => onSelect(item.id)}
+        android_disableSound={false}
       >
         <Text style={[styles.code, isSelected && styles.codeSelected]}>{item.code}</Text>
         <Text style={[styles.name, isSelected && styles.nameSelected]}>{item.name}</Text>
-      </TouchableOpacity>
+      </Pressable>
     );
   };
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.overlay}>
-        <View style={styles.card}>
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <Pressable style={styles.card} onPress={() => {}}>
           <Text style={styles.title}>SELECT WAREHOUSE</Text>
           <FlatList
             data={warehouses}
@@ -27,8 +28,8 @@ export default function WarehouseSelector({ visible, warehouses, selected, onSel
             renderItem={renderItem}
             style={styles.list}
           />
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -95,5 +96,9 @@ const styles = StyleSheet.create({
   },
   nameSelected: {
     color: colors.textPrimary,
+  },
+  itemPressed: {
+    opacity: 0.7,
+    backgroundColor: colors.cardBorder,
   },
 });

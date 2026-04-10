@@ -8,8 +8,6 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
     "ios": {
@@ -36,8 +34,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "sentry-wms"
+        "projectId": "8df87216-03e6-4715-acbc-33f9fd23582d"
       }
-    }
+    },
+    "owner": "mhightower932"
   }
 }

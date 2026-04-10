@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, Alert, TextInput } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, TextInput } from 'react-native';
+import { useFocusEffect, useScrollToTop } from '@react-navigation/native';
 import { useAuth } from '../auth/AuthContext';
 import { useScanSettingsContext } from '../context/ScanSettingsContext';
 import ScanInput from '../components/ScanInput';
@@ -12,7 +12,7 @@ import client, { getStoredApiUrl, setApiUrl } from '../api/client';
 import { colors, fonts, radii, spacing } from '../theme/styles';
 
 const FUNCTIONS = [
-  { key: 'pick', label: 'PICK', sub: 'Wave picking', screen: 'PickScan', accent: 'red' },
+  { key: 'pick', label: 'PICK', sub: 'Pick orders', screen: 'PickScan', accent: 'red' },
   { key: 'pack', label: 'PACK', sub: 'Verify & pack', screen: 'Pack', accent: 'red' },
   { key: 'receive', label: 'RECEIVE', sub: 'PO receiving', screen: 'Receive', accent: 'copper' },
   { key: 'putaway', label: 'PUT-AWAY', sub: 'Bin placement', screen: 'PutAway', accent: 'copper' },
@@ -44,6 +44,11 @@ export default function HomeScreen({ navigation }) {
   const [initialLoading, setInitialLoading] = useState(true);
   const scanSettings = useScanSettingsContext();
   const [serverUrl, setServerUrl] = useState('');
+  const scrollRef = React.useRef(null);
+  useScrollToTop(scrollRef);
+  // Modal state for replacing Alert.alert
+  const [infoModal, setInfoModal] = useState({ visible: false, title: '', message: '' });
+  const [confirmModal, setConfirmModal] = useState({ visible: false, title: '', message: '', onConfirm: null, confirmText: 'OK', confirmDestructive: false });
 
   const loadData = useCallback(async () => {
     if (!warehouseId) return;
@@ -111,10 +116,7 @@ export default function HomeScreen({ navigation }) {
         const locations = (itemResp.data.locations || [])
           .map((l) => `${l.bin_code}: ${l.quantity_on_hand}`)
           .join('\n');
-        Alert.alert(
-          item.sku,
-          `${item.item_name}\n\n${locations || 'No stock on hand'}`
-        );
+        setInfoModal({ visible: true, title: item.sku, message: `${item.item_name}\n\n${locations || 'No stock on hand'}` });
         return;
       }
     } catch {
@@ -129,10 +131,7 @@ export default function HomeScreen({ navigation }) {
         const contents = (binResp.data.items || [])
           .map((c) => `${c.sku}: ${c.quantity_on_hand}`)
           .join('\n');
-        Alert.alert(
-          bin.bin_code,
-          `${bin.bin_type}\n\n${contents || 'Empty bin'}`
-        );
+        setInfoModal({ visible: true, title: bin.bin_code, message: `${bin.bin_type}\n\n${contents || 'Empty bin'}` });
         return;
       }
     } catch {
@@ -161,19 +160,12 @@ export default function HomeScreen({ navigation }) {
           return;
         }
         if (so.status === 'PICKED') {
-          // Route to pack if packing required, otherwise to ship
-          if (requirePacking) {
-            navigation.navigate('Pack', { so_number: so.so_number });
-          } else {
-            navigation.navigate('Ship', { so_number: so.so_number });
-          }
+          navigation.navigate('Ship', { so_number: so.so_number });
           return;
         }
         // SO exists but not in actionable status — show info
-        Alert.alert(
-          so.so_number,
-          `${so.customer_name}\nStatus: ${so.status}`
-        );
+        const infoLines = [so.customer_name, so.customer_phone, `Status: ${so.status}`].filter(Boolean);
+        setInfoModal({ visible: true, title: so.so_number, message: infoLines.join('\n') });
         return;
       }
     } catch {
@@ -228,7 +220,8 @@ export default function HomeScreen({ navigation }) {
       {/* Scan Settings Modal */}
       <Modal visible={showScanConfig} transparent animationType="fade">
         <Pressable style={styles.menuOverlay} onPress={() => setShowScanConfig(false)}>
-          <Pressable style={styles.scanConfigCard} onPress={() => {}}>
+          <Pressable style={[styles.scanConfigCard, { maxHeight: '80%' }]} onPress={() => {}}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <Text style={styles.scanConfigTitle}>SETTINGS</Text>
 
             <Text style={styles.scanConfigLabel}>SERVER URL</Text>
@@ -298,11 +291,12 @@ export default function HomeScreen({ navigation }) {
             }}>
               <Text style={styles.scanConfigDoneText}>DONE</Text>
             </TouchableOpacity>
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
         <ScanInput
           placeholder="SCAN BARCODE"
           onScan={handleScan}
@@ -314,36 +308,33 @@ export default function HomeScreen({ navigation }) {
             batch={activeBatch}
             onResume={() => navigation.navigate('PickWalk', { batch_id: activeBatch.batch_id })}
             onDismiss={() => {
-              Alert.alert(
-                'Dismiss Batch',
-                'This batch will reappear next time you return to this screen. Resume it later from here.',
-                [
-                  { text: 'Keep', style: 'cancel' },
-                  { text: 'Dismiss', onPress: () => setBatchDismissed(true) },
-                ]
-              );
+              setConfirmModal({
+                visible: true,
+                title: 'Dismiss Batch',
+                message: 'This batch will reappear next time you return to this screen. Resume it later from here.',
+                confirmText: 'Dismiss',
+                confirmDestructive: false,
+                onConfirm: () => { setConfirmModal((p) => ({ ...p, visible: false })); setBatchDismissed(true); },
+              });
             }}
             onDelete={() => {
-              Alert.alert(
-                'Delete Batch',
-                'Cancel this batch and release all allocated inventory? Orders will return to OPEN status.',
-                [
-                  { text: 'Keep', style: 'cancel' },
-                  {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: async () => {
-                      try {
-                        await client.post('/api/picking/cancel-batch', { batch_id: activeBatch.batch_id });
-                        setActiveBatch(null);
-                        loadData();
-                      } catch {
-                        Alert.alert('Error', 'Failed to cancel batch');
-                      }
-                    },
-                  },
-                ]
-              );
+              setConfirmModal({
+                visible: true,
+                title: 'Delete Batch',
+                message: 'Cancel this batch and release all allocated inventory? Orders will return to OPEN status.',
+                confirmText: 'Delete',
+                confirmDestructive: true,
+                onConfirm: async () => {
+                  setConfirmModal((p) => ({ ...p, visible: false }));
+                  try {
+                    await client.post('/api/picking/cancel-batch', { batch_id: activeBatch.batch_id });
+                    setActiveBatch(null);
+                    loadData();
+                  } catch {
+                    showError('Failed to cancel batch');
+                  }
+                },
+              });
             }}
           />
         )}
@@ -370,11 +361,6 @@ export default function HomeScreen({ navigation }) {
                 <View style={[styles.accentDash, { backgroundColor: accentColor }]} />
                 <Text style={styles.cardLabel}>{fn.label}</Text>
                 <Text style={styles.cardSub}>{fn.sub}</Text>
-                {badgeCount > 0 && (
-                  <View style={[styles.cardBadge, { backgroundColor: accentColor }]}>
-                    <Text style={styles.cardBadgeText}>{badgeCount}</Text>
-                  </View>
-                )}
               </TouchableOpacity>
             );
           })}
@@ -383,8 +369,48 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>v0.9.6 / {warehouseName}</Text>
+        <Text style={styles.footerText}>v0.9.7 / {warehouseName}</Text>
       </View>
+
+      {/* Info modal (replaces Alert.alert for lookups) */}
+      <Modal visible={infoModal.visible} transparent animationType="fade">
+        <Pressable style={styles.menuOverlay} onPress={() => setInfoModal({ visible: false, title: '', message: '' })}>
+          <Pressable style={styles.infoModalCard} onPress={() => {}}>
+            <Text style={styles.infoModalTitle}>{infoModal.title}</Text>
+            <Text style={styles.infoModalMessage}>{infoModal.message}</Text>
+            <TouchableOpacity
+              style={styles.infoModalButton}
+              onPress={() => setInfoModal({ visible: false, title: '', message: '' })}
+            >
+              <Text style={styles.infoModalButtonText}>OK</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Confirm modal (replaces Alert.alert for confirmations) */}
+      <Modal visible={confirmModal.visible} transparent animationType="fade">
+        <Pressable style={styles.menuOverlay} onPress={() => setConfirmModal((p) => ({ ...p, visible: false }))}>
+          <Pressable style={styles.infoModalCard} onPress={() => {}}>
+            <Text style={styles.infoModalTitle}>{confirmModal.title}</Text>
+            <Text style={styles.infoModalMessage}>{confirmModal.message}</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+              <TouchableOpacity
+                style={[styles.infoModalButton, { flex: 1, backgroundColor: confirmModal.confirmDestructive ? colors.accentRed : colors.accentRed }]}
+                onPress={confirmModal.onConfirm}
+              >
+                <Text style={styles.infoModalButtonText}>{confirmModal.confirmText}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.infoModalButton, { flex: 1, backgroundColor: colors.cardBorder }]}
+                onPress={() => setConfirmModal((p) => ({ ...p, visible: false }))}
+              >
+                <Text style={[styles.infoModalButtonText, { color: colors.textPrimary }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <ErrorPopup
         visible={!!error}
@@ -400,6 +426,7 @@ export default function HomeScreen({ navigation }) {
           switchWarehouse(id);
           setShowWarehousePicker(false);
         }}
+        onClose={() => setShowWarehousePicker(false)}
       />
     </View>
   );
@@ -463,10 +490,9 @@ const styles = StyleSheet.create({
   menuOverlay: {
     flex: 1,
     backgroundColor: colors.overlay,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end',
-    paddingTop: 100,
-    paddingRight: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
   menuCard: {
     backgroundColor: colors.background,
@@ -687,6 +713,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scanConfigDoneText: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.cream,
+    letterSpacing: 0.5,
+  },
+  // Info/Confirm modals
+  infoModalCard: {
+    backgroundColor: colors.background,
+    borderRadius: radii.card,
+    padding: 20,
+    width: '90%',
+    maxWidth: 340,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  infoModalTitle: {
+    fontFamily: fonts.mono,
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 8,
+  },
+  infoModalMessage: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    color: colors.textMuted,
+    lineHeight: 20,
+  },
+  infoModalButton: {
+    backgroundColor: colors.accentRed,
+    borderRadius: radii.button,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  infoModalButtonText: {
     fontFamily: fonts.mono,
     fontSize: 13,
     fontWeight: '700',

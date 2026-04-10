@@ -4,10 +4,12 @@ import { api } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusTag from '../components/StatusTag.jsx';
+import Modal from '../components/Modal.jsx';
 
 export default function Packing() {
   const [orders, setOrders] = useState([]);
   const [packingEnabled, setPackingEnabled] = useState(null);
+  const [detail, setDetail] = useState(null);
 
   useEffect(() => {
     api.get('/admin/settings/require_packing_before_shipping').then(async (res) => {
@@ -50,7 +52,20 @@ export default function Packing() {
   return (
     <div>
       <PageHeader title="Packing" />
-      <DataTable columns={columns} data={orders} emptyMessage="No orders waiting to pack" />
+      <DataTable columns={columns} data={orders} emptyMessage="No orders waiting to pack" onRowClick={(r) => setDetail(r)} />
+
+      {detail && (
+        <Modal title={detail.so_number || detail.order_number} onClose={() => setDetail(null)}
+          footer={<button className="btn" onClick={() => setDetail(null)}>Close</button>}
+        >
+          <div className="detail-grid">
+            <span className="detail-label">Customer</span><span>{detail.customer_name || '-'}</span>
+            <span className="detail-label">Phone</span><span>{detail.customer_phone || '-'}</span>
+            <span className="detail-label">Address</span><span>{detail.customer_address || detail.ship_address || '-'}</span>
+            <span className="detail-label">Status</span><span><StatusTag status={detail.status} /></span>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

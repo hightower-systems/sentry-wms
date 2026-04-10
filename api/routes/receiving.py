@@ -238,3 +238,106 @@ def receive_items():
         "po_status": po_status,
         "warnings": warnings,
     })
+
+
+@receiving_bp.route("/cancel", methods=["POST"])
+@require_auth
+@with_db
+def cancel_receiving():
+    """Undo all receipts from a session by receipt_ids.
+
+    Reverses inventory additions, PO line quantities, and deletes receipt records.
+    Used when user cancels a receiving session.
+    """
+    data = request.get_json()
+    receipt_ids = data.get("receipt_ids", [])
+    if not receipt_ids:
+        return jsonify({"message": "Nothing to cancel"}), 200
+
+    username = g.current_user["username"]
+    reversed_count = 0
+
+    for rid in receipt_ids:
+        receipt = g.db.execute(
+            text("SELECT receipt_id, po_id, po_line_id, item_id, quantity_received, bin_id, warehouse_id FROM item_receipts WHERE receipt_id = :rid"),
+            {"rid": rid},
+        ).fetchone()
+        if not receipt:
+            continue
+
+        # 1. Reverse inventory
+        g.db.execute(
+            text("""
+                UPDATE inventory SET quantity_on_hand = GREATEST(0, quantity_on_hand - :qty)
+                WHERE item_id = :iid AND bin_id = :bid AND warehouse_id = :wid
+            """),
+            {"qty": receipt.quantity_received, "iid": receipt.item_id, "bid": receipt.bin_id, "wid": receipt.warehouse_id},
+        )
+
+        # 2. Reverse PO line quantity
+        g.db.execute(
+            text("""
+                UPDATE purchase_order_lines
+                SET quantity_received = GREATEST(0, quantity_received - :qty),
+                    status = CASE WHEN GREATEST(0, quantity_received - :qty) = 0 THEN 'OPEN'
+                                  WHEN GREATEST(0, quantity_received - :qty) >= quantity_ordered THEN 'RECEIVED'
+                                  ELSE 'PARTIAL' END
+                WHERE po_line_id = :plid
+            """),
+            {"qty": receipt.quantity_received, "plid": receipt.po_line_id},
+        )
+
+        # 3. Delete receipt record
+        g.db.execute(text("DELETE FROM item_receipts WHERE receipt_id = :rid"), {"rid": rid})
+
+        reversed_count += 1
+
+    # Recalculate PO status for affected POs
+    affected_pos = set()
+    for rid in receipt_ids:
+        # We already deleted the receipts, so get PO ID from data
+        pass
+
+    # Recalculate PO status from the receipt_ids we were given
+    po_ids = set()
+    for rid in receipt_ids:
+        po_row = g.db.execute(
+            text("SELECT DISTINCT po_id FROM purchase_order_lines WHERE po_line_id IN (SELECT po_line_id FROM item_receipts WHERE receipt_id = :rid)"),
+            {"rid": rid},
+        ).fetchone()
+        if po_row:
+            po_ids.add(po_row.po_id)
+
+    # Also get PO IDs from the data if provided
+    if data.get("po_id"):
+        po_ids.add(data["po_id"])
+
+    for pid in po_ids:
+        all_lines = g.db.execute(
+            text("SELECT quantity_received, quantity_ordered FROM purchase_order_lines WHERE po_id = :pid"),
+            {"pid": pid},
+        ).fetchall()
+        if all(l.quantity_received >= l.quantity_ordered for l in all_lines):
+            new_status = "RECEIVED"
+        elif any(l.quantity_received > 0 for l in all_lines):
+            new_status = "PARTIAL"
+        else:
+            new_status = "OPEN"
+        g.db.execute(
+            text("UPDATE purchase_orders SET status = :status WHERE po_id = :pid"),
+            {"status": new_status, "pid": pid},
+        )
+
+    # Audit log
+    write_audit_log(
+        g.db,
+        action_type="RECEIVE_CANCEL",
+        entity_type="PO",
+        entity_id=data.get("po_id", 0),
+        user_id=username,
+        warehouse_id=data.get("warehouse_id"),
+        details={"reversed_receipts": reversed_count, "receipt_ids": receipt_ids},
+    )
+
+    g.db.commit()
+    return jsonify({"message": f"Cancelled {reversed_count} receipt(s)", "reversed": reversed_count})

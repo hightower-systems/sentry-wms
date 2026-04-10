@@ -229,7 +229,8 @@ def list_sales_orders():
     params["offset"] = (page - 1) * per_page
     rows = g.db.execute(
         text(f"""
-            SELECT so_id, so_number, so_barcode, customer_name, status, priority, warehouse_id,
+            SELECT so_id, so_number, so_barcode, customer_name, customer_phone, customer_address,
+                   status, priority, warehouse_id,
                    ship_method, ship_address, order_date, ship_by_date, created_at, created_by,
                    carrier, tracking_number, shipped_at
             FROM sales_orders {where_sql} ORDER BY so_id DESC LIMIT :limit OFFSET :offset
@@ -240,7 +241,8 @@ def list_sales_orders():
     return jsonify({
         "sales_orders": [
             {"so_id": r.so_id, "so_number": r.so_number, "so_barcode": r.so_barcode,
-             "customer_name": r.customer_name, "status": r.status, "priority": r.priority,
+             "customer_name": r.customer_name, "customer_phone": r.customer_phone, "customer_address": r.customer_address,
+             "status": r.status, "priority": r.priority,
              "warehouse_id": r.warehouse_id, "ship_method": r.ship_method, "ship_address": r.ship_address,
              "order_date": r.order_date.isoformat() if r.order_date else None,
              "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,

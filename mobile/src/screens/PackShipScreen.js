@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useScrollToTop } from '@react-navigation/native';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ScreenHeader from '../components/ScreenHeader';
@@ -8,6 +9,8 @@ import client from '../api/client';
 import { colors, fonts, radii, screenStyles, buttonStyles, listStyles } from '../theme/styles';
 
 export default function PackShipScreen({ navigation }) {
+  const scrollRef = React.useRef(null);
+  useScrollToTop(scrollRef);
   const [order, setOrder] = useState(null);
   const [items, setItems] = useState([]);
   const [phase, setPhase] = useState('scan_order'); // scan_order | packing | shipping | done
@@ -101,7 +104,7 @@ export default function PackShipScreen({ navigation }) {
     <View style={screenStyles.screen}>
       <ScreenHeader title="PACK / SHIP" onBack={() => navigation.goBack()} />
 
-      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {phase === 'scan_order' && (
           <ScanInput placeholder="SCAN ORDER" onScan={handleScanOrder} disabled={scanDisabled} />
         )}

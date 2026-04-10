@@ -89,15 +89,22 @@ export default function Users() {
     }
   }
 
-  async function deactivate(id) {
-    if (id === currentUser?.user_id) { alert('Cannot deactivate yourself'); return; }
-    if (!confirm('Deactivate this user?')) return;
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+
+  async function deleteUser(id) {
+    if (id === currentUser?.user_id) { setError('Cannot delete yourself'); return; }
+    setShowDeleteConfirm(id);
+  }
+
+  async function confirmDeleteUser() {
+    const id = showDeleteConfirm;
+    setShowDeleteConfirm(null);
     const res = await api.delete(`/admin/users/${id}`);
     if (res?.ok) {
       loadUsers();
     } else {
       const data = await res?.json();
-      alert(data?.error || 'Failed to deactivate');
+      setError(data?.error || 'Failed to delete user');
     }
   }
 
@@ -138,8 +145,8 @@ export default function Users() {
     { key: 'actions', label: '', render: (r) => (
       <div style={{ display: 'flex', gap: 4 }}>
         <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Edit</button>
-        {r.user_id !== currentUser?.user_id && r.is_active && (
-          <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deactivate(r.user_id); }}>Deactivate</button>
+        {r.user_id !== currentUser?.user_id && (
+          <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deleteUser(r.user_id); }}>Delete</button>
         )}
       </div>
     )},
@@ -214,6 +221,20 @@ export default function Users() {
               ))}
             </div>
           </div>
+        </Modal>
+      )}
+
+      {showDeleteConfirm && (
+        <Modal title="Delete User" onClose={() => setShowDeleteConfirm(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setShowDeleteConfirm(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDeleteUser}>Delete</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 14, marginBottom: 8 }}>Are you sure? This action cannot be undone.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>The user and all associated data will be permanently deleted.</p>
         </Modal>
       )}
     </div>

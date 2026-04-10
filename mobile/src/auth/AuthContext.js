@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import client, { setLogoutHandler } from '../api/client';
+import client, { setLogoutHandler, initApiUrl } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -35,6 +35,8 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     (async () => {
       try {
+        // Load saved API URL from AsyncStorage BEFORE any API calls
+        await initApiUrl();
         const valid = await checkSession();
         if (!valid) {
           setIsLoading(false);

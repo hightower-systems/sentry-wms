@@ -127,10 +127,26 @@ def delete_warehouse(warehouse_id):
     if has_inv:
         return jsonify({"error": "Cannot delete warehouse with existing inventory"}), 400
 
-    # Soft delete
-    g.db.execute(text("UPDATE warehouses SET is_active = FALSE WHERE warehouse_id = :wid"), {"wid": warehouse_id})
+    # Check for bins
+    has_bins = g.db.execute(
+        text("SELECT 1 FROM bins WHERE warehouse_id = :wid LIMIT 1"),
+        {"wid": warehouse_id},
+    ).fetchone()
+    if has_bins:
+        return jsonify({"error": "Cannot delete warehouse with existing bins. Remove all bins first."}), 400
+
+    # Check for zones
+    has_zones = g.db.execute(
+        text("SELECT 1 FROM zones WHERE warehouse_id = :wid LIMIT 1"),
+        {"wid": warehouse_id},
+    ).fetchone()
+    if has_zones:
+        return jsonify({"error": "Cannot delete warehouse with existing zones. Remove all zones first."}), 400
+
+    # Hard delete
+    g.db.execute(text("DELETE FROM warehouses WHERE warehouse_id = :wid"), {"wid": warehouse_id})
     g.db.commit()
-    return jsonify({"message": "Warehouse deactivated"})
+    return jsonify({"message": "Warehouse deleted"})
 
 
 # ── Zones ─────────────────────────────────────────────────────────────────────
@@ -229,20 +245,24 @@ def list_bins():
     params = {}
     warehouse_id = request.args.get("warehouse_id", type=int)
     zone_id = request.args.get("zone_id", type=int)
+    bin_type = request.args.get("bin_type")
     if warehouse_id:
         where_clauses.append("b.warehouse_id = :wid")
         params["wid"] = warehouse_id
     if zone_id:
         where_clauses.append("b.zone_id = :zid")
         params["zid"] = zone_id
+    if bin_type:
+        where_clauses.append("b.bin_type = :bin_type")
+        params["bin_type"] = bin_type
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     rows = g.db.execute(
         text(f"""
-            SELECT b.bin_id, b.zone_id, z.zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
+            SELECT b.bin_id, b.zone_id, COALESCE(z.zone_name, '') AS zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
                    b.aisle, b.row_num, b.level_num, b.position_num, b.pick_sequence, b.putaway_sequence, b.is_active
             FROM bins b
-            JOIN zones z ON z.zone_id = b.zone_id
+            LEFT JOIN zones z ON z.zone_id = b.zone_id
             {where_sql}
             ORDER BY b.bin_id
         """),

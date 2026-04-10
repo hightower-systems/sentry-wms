@@ -26,22 +26,37 @@ export default function CycleCountApproval() {
     setDecisions((prev) => ({ ...prev, [adjustmentId]: action }));
   }
 
-  async function submitDecisions() {
+  async function submitGroup(countId) {
     setSubmitting(true);
     setMessage('');
-    const payload = adjustments.map((a) => ({
+    const groupItems = groups[countId] || [];
+    const payload = groupItems.map((a) => ({
       adjustment_id: a.adjustment_id,
       action: decisions[a.adjustment_id] || 'approve',
     }));
     const res = await api.post('/admin/adjustments/review', { decisions: payload });
     if (res?.ok) {
-      setMessage('Decisions submitted successfully');
+      setMessage(`Bin decisions submitted successfully`);
       loadPending();
     } else {
       const data = await res?.json();
       setMessage(data?.error || 'Failed to submit decisions');
     }
     setSubmitting(false);
+  }
+
+  function approveAll(countId) {
+    const groupItems = groups[countId] || [];
+    const updated = { ...decisions };
+    groupItems.forEach((a) => { updated[a.adjustment_id] = 'approve'; });
+    setDecisions(updated);
+  }
+
+  function rejectAll(countId) {
+    const groupItems = groups[countId] || [];
+    const updated = { ...decisions };
+    groupItems.forEach((a) => { updated[a.adjustment_id] = 'reject'; });
+    setDecisions(updated);
   }
 
   // Group adjustments by cycle_count_id
@@ -122,12 +137,15 @@ export default function CycleCountApproval() {
                   })}
                 </tbody>
               </table>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button className="btn btn-primary btn-sm" onClick={() => submitGroup(countId)} disabled={submitting}>
+                  {submitting ? 'Submitting...' : 'Submit'}
+                </button>
+                <button className="btn btn-sm" onClick={() => approveAll(countId)}>Approve All</button>
+                <button className="btn btn-sm" onClick={() => rejectAll(countId)}>Reject All</button>
+              </div>
             </div>
           ))}
-
-          <button className="btn btn-primary" onClick={submitDecisions} disabled={submitting}>
-            {submitting ? 'Submitting...' : 'Submit Decisions'}
-          </button>
         </>
       )}
     </div>

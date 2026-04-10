@@ -155,3 +155,62 @@ class TestReceiveItems:
         }
         resp = client.post("/api/receiving/receive", json=payload)
         assert resp.status_code == 401
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Bug #2: Cancel receiving should discard ALL progress
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCancelReceiving:
+    """Bug #2: Cancel receiving session should reverse all receipts."""
+
+    def test_cancel_reverses_receipts(self, client, auth_headers, seed_data):
+        """Cancelling should undo inventory additions and PO line updates."""
+        po_id = seed_data["po_id"]
+        bin_id = seed_data["staging_bin_id"]
+
+        # Get initial state of PO line
+        resp = client.get(f"/api/receiving/po/PO-2026-001", headers=auth_headers)
+        assert resp.status_code == 200
+        initial_lines = resp.get_json()["lines"]
+        initial_received = initial_lines[0]["quantity_received"]
+        item_id = initial_lines[0]["item_id"]
+
+        # Receive some items
+        resp = client.post("/api/receiving/receive", json={
+            "po_id": po_id,
+            "items": [{"item_id": item_id, "quantity": 5, "bin_id": bin_id}],
+            "warehouse_id": seed_data["warehouse_id"],
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+        receipt_ids = resp.get_json()["receipt_ids"]
+        assert len(receipt_ids) == 1
+
+        # Verify qty increased
+        resp = client.get(f"/api/receiving/po/PO-2026-001", headers=auth_headers)
+        after_receive = resp.get_json()["lines"]
+        item_line = [l for l in after_receive if l["item_id"] == item_id][0]
+        assert item_line["quantity_received"] == initial_received + 5
+
+        # Cancel
+        resp = client.post("/api/receiving/cancel", json={
+            "receipt_ids": receipt_ids,
+            "po_id": po_id,
+            "warehouse_id": seed_data["warehouse_id"],
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["reversed"] == 1
+
+        # Verify qty reverted
+        resp = client.get(f"/api/receiving/po/PO-2026-001", headers=auth_headers)
+        after_cancel = resp.get_json()["lines"]
+        item_line = [l for l in after_cancel if l["item_id"] == item_id][0]
+        assert item_line["quantity_received"] == initial_received
+
+    def test_cancel_empty_list(self, client, auth_headers):
+        """Cancelling with no receipt_ids should return 200."""
+        resp = client.post("/api/receiving/cancel", json={
+            "receipt_ids": [],
+        }, headers=auth_headers)
+        assert resp.status_code == 200

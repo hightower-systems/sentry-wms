@@ -2,6 +2,55 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.7] - 2026-04-10
+
+### Repeat Offender Fixes (8 bugs, 14 new tests)
+- Admin login: 401 handler no longer redirects during login attempt, preserving username field (#12)
+- Item weight: `save()` now sends `weight_lbs` correctly to API (#19)
+- Audit log: batch-resolves bin_id/item_id/so_id/po_id to human-readable names (bin codes, SKUs, SO/PO numbers) (#20)
+- Receiving bin filter: added `bin_type` query param to `/admin/bins` endpoint (#21)
+- Settings unsaved warning: `useBlocker` from react-router-dom v7 replaces manual navigation guard (#22)
+- Warehouse delete: hard DELETE with safety checks (bins, zones, inventory) replaces soft-deactivate (#23)
+- Login version pin: absolute positioning pinned to bottom of screen (#26)
+- Splash double title: removed splash image from app.json (#27)
+
+### Handheld Functional (5 bugs, 2 new tests)
+- Cancel receiving: new `/api/receiving/cancel` endpoint reverses receipts, PO line quantities, and inventory; ReceiveScreen tracks session receipt IDs (#2)
+- Put-away quantity tracking: remaining qty updates per item instead of removing from queue, green checkmark when fully put away (#3)
+- PagedList scroll: changed container from View to ScrollView (#4)
+- Over-receive popup: shows warning only once per item per session (#5)
+- PICKED SO routing: scanned PICKED orders now navigate to Ship screen (#10)
+
+### Handheld UI (7 bugs)
+- Settings menu: centered overlay with scrollable scan config (#1)
+- Renamed "Wave picking" to "Pick orders" on home screen (#6)
+- Double pick confirmation: auto-submits batch when all tasks complete, eliminated intermediate "Round Complete" view (#7)
+- Replaced all 9 `Alert.alert` calls with styled React Native modals across HomeScreen and ReceiveScreen (#8)
+- Warehouse selector: `TouchableOpacity` → `Pressable` for single-tap selection on Android, added overlay dismiss (#9)
+- Removed badge numbers from home screen operation cards (#11)
+- Scroll position: added `useScrollToTop` from React Navigation to all 7 scrollable screens (#14)
+
+### Admin Panel (8 bugs)
+- Cycle count approval: per-bin Submit/Approve All/Reject All buttons replace single global submit (#13)
+- User management: Delete (hard) replaces Deactivate, with styled confirmation modal (#15)
+- Create SO: full form on Picking page with so_number, warehouse, customer name/phone/address, ship method/address, order lines with item picker (#16)
+- Item management: view modal is read-only, edit modal now has Delete/Archive buttons (#17)
+- Delete item: styled confirmation popup replaces `confirm()` (#18)
+- SO clickable: row click on Picking/Packing/Shipping pages opens customer detail modal (#24)
+- Customer fields: added customer_phone and customer_address to sales order list API response (#25)
+
+### EAS Build
+- AsyncStorage URL: new `initApiUrl()` preloads saved server URL before any screens render; AuthProvider awaits it during loading phase
+
+### Stats
+- 277 tests passing (16 new)
+- 29 files changed, +1,105 / -212 lines
+
+## [v0.9.6] - 2026-04-09
+
+### Fixed
+- Scan hardening, cycle count approval, put-away reorder, manual picking, admin UX overhaul, CSV templates, role simplification
+
 ## [v0.9.5] - 2026-04-08
 
 ### Admin Panel

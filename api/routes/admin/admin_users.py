@@ -148,11 +148,11 @@ def delete_user(user_id):
         return jsonify({"error": "User not found"}), 404
 
     if g.current_user["user_id"] == user_id:
-        return jsonify({"error": "Cannot deactivate yourself"}), 400
+        return jsonify({"error": "Cannot delete yourself"}), 400
 
-    g.db.execute(text("UPDATE users SET is_active = FALSE WHERE user_id = :uid"), {"uid": user_id})
+    g.db.execute(text("DELETE FROM users WHERE user_id = :uid"), {"uid": user_id})
     g.db.commit()
-    return jsonify({"message": "User deactivated"})
+    return jsonify({"message": "User deleted"})
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
@@ -209,13 +209,64 @@ def list_audit_log():
         params,
     ).fetchall()
 
+    # Collect IDs from details to batch-resolve to human-readable names
+    bin_ids, item_ids, so_ids, po_ids = set(), set(), set(), set()
+    for r in rows:
+        d = r.details if isinstance(r.details, dict) else {}
+        for k, v in d.items():
+            if not isinstance(v, int):
+                continue
+            if "bin" in k:
+                bin_ids.add(v)
+            elif "item" in k:
+                item_ids.add(v)
+            elif "so" in k:
+                so_ids.add(v)
+            elif "po" in k:
+                po_ids.add(v)
+
+    bin_map, item_map, so_map, po_map = {}, {}, {}, {}
+    if bin_ids:
+        for br in g.db.execute(text("SELECT bin_id, bin_code FROM bins WHERE bin_id = ANY(:ids)"), {"ids": list(bin_ids)}).fetchall():
+            bin_map[br.bin_id] = br.bin_code
+    if item_ids:
+        for ir in g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = ANY(:ids)"), {"ids": list(item_ids)}).fetchall():
+            item_map[ir.item_id] = ir.sku
+    if so_ids:
+        for sr in g.db.execute(text("SELECT so_id, so_number FROM sales_orders WHERE so_id = ANY(:ids)"), {"ids": list(so_ids)}).fetchall():
+            so_map[sr.so_id] = sr.so_number
+    if po_ids:
+        for pr in g.db.execute(text("SELECT po_id, po_number FROM purchase_orders WHERE po_id = ANY(:ids)"), {"ids": list(po_ids)}).fetchall():
+            po_map[pr.po_id] = pr.po_number
+
+    def resolve_details(details):
+        if not isinstance(details, dict):
+            return details
+        resolved = {}
+        for k, v in details.items():
+            if isinstance(v, int):
+                if "bin" in k and v in bin_map:
+                    resolved[k.replace("_id", "")] = bin_map[v]
+                    continue
+                elif "item" in k and v in item_map:
+                    resolved[k.replace("_id", "")] = item_map[v]
+                    continue
+                elif "so" in k and v in so_map:
+                    resolved[k.replace("_id", "")] = so_map[v]
+                    continue
+                elif "po" in k and v in po_map:
+                    resolved[k.replace("_id", "")] = po_map[v]
+                    continue
+            resolved[k] = v
+        return resolved
+
     return jsonify({
         "entries": [
             {"log_id": r.log_id, "action_type": r.action_type, "entity_type": r.entity_type,
              "entity_id": r.entity_id, "entity_name": r.entity_name,
              "username": r.user_id, "device_id": r.device_id,
              "warehouse_id": r.warehouse_id, "warehouse_code": r.warehouse_code,
-             "details": r.details,
+             "details": resolve_details(r.details),
              "created_at": r.created_at.isoformat() if r.created_at else None}
             for r in rows
         ],

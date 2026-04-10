@@ -415,7 +415,7 @@ class TestUsers:
         assert resp.status_code == 200
 
     def test_delete_user(self, client, auth_headers):
-        # Create a user then deactivate
+        # Create a user then hard-delete
         create = client.post("/api/admin/users", json={
             "username": "delme", "password": "test", "full_name": "Del Me", "role": "USER"
         }, headers=auth_headers)
@@ -424,8 +424,8 @@ class TestUsers:
         resp = client.delete(f"/api/admin/users/{uid}", headers=auth_headers)
         assert resp.status_code == 200
 
-        active = _query_val("SELECT is_active FROM users WHERE user_id = %s", (uid,))
-        assert active is False
+        exists = _query_val("SELECT 1 FROM users WHERE user_id = %s", (uid,))
+        assert exists is None
 
     def test_cannot_delete_self(self, client, auth_headers):
         resp = client.delete("/api/admin/users/1", headers=auth_headers)
@@ -819,3 +819,193 @@ class TestPreferredBinsCRUD:
         # Verify deleted
         resp = client.get("/api/admin/preferred-bins?item_id=1", headers=auth_headers)
         assert len(resp.get_json()["preferred_bins"]) == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REPEAT OFFENDER TESTS — v0.9.7
+# Each bug was reported in v0.9.5, "fixed" in v0.9.6, but still broken.
+# These tests MUST pass before marking any of them done.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestRepeatOffender12_LoginUsername:
+    """Bug #12: Admin login — username must NOT clear on bad password."""
+
+    def test_bad_password_returns_401_not_redirect(self, client):
+        """The /auth/login endpoint must return 401 JSON, not trigger a redirect."""
+        resp = client.post("/api/auth/login", json={
+            "username": "admin", "password": "wrong-password"
+        })
+        assert resp.status_code == 401
+        data = resp.get_json()
+        assert "error" in data or "message" in data
+
+    def test_correct_login_still_works(self, client):
+        """Ensure valid credentials still return 200 with token."""
+        resp = client.post("/api/auth/login", json={
+            "username": "admin", "password": "admin"
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "token" in data
+
+
+class TestRepeatOffender19_ItemWeight:
+    """Bug #19: Item weight must persist through create and display."""
+
+    def test_create_item_with_weight(self, client, auth_headers):
+        """Creating an item with weight_lbs must store and return it."""
+        resp = client.post("/api/admin/items", json={
+            "sku": "WEIGHT-TEST-001",
+            "item_name": "Weight Test Item",
+            "weight_lbs": 2.5,
+        }, headers=auth_headers)
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["weight_lbs"] == 2.5
+
+    def test_list_items_shows_weight(self, client, auth_headers):
+        """The items list endpoint must include weight_lbs."""
+        client.post("/api/admin/items", json={
+            "sku": "WEIGHT-TEST-002",
+            "item_name": "Weight Test Item 2",
+            "weight_lbs": 3.75,
+        }, headers=auth_headers)
+
+        resp = client.get("/api/admin/items?q=WEIGHT-TEST-002", headers=auth_headers)
+        assert resp.status_code == 200
+        items = resp.get_json()["items"]
+        match = [i for i in items if i["sku"] == "WEIGHT-TEST-002"]
+        assert len(match) == 1
+        assert match[0]["weight_lbs"] == 3.75
+
+    def test_update_item_weight(self, client, auth_headers):
+        """Updating weight_lbs must persist."""
+        resp = client.post("/api/admin/items", json={
+            "sku": "WEIGHT-TEST-003",
+            "item_name": "Weight Update Test",
+            "weight_lbs": 1.0,
+        }, headers=auth_headers)
+        item_id = resp.get_json()["item_id"]
+
+        resp = client.put(f"/api/admin/items/{item_id}", json={
+            "weight_lbs": 5.5,
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["weight_lbs"] == 5.5
+
+        resp = client.get(f"/api/admin/items/{item_id}", headers=auth_headers)
+        assert resp.get_json()["item"]["weight_lbs"] == 5.5
+
+
+class TestRepeatOffender20_AuditLogNames:
+    """Bug #20: Audit log must show human-readable names, not internal IDs."""
+
+    def test_audit_log_has_entity_name(self, client, auth_headers):
+        """entity_name must be resolved (SKU, bin_code, etc.)."""
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get("/api/admin/audit-log?action_type=TRANSFER", headers=auth_headers)
+        assert resp.status_code == 200
+        entries = resp.get_json()["entries"]
+        assert len(entries) >= 1
+        for e in entries:
+            if e["entity_type"] in ("ITEM", "BIN", "SO", "PO"):
+                assert e["entity_name"] is not None, f"entity_name is None for {e['entity_type']} id={e['entity_id']}"
+
+    def test_audit_log_has_username_not_id(self, client, auth_headers):
+        """username field must be a string name, not a numeric ID."""
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get("/api/admin/audit-log?action_type=TRANSFER", headers=auth_headers)
+        entries = resp.get_json()["entries"]
+        assert len(entries) >= 1
+        for e in entries:
+            assert isinstance(e["username"], str), f"username is not a string: {e['username']}"
+            assert not e["username"].isdigit(), f"username looks like an ID: {e['username']}"
+
+    def test_audit_log_details_resolved(self, client, auth_headers):
+        """Details JSON should resolve IDs to names where possible."""
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get("/api/admin/audit-log?action_type=TRANSFER", headers=auth_headers)
+        entries = resp.get_json()["entries"]
+        transfer_entry = entries[0]
+        details = transfer_entry.get("details", {})
+        for key in details:
+            assert key not in ("bin_id", "item_id", "from_bin_id", "to_bin_id"), \
+                f"Details still contains raw ID key: {key}={details[key]}"
+
+
+class TestRepeatOffender21_ReceivingBinFilter:
+    """Bug #21: /admin/bins endpoint must support bin_type filter."""
+
+    def test_bins_filter_by_type(self, client, auth_headers):
+        """Requesting bin_type=Staging must return only Staging bins."""
+        resp = client.get("/api/admin/bins?warehouse_id=1&bin_type=Staging", headers=auth_headers)
+        assert resp.status_code == 200
+        bins = resp.get_json()["bins"]
+        assert len(bins) >= 1, "Expected at least one Staging bin"
+        for b in bins:
+            assert b["bin_type"] == "Staging", f"Got bin_type={b['bin_type']} for bin {b['bin_code']}"
+
+    def test_bins_filter_pickable(self, client, auth_headers):
+        """bin_type=Pickable should return only Pickable bins."""
+        resp = client.get("/api/admin/bins?warehouse_id=1&bin_type=Pickable", headers=auth_headers)
+        assert resp.status_code == 200
+        bins = resp.get_json()["bins"]
+        for b in bins:
+            assert b["bin_type"] == "Pickable", f"Got bin_type={b['bin_type']}"
+
+    def test_bins_no_filter_returns_all(self, client, auth_headers):
+        """Without bin_type filter, all bin types should appear."""
+        resp = client.get("/api/admin/bins?warehouse_id=1", headers=auth_headers)
+        assert resp.status_code == 200
+        bins = resp.get_json()["bins"]
+        types = set(b["bin_type"] for b in bins)
+        assert len(types) > 1, f"Expected multiple bin types, got {types}"
+
+
+class TestRepeatOffender23_WarehouseHardDelete:
+    """Bug #23: DELETE warehouse must hard-delete, not just set inactive."""
+
+    def test_delete_warehouse_hard_deletes(self, client, auth_headers):
+        """After DELETE, the warehouse should not exist at all."""
+        resp = client.post("/api/admin/warehouses", json={
+            "warehouse_code": "DEL-TEST", "warehouse_name": "Delete Test WH",
+        }, headers=auth_headers)
+        assert resp.status_code == 201
+        wh_id = resp.get_json()["warehouse_id"]
+
+        resp = client.delete(f"/api/admin/warehouses/{wh_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert "deleted" in resp.get_json()["message"].lower()
+
+        resp = client.get(f"/api/admin/warehouses/{wh_id}", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_delete_warehouse_with_bins_blocked(self, client, auth_headers):
+        """Cannot hard-delete a warehouse that still has bins."""
+        resp = client.delete("/api/admin/warehouses/1", headers=auth_headers)
+        assert resp.status_code == 400
+
+    def test_inactive_toggle_via_put(self, client, auth_headers):
+        """Setting is_active=false via PUT should soft-toggle, not delete."""
+        resp = client.post("/api/admin/warehouses", json={
+            "warehouse_code": "SOFT-TEST", "warehouse_name": "Soft Toggle Test",
+        }, headers=auth_headers)
+        wh_id = resp.get_json()["warehouse_id"]
+
+        resp = client.put(f"/api/admin/warehouses/{wh_id}", json={"is_active": False}, headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["is_active"] is False
+
+        resp = client.get(f"/api/admin/warehouses/{wh_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["warehouse"]["is_active"] is False

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useScrollToTop } from '@react-navigation/native';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, Vibration, BackHandler, StyleSheet } from 'react-native';
 import ModeSelector from '../components/ModeSelector';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,6 +16,8 @@ const MODE_KEY = 'sentry_count_mode';
 
 export default function CountScreen({ navigation }) {
   const { warehouseId } = useAuth();
+  const scrollRef = React.useRef(null);
+  useScrollToTop(scrollRef);
   const [countId, setCountId] = useState(null);
   const [binCode, setBinCode] = useState('');
   const [lines, setLines] = useState([]);
@@ -224,7 +227,7 @@ export default function CountScreen({ navigation }) {
         }
       />
 
-      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {!countId ? (
           <ScanInput placeholder="SCAN BIN" onScan={handleScanBin} disabled={scanDisabled} />
         ) : submitted ? (

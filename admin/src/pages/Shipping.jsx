@@ -3,10 +3,12 @@ import { api } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusTag from '../components/StatusTag.jsx';
+import Modal from '../components/Modal.jsx';
 
 export default function Shipping() {
   const [orders, setOrders] = useState([]);
   const [shipped, setShipped] = useState([]);
+  const [detail, setDetail] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -65,13 +67,29 @@ export default function Shipping() {
       <PageHeader title="Shipping" />
       <div className="section">
         <div className="section-title">Ready to ship</div>
-        <DataTable columns={columns} data={orders} emptyMessage="No orders waiting to ship" />
+        <DataTable columns={columns} data={orders} emptyMessage="No orders waiting to ship" onRowClick={(r) => setDetail(r)} />
       </div>
       {shipped.length > 0 && (
         <div className="section">
           <div className="section-title">Recently shipped</div>
-          <DataTable columns={shippedColumns} data={shipped} />
+          <DataTable columns={shippedColumns} data={shipped} onRowClick={(r) => setDetail(r)} />
         </div>
+      )}
+
+      {detail && (
+        <Modal title={detail.so_number} onClose={() => setDetail(null)}
+          footer={<button className="btn" onClick={() => setDetail(null)}>Close</button>}
+        >
+          <div className="detail-grid">
+            <span className="detail-label">Customer</span><span>{detail.customer_name || '-'}</span>
+            <span className="detail-label">Phone</span><span>{detail.customer_phone || '-'}</span>
+            <span className="detail-label">Address</span><span>{detail.customer_address || detail.ship_address || '-'}</span>
+            <span className="detail-label">Status</span><span><StatusTag status={detail.status} /></span>
+            <span className="detail-label">Ship Method</span><span>{detail.ship_method || '-'}</span>
+            <span className="detail-label">Carrier</span><span>{detail.carrier || '-'}</span>
+            <span className="detail-label">Tracking</span><span className="mono">{detail.tracking_number || '-'}</span>
+          </div>
+        </Modal>
       )}
     </div>
   );

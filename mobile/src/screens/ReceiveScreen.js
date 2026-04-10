@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Vibration, Alert, BackHandler, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, Vibration, Pressable, BackHandler, StyleSheet } from 'react-native';
 import ModeSelector from '../components/ModeSelector';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScanInput from '../components/ScanInput';
@@ -40,6 +40,12 @@ export default function ReceiveScreen({ navigation, route }) {
   const [allowOverReceiving, setAllowOverReceiving] = useState(true);
   // Track qty field focus to suppress scan input auto-refocus
   const [qtyFocused, setQtyFocused] = useState(false);
+  // Track items that have already shown over-receive warning (show only once per item)
+  const [overReceiveWarned, setOverReceiveWarned] = useState(new Set());
+  // Track receipt IDs created in this session for cancel/undo
+  const [sessionReceiptIds, setSessionReceiptIds] = useState([]);
+  // Modal state for replacing Alert.alert
+  const [confirmModal, setConfirmModal] = useState({ visible: false, title: '', message: '', onConfirm: null, confirmText: 'OK', cancelText: 'Cancel' });
 
   useEffect(() => {
     AsyncStorage.getItem(MODE_KEY).then((saved) => {
@@ -206,14 +212,21 @@ export default function ReceiveScreen({ navigation, route }) {
       return;
     }
     if (remaining <= 0 && allowOverReceiving) {
-      Alert.alert(
-        'Item Fully Received',
-        `${match.sku} is already fully received (${match.quantity_received}/${match.quantity_ordered}). Over-receive?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Continue', onPress: () => { setActiveItem(match); setQuantity('1'); } },
-        ]
-      );
+      if (!overReceiveWarned.has(match.item_id)) {
+        setOverReceiveWarned((prev) => new Set(prev).add(match.item_id));
+        setConfirmModal({
+          visible: true,
+          title: 'Item Fully Received',
+          message: `${match.sku} is already fully received (${match.quantity_received}/${match.quantity_ordered}). Over-receive?`,
+          confirmText: 'Continue',
+          cancelText: 'Cancel',
+          onConfirm: () => { setConfirmModal((p) => ({ ...p, visible: false })); setActiveItem(match); setQuantity('1'); },
+        });
+        return;
+      }
+      // Already warned — allow silently
+      setActiveItem(match);
+      setQuantity('1');
       return;
     }
     setActiveItem(match);
@@ -222,11 +235,16 @@ export default function ReceiveScreen({ navigation, route }) {
 
   const doReceiveStandard = async (qty) => {
     try {
-      await client.post('/api/receiving/receive', {
+      const resp = await client.post('/api/receiving/receive', {
         po_id: po.po_id,
         items: [{ item_id: activeItem.item_id, quantity: qty, bin_id: receivingBinId || activeItem.staging_bin_id || 1 }],
         warehouse_id: warehouseId,
       });
+
+      // Track receipt IDs for cancel/undo
+      if (resp.data?.receipt_ids) {
+        setSessionReceiptIds((prev) => [...prev, ...resp.data.receipt_ids]);
+      }
 
       await refreshPO();
       setActiveItem(null);
@@ -251,14 +269,14 @@ export default function ReceiveScreen({ navigation, route }) {
       }
       // Show warning but allow — EVERY time
       const overAmount = totalAfterReceive - activeItem.quantity_ordered;
-      Alert.alert(
-        'Over-Receiving',
-        `You are receiving ${overAmount} more than expected. Continue?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Continue', onPress: () => doReceiveStandard(qty) },
-        ]
-      );
+      setConfirmModal({
+        visible: true,
+        title: 'Over-Receiving',
+        message: `You are receiving ${overAmount} more than expected. Continue?`,
+        confirmText: 'Continue',
+        cancelText: 'Cancel',
+        onConfirm: () => { setConfirmModal((p) => ({ ...p, visible: false })); doReceiveStandard(qty); },
+      });
       return;
     }
 
@@ -284,11 +302,15 @@ export default function ReceiveScreen({ navigation, route }) {
     }
 
     try {
-      await client.post('/api/receiving/receive', {
+      const turboResp = await client.post('/api/receiving/receive', {
         po_id: po.po_id,
         items: [{ item_id: match.item_id, quantity: 1, bin_id: receivingBinId || match.staging_bin_id || 1 }],
         warehouse_id: warehouseId,
       });
+
+      if (turboResp.data?.receipt_ids) {
+        setSessionReceiptIds((prev) => [...prev, ...turboResp.data.receipt_ids]);
+      }
 
       const updatedLines = await refreshPO();
       const updatedMatch = updatedLines.find((l) => l.item_id === match.item_id);
@@ -318,19 +340,30 @@ export default function ReceiveScreen({ navigation, route }) {
   };
 
   const handleCancel = () => {
-    const hasReceived = lines.some((l) => l.quantity_received > 0);
-    if (!hasReceived) {
+    if (sessionReceiptIds.length === 0) {
       navigation.goBack();
       return;
     }
-    Alert.alert(
-      'Cancel Receiving',
-      'Items already received have been saved. You can resume this PO later.',
-      [
-        { text: 'Stay', style: 'cancel' },
-        { text: 'Exit', style: 'destructive', onPress: () => navigation.goBack() },
-      ]
-    );
+    setConfirmModal({
+      visible: true,
+      title: 'Cancel Receiving',
+      message: 'This will discard ALL items received in this session. Are you sure?',
+      confirmText: 'Discard & Exit',
+      cancelText: 'Stay',
+      onConfirm: async () => {
+        setConfirmModal((p) => ({ ...p, visible: false }));
+        try {
+          await client.post('/api/receiving/cancel', {
+            receipt_ids: sessionReceiptIds,
+            po_id: po?.po_id,
+            warehouse_id: warehouseId,
+          });
+        } catch {
+          // Best effort — still exit
+        }
+        navigation.goBack();
+      },
+    });
   };
 
   const resetAll = () => {
@@ -587,6 +620,30 @@ export default function ReceiveScreen({ navigation, route }) {
         </View>
       </Modal>
 
+      {/* Confirm modal (replaces Alert.alert) */}
+      <Modal visible={confirmModal.visible} transparent animationType="fade">
+        <Pressable style={styles.confirmOverlay} onPress={() => setConfirmModal((p) => ({ ...p, visible: false }))}>
+          <Pressable style={styles.confirmCard} onPress={() => {}}>
+            <Text style={styles.confirmTitle}>{confirmModal.title}</Text>
+            <Text style={styles.confirmMessage}>{confirmModal.message}</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+              <TouchableOpacity
+                style={[styles.confirmButton, { flex: 1 }]}
+                onPress={confirmModal.onConfirm}
+              >
+                <Text style={styles.confirmButtonText}>{confirmModal.confirmText}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmButton, { flex: 1, backgroundColor: colors.cardBorder }]}
+                onPress={() => setConfirmModal((p) => ({ ...p, visible: false }))}
+              >
+                <Text style={[styles.confirmButtonText, { color: colors.textPrimary }]}>{confirmModal.cancelText}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <ErrorPopup
         visible={!!error}
         message={error}
@@ -657,4 +714,20 @@ const styles = StyleSheet.create({
   },
   modeOptionLabel: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
   modeOptionDesc: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  // Confirm modal
+  confirmOverlay: {
+    flex: 1, backgroundColor: colors.overlay,
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  confirmCard: {
+    backgroundColor: colors.background, borderRadius: radii.card, padding: 20,
+    width: '90%', maxWidth: 340, borderWidth: 1, borderColor: colors.cardBorder,
+  },
+  confirmTitle: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
+  confirmMessage: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, lineHeight: 20 },
+  confirmButton: {
+    backgroundColor: colors.accentRed, borderRadius: radii.button,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  confirmButtonText: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '700', color: colors.cream, letterSpacing: 0.5 },
 });

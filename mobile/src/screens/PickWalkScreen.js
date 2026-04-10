@@ -46,6 +46,13 @@ export default function PickWalkScreen({ navigation, route }) {
       if (resp.data.message === 'All tasks complete') {
         setTask(null);
         setRoundComplete(true);
+        // Auto-submit the batch so user goes straight to the completion screen
+        try {
+          await client.post('/api/picking/complete-batch', { batch_id });
+        } catch {
+          // Batch may already be complete
+        }
+        setBatchComplete(true);
         return;
       }
       setTask(resp.data);
@@ -196,14 +203,6 @@ export default function PickWalkScreen({ navigation, route }) {
           >
             <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
-        </View>
-      ) : roundComplete ? (
-        <View style={styles.roundComplete}>
-          <Text style={styles.roundCompleteCheck}>{'\u2713'}</Text>
-          <Text style={styles.roundCompleteText}>Round Complete</Text>
-          <Text style={styles.roundCompleteDetail}>
-            {totalOrders} order{totalOrders !== 1 ? 's' : ''} ready for packing
-          </Text>
         </View>
       ) : !task ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>

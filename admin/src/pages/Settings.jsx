@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useBlocker } from 'react-router-dom';
 import { api } from '../api.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
@@ -53,13 +54,13 @@ export default function Settings() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [settingsSuccess, setSettingsSuccess] = useState('');
-  const [showLeaveWarning, setShowLeaveWarning] = useState(false);
-  const [pendingNavigation, setPendingNavigation] = useState(null);
-
   const [receivingBins, setReceivingBins] = useState([]);
   const fileRef = useRef(null);
 
   const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
+
+  // Block React Router navigation when there are unsaved changes
+  const blocker = useBlocker(hasUnsavedChanges);
 
   // Warn on browser navigation away with unsaved changes
   useEffect(() => {
@@ -466,13 +467,13 @@ export default function Settings() {
         </Modal>
       )}
 
-      {/* Leave without saving warning */}
-      {showLeaveWarning && (
-        <Modal title="Unsaved Changes" onClose={() => { setShowLeaveWarning(false); setPendingNavigation(null); }}
+      {/* Leave without saving warning (triggered by React Router navigation) */}
+      {blocker.state === 'blocked' && (
+        <Modal title="Unsaved Changes" onClose={() => blocker.reset()}
           footer={
             <>
-              <button className="btn" onClick={() => { setShowLeaveWarning(false); setPendingNavigation(null); }}>Stay</button>
-              <button className="btn btn-danger" onClick={() => { setShowLeaveWarning(false); if (pendingNavigation) pendingNavigation(); }}>Leave Without Saving</button>
+              <button className="btn" onClick={() => blocker.reset()}>Stay</button>
+              <button className="btn btn-danger" onClick={() => blocker.proceed()}>Leave Without Saving</button>
             </>
           }
         >

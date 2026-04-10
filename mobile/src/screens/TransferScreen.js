@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useScrollToTop } from '@react-navigation/native';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ScreenHeader from '../components/ScreenHeader';
@@ -12,6 +13,8 @@ const STEPS = ['SCAN ITEM', 'SCAN FROM BIN', 'SCAN TO BIN'];
 
 export default function TransferScreen({ navigation }) {
   const { warehouseId } = useAuth();
+  const scrollRef = React.useRef(null);
+  useScrollToTop(scrollRef);
   const [step, setStep] = useState(0);
   const [item, setItem] = useState(null);
   const [locations, setLocations] = useState([]);
@@ -108,7 +111,7 @@ export default function TransferScreen({ navigation }) {
     <View style={screenStyles.screen}>
       <ScreenHeader title="TRANSFER" onBack={() => navigation.goBack()} />
 
-      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {success ? (
           <View style={styles.successSection}>
             <Text style={styles.successText}>Transfer complete</Text>

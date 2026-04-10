@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
+import { useScrollToTop } from '@react-navigation/native';
 import { View, Text, TouchableOpacity, ScrollView, TextInput, Modal, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ErrorPopup from '../components/ErrorPopup';
@@ -11,6 +12,8 @@ import { colors, fonts, radii, screenStyles, buttonStyles, modalStyles, listStyl
 
 export default function PutAwayScreen({ navigation }) {
   const { warehouseId } = useAuth();
+  const scrollRef = React.useRef(null);
+  useScrollToTop(scrollRef);
 
   // Phase: 'load' → 'process' → 'done'
   const [phase, setPhase] = useState('load');
@@ -195,10 +198,16 @@ export default function PutAwayScreen({ navigation }) {
         quantity: qty,
       }]);
 
-      // Remove from queue
+      // Update remaining qty in queue (don't remove until fully shelved)
       const putAwayItemId = activeItem.item_id;
       const putAwayFromBin = activeItem.from_bin_id;
-      setQueue((prev) => prev.filter((q) => !(q.item_id === putAwayItemId && q.from_bin_id === putAwayFromBin)));
+      setQueue((prev) => prev.map((q) => {
+        if (q.item_id === putAwayItemId && q.from_bin_id === putAwayFromBin) {
+          const remaining = q.quantity - qty;
+          return { ...q, quantity: remaining, fullyPutAway: remaining <= 0 };
+        }
+        return q;
+      }));
 
       // Check preferred bin
       const matchesPreferred = preferredBin && scannedBin.bin_id === preferredBin.bin_id;
@@ -323,7 +332,7 @@ export default function PutAwayScreen({ navigation }) {
         <>
           {/* Active item detail — scrollable for small screens */}
           {activeItem ? (
-            <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
+            <ScrollView ref={scrollRef} style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
               <ScanInput
                 placeholder="SCAN DESTINATION BIN"
                 onScan={handleProcessScan}
@@ -403,16 +412,20 @@ export default function PutAwayScreen({ navigation }) {
                   pageSize={20}
                   renderItem={(entry) => (
                     <TouchableOpacity
-                      style={[listStyles.row, { padding: 14 }]}
-                      onPress={() => selectItem(entry)}
-                      activeOpacity={0.7}
+                      style={[listStyles.row, { padding: 14 }, entry.fullyPutAway && { borderColor: colors.success }]}
+                      onPress={() => !entry.fullyPutAway && selectItem(entry)}
+                      activeOpacity={entry.fullyPutAway ? 1 : 0.7}
+                      disabled={entry.fullyPutAway}
                     >
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.queueSku}>{entry.sku}</Text>
+                        <Text style={[styles.queueSku, entry.fullyPutAway && { color: colors.success }]}>{entry.sku}</Text>
                         <Text style={styles.queueDetail}>
-                          {entry.item_name} {'\u00b7'} QTY: {entry.quantity} {'\u00b7'} from {entry.from_bin_code}
+                          {entry.item_name} {'\u00b7'} QTY: {entry.fullyPutAway ? 0 : entry.quantity} {'\u00b7'} from {entry.from_bin_code}
                         </Text>
                       </View>
+                      {entry.fullyPutAway && (
+                        <Text style={{ fontSize: 18, color: colors.success }}>{'\u2713'}</Text>
+                      )}
                     </TouchableOpacity>
                   )}
                 />
@@ -421,15 +434,21 @@ export default function PutAwayScreen({ navigation }) {
           )}
 
           <View style={screenStyles.bottomBar}>
-            <TouchableOpacity
-              style={[buttonStyles.buttonPrimary, { flex: 1 }, queue.length > 0 && buttonStyles.buttonDisabled]}
-              onPress={() => { if (queue.length === 0) setPhase('done'); }}
-              disabled={queue.length > 0}
-            >
-              <Text style={buttonStyles.buttonPrimaryText}>
-                {queue.length === 0 ? 'FINISH' : `${queue.length} REMAINING`}
-              </Text>
-            </TouchableOpacity>
+            {(() => {
+              const remaining = queue.filter((q) => !q.fullyPutAway);
+              const allDone = remaining.length === 0;
+              return (
+                <TouchableOpacity
+                  style={[buttonStyles.buttonPrimary, { flex: 1 }, !allDone && buttonStyles.buttonDisabled]}
+                  onPress={() => { if (allDone) setPhase('done'); }}
+                  disabled={!allDone}
+                >
+                  <Text style={buttonStyles.buttonPrimaryText}>
+                    {allDone ? 'FINISH' : `${remaining.length} REMAINING`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })()}
           </View>
         </>
       )}

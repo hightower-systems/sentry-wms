@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { colors, fonts } from '../theme/styles';
 
 export default function PagedList({ items, pageSize = 20, renderItem }) {
@@ -10,11 +10,11 @@ export default function PagedList({ items, pageSize = 20, renderItem }) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.list}>
+      <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
         {pageItems.map((item, index) => (
           <View key={index}>{renderItem(item, start + index)}</View>
         ))}
-      </View>
+      </ScrollView>
       {totalPages > 1 && (
         <View style={styles.pager}>
           <TouchableOpacity

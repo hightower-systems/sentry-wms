@@ -76,7 +76,7 @@ export default function Items() {
       item_name: form.item_name,
       upc: form.upc || null,
       category: form.category || null,
-      weight: form.weight ? Number(form.weight) : null,
+      weight_lbs: (form.weight_lbs || form.weight) ? Number(form.weight_lbs || form.weight) : null,
       default_bin_id: form.default_bin_id ? Number(form.default_bin_id) : null,
     };
     const res = editId
@@ -92,15 +92,23 @@ export default function Items() {
     }
   }
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+
   async function deleteItem(id) {
-    if (!confirm('Are you sure? This permanently deletes the item.')) return;
+    setShowDeleteConfirm(id);
+  }
+
+  async function confirmDeleteItem() {
+    const id = showDeleteConfirm;
+    setShowDeleteConfirm(null);
     const res = await api.delete(`/admin/items/${id}`);
     if (res?.ok) {
       setDetail(null);
+      setShowModal(false);
       loadItems();
     } else {
       const data = await res?.json();
-      alert(data?.error || 'Failed to delete item');
+      setError(data?.error || 'Failed to delete item');
     }
   }
 
@@ -111,7 +119,7 @@ export default function Items() {
       loadItems();
     } else {
       const data = await res?.json();
-      alert(data?.error || 'Failed to update item');
+      setError(data?.error || 'Failed to update item');
     }
   }
 
@@ -156,15 +164,7 @@ export default function Items() {
 
       {detail && !showModal && (
         <Modal title={detail.item_name || detail.sku} onClose={() => setDetail(null)}
-          footer={
-            <>
-              <button className="btn btn-danger" onClick={() => deleteItem(detail.id)}>Delete</button>
-              <button className="btn" onClick={() => toggleArchive(detail)}>
-                {detail.is_active ? 'Archive' : 'Restore'}
-              </button>
-              <button className="btn" onClick={() => { openEdit(detail); setDetail(null); }}>Edit</button>
-            </>
-          }
+          footer={<button className="btn" onClick={() => setDetail(null)}>Close</button>}
         >
           <div className="detail-grid">
             <span className="detail-label">SKU</span><span className="mono">{detail.sku}</span>
@@ -195,10 +195,22 @@ export default function Items() {
       {showModal && (
         <Modal title={editId ? 'Edit Item' : 'New Item'} onClose={() => setShowModal(false)}
           footer={
-            <>
-              <button className="btn" onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={save}>Save</button>
-            </>
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {editId && (
+                  <>
+                    <button className="btn btn-danger btn-sm" onClick={() => deleteItem(editId)}>Delete</button>
+                    <button className="btn btn-sm" onClick={() => toggleArchive(form)}>
+                      {form.is_active ? 'Archive' : 'Restore'}
+                    </button>
+                  </>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button className="btn" onClick={() => setShowModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={save}>Save</button>
+              </div>
+            </div>
           }
         >
           {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -226,6 +238,20 @@ export default function Items() {
               <input className="form-input" type="number" step="0.01" value={form.weight_lbs ?? form.weight ?? ''} onChange={(e) => setForm({ ...form, weight_lbs: e.target.value, weight: e.target.value })} />
             </div>
           </div>
+        </Modal>
+      )}
+
+      {showDeleteConfirm && (
+        <Modal title="Delete Item" onClose={() => setShowDeleteConfirm(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setShowDeleteConfirm(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={confirmDeleteItem}>Delete</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 14, marginBottom: 8 }}>Are you sure? This action cannot be undone.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>The item and all associated data will be permanently deleted.</p>
         </Modal>
       )}
     </div>

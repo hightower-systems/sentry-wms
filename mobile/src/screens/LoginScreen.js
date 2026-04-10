@@ -120,7 +120,7 @@ export default function LoginScreen() {
             setShowServerConfig(!showServerConfig);
           }}
         >
-          <Text style={styles.version}>v0.9.6</Text>
+          <Text style={styles.version}>v0.9.7</Text>
         </TouchableOpacity>
 
         {showServerConfig && (
@@ -273,7 +273,9 @@ const styles = StyleSheet.create({
   versionBtn: {
     position: 'absolute',
     bottom: 24,
-    alignSelf: 'center',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
     padding: 8,
   },
   version: {

@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.9.5-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-261%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-0.9.7-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-277%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
 
   <img src="docs/assets/sentry-preview.png" alt="Sentry WMS Screenshots" width="100%">
@@ -108,6 +108,7 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 |--------|----------|-------------|
 | GET | `/api/receiving/po/<barcode>` | Scan PO → lines with expected items |
 | POST | `/api/receiving/receive` | Submit received items to staging bin |
+| POST | `/api/receiving/cancel` | Undo receipts by receipt_ids (reverses inventory + PO lines) |
 
 ### Put-Away
 | Method | Endpoint | Description |
@@ -184,7 +185,7 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 | GET | `/api/admin/users` | List users |
 | POST | `/api/admin/users` | Create user |
 | PUT | `/api/admin/users/<id>` | Update user |
-| DELETE | `/api/admin/users/<id>` | Deactivate user (soft delete) |
+| DELETE | `/api/admin/users/<id>` | Delete user (hard delete) |
 | GET | `/api/admin/audit-log` | Audit log (paginated, filterable) |
 | GET | `/api/admin/inventory` | Inventory overview (paginated) |
 | POST | `/api/admin/import/<type>` | Bulk import items or bins |
@@ -214,7 +215,7 @@ The apartment lab seed (`db/seed-apartment-lab.sql`) matches 61 printed Zebra ba
 
 ### Testing
 
-261 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~4.3 seconds.
+277 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~4.5 seconds.
 
 ```bash
 docker compose exec api python -m pytest tests/ -v --tb=short
@@ -241,6 +242,8 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.9.3 | UI revamp — tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
 | v0.9.4 | Structural refactor — service layer, admin split, shared styles/hooks | ✅ Complete |
 | v0.9.5 | Scan hardening, cycle count approval, admin UX overhaul, CSV templates | ✅ Complete |
+| v0.9.6 | Scan hardening, put-away reorder, manual picking, role simplification | ✅ Complete |
+| v0.9.7 | 27-bug hardware test fix (repeat offenders, styled modals, EAS build) | ✅ Complete |
 | v1.0.0 | Production release — hardware tested, full warehouse workflow | Planned |
 | v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
 
@@ -254,4 +257,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.5
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.7

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useScrollToTop } from '@react-navigation/native';
 import { View, Text, TouchableOpacity, TextInput, ScrollView, Modal, Pressable, StyleSheet } from 'react-native';
 import ScanInput from '../components/ScanInput';
 import ScreenHeader from '../components/ScreenHeader';
@@ -8,6 +9,8 @@ import client from '../api/client';
 import { colors, fonts, radii, screenStyles, buttonStyles, modalStyles } from '../theme/styles';
 
 export default function ShipScreen({ navigation, route }) {
+  const scrollRef = React.useRef(null);
+  useScrollToTop(scrollRef);
   const [order, setOrder] = useState(null);
   const [lines, setLines] = useState([]);
   const [totalItems, setTotalItems] = useState(0);
@@ -86,7 +89,7 @@ export default function ShipScreen({ navigation, route }) {
     <View style={screenStyles.screen}>
       <ScreenHeader title="SHIP" onBack={() => navigation.goBack()} />
 
-      <ScrollView style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
         {phase === 'scan_order' && (
           <ScanInput placeholder="SCAN ORDER" onScan={handleScanOrder} disabled={scanDisabled} />
         )}

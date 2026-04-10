@@ -6,11 +6,26 @@ const API_URL_KEY = 'sentry_api_url';
 
 // Runtime-configurable API URL (cached in memory after first load)
 let _cachedApiUrl = null;
+let _initPromise = null;
+
+/**
+ * Pre-load the API URL from AsyncStorage before any API calls.
+ * Call this once at app startup and await it.
+ */
+export async function initApiUrl() {
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    const stored = await AsyncStorage.getItem(API_URL_KEY).catch(() => null);
+    _cachedApiUrl = stored || DEFAULT_API_URL;
+    console.log('[API_DEBUG] initApiUrl resolved:', _cachedApiUrl);
+  })();
+  return _initPromise;
+}
 
 async function getApiUrl() {
   if (_cachedApiUrl) return _cachedApiUrl;
-  const stored = await AsyncStorage.getItem(API_URL_KEY).catch(() => null);
-  _cachedApiUrl = stored || DEFAULT_API_URL;
+  // Ensure init has run
+  await initApiUrl();
   return _cachedApiUrl;
 }
 
