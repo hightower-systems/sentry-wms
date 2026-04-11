@@ -1,18 +1,20 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 import Modal from '../components/Modal.jsx';
 
 export default function Shipping() {
+  const { warehouseId } = useWarehouse();
   const [orders, setOrders] = useState([]);
   const [shipped, setShipped] = useState([]);
   const [detail, setDetail] = useState(null);
 
   useEffect(() => {
+    if (!warehouseId) return;
     async function load() {
-      // Fetch packing toggle to determine which statuses are "ready to ship"
       let requirePacking = true;
       try {
         const settingRes = await api.get('/admin/settings/require_packing_before_shipping');
@@ -24,7 +26,7 @@ export default function Shipping() {
 
       const statuses = requirePacking ? ['PACKED'] : ['PICKED', 'PACKED'];
       const fetches = statuses.map((s) =>
-        api.get(`/admin/sales-orders?status=${s}&warehouse_id=1&per_page=50`)
+        api.get(`/admin/sales-orders?status=${s}&warehouse_id=${warehouseId}&per_page=50`)
       );
       const results = await Promise.all(fetches);
       const all = [];
@@ -36,14 +38,14 @@ export default function Shipping() {
       }
       setOrders(all);
 
-      const shippedRes = await api.get('/admin/sales-orders?status=SHIPPED&warehouse_id=1&per_page=20');
+      const shippedRes = await api.get(`/admin/sales-orders?status=SHIPPED&warehouse_id=${warehouseId}&per_page=20`);
       if (shippedRes?.ok) {
         const data = await shippedRes.json();
         setShipped(data.sales_orders || []);
       }
     }
     load();
-  }, []);
+  }, [warehouseId]);
 
   const columns = [
     { key: 'so_number', label: 'SO Number', mono: true },

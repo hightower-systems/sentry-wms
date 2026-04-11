@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react';
 import { api } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
+import Modal from '../components/Modal.jsx';
 
 export default function AuditLog() {
   const [logs, setLogs] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ action_type: '', user_id: '', start_date: '', end_date: '' });
+  const [selected, setSelected] = useState(null);
 
   useEffect(() => { loadLogs(); }, [page, filters]);
 
@@ -62,7 +64,30 @@ export default function AuditLog() {
         <input className="form-input" type="date" value={filters.start_date} onChange={(e) => updateFilter('start_date', e.target.value)} />
         <input className="form-input" type="date" value={filters.end_date} onChange={(e) => updateFilter('end_date', e.target.value)} />
       </div>
-      <DataTable columns={columns} data={logs} pagination={pagination} onPageChange={setPage} emptyMessage="No audit log entries" />
+      <DataTable columns={columns} data={logs} pagination={pagination} onPageChange={setPage} emptyMessage="No audit log entries" onRowClick={setSelected} />
+
+      {selected && (
+        <Modal title="Audit Log Detail" onClose={() => setSelected(null)}>
+          <div className="detail-grid">
+            <span className="detail-label">Timestamp</span><span className="mono">{new Date(selected.created_at).toLocaleString()}</span>
+            <span className="detail-label">Action</span><span>{selected.action_type}</span>
+            <span className="detail-label">Entity</span><span>{selected.entity_type}{selected.entity_name ? `: ${selected.entity_name}` : ''} (ID: {selected.entity_id})</span>
+            <span className="detail-label">User</span><span>{selected.username}</span>
+            {selected.device_id && <><span className="detail-label">Device</span><span>{selected.device_id}</span></>}
+            {selected.warehouse_code && <><span className="detail-label">Warehouse</span><span className="mono">{selected.warehouse_code}</span></>}
+          </div>
+          {selected.details && (
+            <div style={{ marginTop: 16 }}>
+              <h4 style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Event Details</h4>
+              <div className="detail-grid">
+                {Object.entries(typeof selected.details === 'string' ? JSON.parse(selected.details) : selected.details).map(([k, v]) => (
+                  <><span key={`${k}-l`} className="detail-label">{k}</span><span key={`${k}-v`} className="mono">{String(v)}</span></>
+                ))}
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

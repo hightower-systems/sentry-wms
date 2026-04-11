@@ -31,7 +31,7 @@ async function getApiUrl() {
 
 /**
  * Set API URL at runtime (from settings screen).
- * Takes effect immediately — no app restart needed.
+ * Takes effect immediately  -  no app restart needed.
  */
 export async function setApiUrl(url) {
   const trimmed = url.replace(/\/+$/, '').trim();

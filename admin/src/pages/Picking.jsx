@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 import Modal from '../components/Modal.jsx';
 
 export default function Picking() {
+  const { warehouseId } = useWarehouse();
   const [orders, setOrders] = useState([]);
   const [detail, setDetail] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -15,12 +17,12 @@ export default function Picking() {
   const [warehouses, setWarehouses] = useState([]);
   const [error, setError] = useState('');
 
-  useEffect(() => { loadOrders(); }, []);
+  useEffect(() => { if (warehouseId) loadOrders(); }, [warehouseId]);
 
   async function loadOrders() {
     const responses = await Promise.all([
-      api.get('/admin/sales-orders?status=OPEN&warehouse_id=1&per_page=50'),
-      api.get('/admin/sales-orders?status=ALLOCATED&warehouse_id=1&per_page=50'),
+      api.get(`/admin/sales-orders?status=OPEN&warehouse_id=${warehouseId}&per_page=50`),
+      api.get(`/admin/sales-orders?status=ALLOCATED&warehouse_id=${warehouseId}&per_page=50`),
     ]);
     const all = [];
     for (const res of responses) {

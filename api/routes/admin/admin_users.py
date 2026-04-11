@@ -6,9 +6,16 @@ import bcrypt
 from flask import g, jsonify, request
 from sqlalchemy import text
 
+from constants import (
+    PO_OPEN, PO_PARTIAL, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED,
+    ADJ_PENDING, ADJ_APPROVED, ADJ_REJECTED,
+    BIN_STAGING, ACTION_ADJUST,
+)
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import VALID_ROLES, admin_bp
+from services.audit_service import write_audit_log
+from services.inventory_service import add_inventory
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -94,8 +101,9 @@ def update_user(user_id):
     if not existing:
         return jsonify({"error": "User not found"}), 404
 
+    ALLOWED_FIELDS = {"full_name", "role", "warehouse_id", "is_active"}
     fields, params = [], {"uid": user_id}
-    for col in ("full_name", "role", "warehouse_id", "is_active"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
@@ -284,29 +292,29 @@ def dashboard():
     wh_filter = "AND warehouse_id = :wid" if warehouse_id else ""
     wh_params = {"wid": warehouse_id} if warehouse_id else {}
 
-    open_pos = g.db.execute(text(f"SELECT COUNT(*) FROM purchase_orders WHERE status IN ('OPEN', 'PARTIAL') {wh_filter}"), wh_params).scalar()
+    open_pos = g.db.execute(text(f"SELECT COUNT(*) FROM purchase_orders WHERE status IN ('{PO_OPEN}', '{PO_PARTIAL}') {wh_filter}"), wh_params).scalar()
 
     pending_receipts = g.db.execute(
-        text(f"SELECT COALESCE(SUM(pol.quantity_ordered - pol.quantity_received), 0) FROM purchase_order_lines pol JOIN purchase_orders po ON po.po_id = pol.po_id WHERE po.status IN ('OPEN', 'PARTIAL') {wh_filter.replace('warehouse_id', 'po.warehouse_id')}"),
+        text(f"SELECT COALESCE(SUM(pol.quantity_ordered - pol.quantity_received), 0) FROM purchase_order_lines pol JOIN purchase_orders po ON po.po_id = pol.po_id WHERE po.status IN ('{PO_OPEN}', '{PO_PARTIAL}') {wh_filter.replace('warehouse_id', 'po.warehouse_id')}"),
         wh_params,
     ).scalar()
 
     items_awaiting_putaway = g.db.execute(
-        text(f"SELECT COALESCE(SUM(inv.quantity_on_hand), 0) FROM inventory inv JOIN bins b ON b.bin_id = inv.bin_id WHERE b.bin_type = 'Staging' {wh_filter.replace('warehouse_id', 'inv.warehouse_id')}"),
+        text(f"SELECT COALESCE(SUM(inv.quantity_on_hand), 0) FROM inventory inv JOIN bins b ON b.bin_id = inv.bin_id WHERE b.bin_type = '{BIN_STAGING}' {wh_filter.replace('warehouse_id', 'inv.warehouse_id')}"),
         wh_params,
     ).scalar()
 
-    open_sos = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'OPEN' {wh_filter}"), wh_params).scalar()
-    ready_to_pick = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN ('OPEN') {wh_filter}"), wh_params).scalar()
-    in_picking = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKING' {wh_filter}"), wh_params).scalar()
+    open_sos = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_OPEN}' {wh_filter}"), wh_params).scalar()
+    ready_to_pick = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN ('{SO_OPEN}') {wh_filter}"), wh_params).scalar()
+    in_picking = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PICKING}' {wh_filter}"), wh_params).scalar()
     # Toggle-aware pack/ship counts
     packing_row = g.db.execute(
         text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")
     ).fetchone()
     require_packing = not packing_row or packing_row.value != "false"
 
-    picked_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PICKED' {wh_filter}"), wh_params).scalar()
-    packed_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'PACKED' {wh_filter}"), wh_params).scalar()
+    picked_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PICKED}' {wh_filter}"), wh_params).scalar()
+    packed_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PACKED}' {wh_filter}"), wh_params).scalar()
 
     if require_packing:
         ready_to_pack = picked_count
@@ -346,7 +354,7 @@ def dashboard():
 
     # Pending adjustments count
     pending_adjustments = g.db.execute(
-        text("SELECT COUNT(*) FROM inventory_adjustments WHERE status = 'PENDING'")
+        text(f"SELECT COUNT(*) FROM inventory_adjustments WHERE status = '{ADJ_PENDING}'")
     ).scalar()
 
     result = {
@@ -419,7 +427,7 @@ def update_settings():
     # Toggle protection: reject disabling packing when PACKED orders exist
     if data["settings"].get("require_packing_before_shipping") == "false":
         packed_count = g.db.execute(
-            text("SELECT COUNT(*) FROM sales_orders WHERE status = 'PACKED'")
+            text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PACKED}'")
         ).scalar()
         if packed_count > 0:
             return jsonify({
@@ -510,7 +518,7 @@ def list_cycle_counts():
 def list_pending_adjustments():
     """Return pending inventory adjustments grouped by cycle count."""
     rows = g.db.execute(
-        text("""
+        text(f"""
             SELECT ia.adjustment_id, ia.item_id, ia.bin_id, ia.warehouse_id,
                    ia.quantity_change, ia.reason_code, ia.reason_detail,
                    ia.status, ia.adjusted_by, ia.adjusted_at, ia.cycle_count_id,
@@ -518,7 +526,7 @@ def list_pending_adjustments():
             FROM inventory_adjustments ia
             JOIN items i ON i.item_id = ia.item_id
             JOIN bins b ON b.bin_id = ia.bin_id
-            WHERE ia.status = 'PENDING'
+            WHERE ia.status = '{ADJ_PENDING}'
             ORDER BY ia.cycle_count_id, ia.adjustment_id
         """)
     ).fetchall()
@@ -571,7 +579,7 @@ def review_adjustments():
             {"aid": adj_id},
         ).fetchone()
 
-        if not row or row.status != "PENDING":
+        if not row or row.status != ADJ_PENDING:
             continue
 
         if action == "approve":
@@ -594,16 +602,191 @@ def review_adjustments():
                 )
 
             g.db.execute(
-                text("UPDATE inventory_adjustments SET status = 'APPROVED' WHERE adjustment_id = :aid"),
+                text(f"UPDATE inventory_adjustments SET status = '{ADJ_APPROVED}' WHERE adjustment_id = :aid"),
                 {"aid": adj_id},
             )
             approved += 1
         else:
             g.db.execute(
-                text("UPDATE inventory_adjustments SET status = 'REJECTED' WHERE adjustment_id = :aid"),
+                text(f"UPDATE inventory_adjustments SET status = '{ADJ_REJECTED}' WHERE adjustment_id = :aid"),
                 {"aid": adj_id},
             )
             rejected += 1
 
     g.db.commit()
     return jsonify({"approved": approved, "rejected": rejected})
+
+
+# ── Direct Inventory Adjustments ─────────────────────────────────────────────
+
+@admin_bp.route("/adjustments/direct", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def direct_adjustment():
+    """Create and auto-approve an inventory adjustment (ADD or REMOVE)."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    required = ("item_id", "bin_id", "warehouse_id", "adjustment_type", "quantity", "reason")
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+
+    adjustment_type = data["adjustment_type"].upper()
+    if adjustment_type not in ("ADD", "REMOVE"):
+        return jsonify({"error": "adjustment_type must be ADD or REMOVE"}), 400
+
+    item_id = data["item_id"]
+    bin_id = data["bin_id"]
+    warehouse_id = data["warehouse_id"]
+    quantity = int(data["quantity"])
+    reason = data["reason"]
+
+    if quantity <= 0:
+        return jsonify({"error": "quantity must be greater than 0"}), 400
+
+    # Validate item exists
+    item = g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
+    if not item:
+        return jsonify({"error": "Item not found"}), 404
+
+    # Validate bin exists and belongs to warehouse
+    bin_row = g.db.execute(
+        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
+        {"bid": bin_id, "wid": warehouse_id},
+    ).fetchone()
+    if not bin_row:
+        return jsonify({"error": "Bin not found in the specified warehouse"}), 404
+
+    if adjustment_type == "ADD":
+        quantity_change = quantity
+        add_inventory(g.db, item_id, bin_id, warehouse_id, quantity)
+    else:
+        # REMOVE  -  validate sufficient stock
+        inv = g.db.execute(
+            text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid"),
+            {"iid": item_id, "bid": bin_id},
+        ).fetchone()
+        available = inv.quantity_on_hand if inv else 0
+        if available < quantity:
+            return jsonify({"error": f"Insufficient inventory. Available: {available}"}), 400
+
+        quantity_change = -quantity
+        new_qty = available - quantity
+        if new_qty == 0:
+            g.db.execute(text("DELETE FROM inventory WHERE inventory_id = :inv_id"), {"inv_id": inv.inventory_id})
+        else:
+            g.db.execute(
+                text("UPDATE inventory SET quantity_on_hand = :qty, updated_at = NOW() WHERE inventory_id = :inv_id"),
+                {"qty": new_qty, "inv_id": inv.inventory_id},
+            )
+
+    # Create adjustment record as APPROVED
+    adj = g.db.execute(
+        text("""
+            INSERT INTO inventory_adjustments (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, adjusted_at)
+            VALUES (:iid, :bid, :wid, :qty_change, :reason_code, :reason_detail, :status, :user_id, NOW())
+            RETURNING adjustment_id, adjusted_at
+        """),
+        {
+            "iid": item_id, "bid": bin_id, "wid": warehouse_id,
+            "qty_change": quantity_change,
+            "reason_code": "DIRECT_ADJUSTMENT",
+            "reason_detail": reason,
+            "status": ADJ_APPROVED,
+            "user_id": g.current_user["user_id"],
+        },
+    ).fetchone()
+
+    write_audit_log(
+        g.db, ACTION_ADJUST, "ITEM", item_id,
+        user_id=g.current_user["user_id"],
+        warehouse_id=warehouse_id,
+        details={
+            "adjustment_id": adj.adjustment_id,
+            "adjustment_type": adjustment_type,
+            "bin_id": bin_id,
+            "quantity": quantity,
+            "reason": reason,
+        },
+    )
+
+    g.db.commit()
+    return jsonify({
+        "adjustment_id": adj.adjustment_id,
+        "item_id": item_id,
+        "sku": item.sku,
+        "bin_id": bin_id,
+        "bin_code": bin_row.bin_code,
+        "warehouse_id": warehouse_id,
+        "adjustment_type": adjustment_type,
+        "quantity_change": quantity_change,
+        "reason": reason,
+        "status": ADJ_APPROVED,
+        "adjusted_at": adj.adjusted_at.isoformat() if adj.adjusted_at else None,
+    }), 201
+
+
+@admin_bp.route("/adjustments/list", methods=["GET"])
+@require_auth
+@with_db
+def list_adjustments():
+    """Return recent inventory adjustments with item and bin details."""
+    warehouse_id = request.args.get("warehouse_id", type=int)
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+
+    where_clauses, params = [], {}
+    if warehouse_id:
+        where_clauses.append("ia.warehouse_id = :wid")
+        params["wid"] = warehouse_id
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    total = g.db.execute(
+        text(f"SELECT COUNT(*) FROM inventory_adjustments ia {where_sql}"), params,
+    ).scalar()
+    pages = max(1, math.ceil(total / per_page))
+
+    params["limit"] = per_page
+    params["offset"] = (page - 1) * per_page
+
+    rows = g.db.execute(
+        text(f"""
+            SELECT ia.adjustment_id, ia.item_id, ia.bin_id, ia.warehouse_id,
+                   ia.quantity_change, ia.reason_code, ia.reason_detail,
+                   ia.status, ia.adjusted_by, ia.adjusted_at, ia.cycle_count_id,
+                   i.sku, b.bin_code
+            FROM inventory_adjustments ia
+            JOIN items i ON i.item_id = ia.item_id
+            JOIN bins b ON b.bin_id = ia.bin_id
+            {where_sql}
+            ORDER BY ia.adjusted_at DESC
+            LIMIT :limit OFFSET :offset
+        """),
+        params,
+    ).fetchall()
+
+    return jsonify({
+        "adjustments": [
+            {
+                "adjustment_id": r.adjustment_id,
+                "item_id": r.item_id,
+                "sku": r.sku,
+                "bin_id": r.bin_id,
+                "bin_code": r.bin_code,
+                "warehouse_id": r.warehouse_id,
+                "quantity_change": r.quantity_change,
+                "reason_code": r.reason_code,
+                "reason_detail": r.reason_detail,
+                "status": r.status,
+                "adjusted_by": r.adjusted_by,
+                "adjusted_at": r.adjusted_at.isoformat() if r.adjusted_at else None,
+                "cycle_count_id": r.cycle_count_id,
+            }
+            for r in rows
+        ],
+        "total": total, "page": page, "per_page": per_page, "pages": pages,
+    })

@@ -226,15 +226,15 @@ export default function TransferScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  steps: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  steps: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   stepItem: { alignItems: 'center', flex: 1 },
-  stepDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.cardBorder, marginBottom: 4 },
+  stepDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.cardBorder, marginBottom: 2 },
   stepDotActive: { backgroundColor: colors.accentRed },
-  stepLabel: { fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted, letterSpacing: 0.3, textAlign: 'center' },
+  stepLabel: { fontFamily: fonts.mono, fontSize: 8, color: colors.textMuted, letterSpacing: 0.3, textAlign: 'center' },
   stepLabelActive: { color: colors.accentRed, fontWeight: '700' },
   infoCard: {
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 12, marginBottom: 12,
+    padding: 8, marginBottom: 8,
   },
   infoCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   clearBtn: {
@@ -246,8 +246,8 @@ const styles = StyleSheet.create({
   locationText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 2 },
   binValue: { fontFamily: fonts.mono, fontSize: 16, fontWeight: '700', color: colors.textPrimary },
   available: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  successSection: { alignItems: 'center', paddingVertical: 32 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  successSection: { alignItems: 'center', paddingVertical: 24 },
   successText: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.success, marginBottom: 8 },
   successDetail: { fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, marginBottom: 24, textAlign: 'center' },
 });

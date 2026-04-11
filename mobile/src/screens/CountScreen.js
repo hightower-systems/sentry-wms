@@ -102,7 +102,7 @@ export default function CountScreen({ navigation }) {
     );
 
     if (index === -1) {
-      // Unexpected item — look up by barcode and add as new line
+      // Unexpected item  -  look up by barcode and add as new line
       try {
         const resp = await client.get(`/api/lookup/item/${encodeURIComponent(barcode)}`);
         if (!resp.data?.item) {
@@ -349,7 +349,7 @@ export default function CountScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  binHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  binHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   binHeader: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.textPrimary },
   modeBadge: {
     backgroundColor: colors.cardBorder, borderRadius: radii.badge,
@@ -360,7 +360,7 @@ const styles = StyleSheet.create({
 
   turboCard: {
     backgroundColor: '#f0f9f0', borderWidth: 1, borderColor: colors.success, borderRadius: radii.card,
-    padding: 12, marginBottom: 16, alignItems: 'center',
+    padding: 10, marginBottom: 10, alignItems: 'center',
   },
   turboText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.success },
 
@@ -369,7 +369,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary,
     borderWidth: 1, borderColor: colors.inputBorder, borderRadius: radii.input,
     backgroundColor: colors.inputBg,
-    paddingHorizontal: 8, paddingVertical: 6, width: 70, textAlign: 'center', minHeight: 48,
+    paddingHorizontal: 8, paddingVertical: 4, width: 70, textAlign: 'center', minHeight: 44,
   },
   countInputVariance: { borderColor: colors.copper, color: colors.copper },
   turboCount: {

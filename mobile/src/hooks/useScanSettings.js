@@ -1,5 +1,5 @@
 /**
- * Scan settings hook — manages scan mode (keyboard vs intent) and
+ * Scan settings hook  -  manages scan mode (keyboard vs intent) and
  * Chainway broadcast intent configuration.
  *
  * Persists to AsyncStorage so the setting survives app restarts.

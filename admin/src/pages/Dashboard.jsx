@@ -1,26 +1,29 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import Pipeline from '../components/Pipeline.jsx';
 import DataTable from '../components/DataTable.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 
 export default function Dashboard() {
+  const { warehouseId } = useWarehouse();
   const [stats, setStats] = useState(null);
   const [orders, setOrders] = useState([]);
   const [pos, setPos] = useState([]);
   const [shortPicks, setShortPicks] = useState([]);
 
   useEffect(() => {
-    api.get('/admin/dashboard?warehouse_id=1').then(async (res) => {
+    if (!warehouseId) return;
+    api.get(`/admin/dashboard?warehouse_id=${warehouseId}`).then(async (res) => {
       if (!res?.ok) return;
       setStats(await res.json());
     });
 
     Promise.all([
-      api.get('/admin/sales-orders?status=OPEN&warehouse_id=1&per_page=50'),
-      api.get('/admin/sales-orders?status=ALLOCATED&warehouse_id=1&per_page=50'),
-      api.get('/admin/sales-orders?status=PICKING&warehouse_id=1&per_page=50'),
+      api.get(`/admin/sales-orders?status=OPEN&warehouse_id=${warehouseId}&per_page=50`),
+      api.get(`/admin/sales-orders?status=ALLOCATED&warehouse_id=${warehouseId}&per_page=50`),
+      api.get(`/admin/sales-orders?status=PICKING&warehouse_id=${warehouseId}&per_page=50`),
     ]).then(async (responses) => {
       const all = [];
       for (const res of responses) {
@@ -32,7 +35,7 @@ export default function Dashboard() {
       setOrders(all);
     });
 
-    api.get('/admin/short-picks?warehouse_id=1&days=7').then(async (res) => {
+    api.get(`/admin/short-picks?warehouse_id=${warehouseId}&days=7`).then(async (res) => {
       if (res?.ok) {
         const data = await res.json();
         setShortPicks(data.short_picks || []);
@@ -40,8 +43,8 @@ export default function Dashboard() {
     }).catch(() => {});
 
     Promise.all([
-      api.get('/admin/purchase-orders?status=OPEN&warehouse_id=1&per_page=50'),
-      api.get('/admin/purchase-orders?status=PARTIAL&warehouse_id=1&per_page=50'),
+      api.get(`/admin/purchase-orders?status=OPEN&warehouse_id=${warehouseId}&per_page=50`),
+      api.get(`/admin/purchase-orders?status=PARTIAL&warehouse_id=${warehouseId}&per_page=50`),
     ]).then(async (responses) => {
       const all = [];
       for (const res of responses) {
@@ -52,7 +55,7 @@ export default function Dashboard() {
       }
       setPos(all);
     });
-  }, []);
+  }, [warehouseId]);
 
   const pipeline = stats
     ? [

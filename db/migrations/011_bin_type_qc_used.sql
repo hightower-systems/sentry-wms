@@ -2,9 +2,9 @@
 -- Migration 011: Bin Type Simplification
 -- ============================================================
 -- Replace 6 old bin types with 3 new ones:
---   Staging         — Inbound/QC, pick algorithm NEVER pulls from here
---   PickableStaging — Staging area pickers CAN pull from
---   Pickable        — Standard shelf/bulk/shipping bins
+--   Staging          -  Inbound/QC, pick algorithm NEVER pulls from here
+--   PickableStaging  -  Staging area pickers CAN pull from
+--   Pickable         -  Standard shelf/bulk/shipping bins
 -- ============================================================
 
 -- RECV bins: inbound staging → Staging

@@ -47,7 +47,7 @@ def me():
     else:
         functions = list(row.allowed_functions) if row.allowed_functions else []
 
-    # Check packing toggle — filter out "pack" when packing is disabled
+    # Check packing toggle  -  filter out "pack" when packing is disabled
     packing_row = g.db.execute(
         text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")
     ).fetchone()

@@ -10,6 +10,7 @@ from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 from services.inventory_service import move_inventory
+from constants import ACTION_PUTAWAY, BIN_STAGING
 
 putaway_bp = Blueprint("putaway", __name__)
 
@@ -20,14 +21,14 @@ putaway_bp = Blueprint("putaway", __name__)
 def pending_putaway(warehouse_id):
     rows = g.db.execute(
         text(
-            """
+            f"""
             SELECT inv.inventory_id, inv.item_id, i.sku, i.item_name, i.upc,
                    inv.quantity_on_hand AS quantity, inv.bin_id, b.bin_code,
                    inv.lot_number
             FROM inventory inv
             JOIN items i ON i.item_id = inv.item_id
             JOIN bins b ON b.bin_id = inv.bin_id
-            WHERE b.bin_type = 'Staging'
+            WHERE b.bin_type = '{BIN_STAGING}'
               AND inv.quantity_on_hand > 0
               AND inv.warehouse_id = :warehouse_id
             """
@@ -203,7 +204,7 @@ def confirm_putaway():
     # 4. Audit
     write_audit_log(
         g.db,
-        action_type="PUTAWAY",
+        action_type=ACTION_PUTAWAY,
         entity_type="ITEM",
         entity_id=item_id,
         user_id=username,

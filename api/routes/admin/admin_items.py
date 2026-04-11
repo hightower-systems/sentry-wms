@@ -179,14 +179,15 @@ def update_item(item_id):
     if not existing:
         return jsonify({"error": "Item not found"}), 404
 
+    ALLOWED_FIELDS = {"sku", "item_name", "description", "upc", "category", "weight_lbs", "default_bin_id", "reorder_point", "reorder_qty", "is_active"}
     fields, params = [], {"iid": item_id}
-    for col in ("sku", "item_name", "description", "upc", "category", "weight_lbs", "default_bin_id", "reorder_point", "reorder_qty", "is_active"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
     if not fields:
-        return jsonify({"error": "No fields to update"}), 400
+        return jsonify({"error": "No valid fields provided"}), 400
 
     fields.append("updated_at = NOW()")
     g.db.execute(text(f"UPDATE items SET {', '.join(fields)} WHERE item_id = :iid"), params)
@@ -251,7 +252,7 @@ def delete_item(item_id):
     if has_po:
         return jsonify({"error": "Cannot delete item with PO history. Use archive instead."}), 400
 
-    # Safe to hard delete — clean up related records first
+    # Safe to hard delete  -  clean up related records first
     g.db.execute(text("DELETE FROM preferred_bins WHERE item_id = :iid"), {"iid": item_id})
     g.db.execute(text("DELETE FROM cycle_count_lines WHERE item_id = :iid"), {"iid": item_id})
     g.db.execute(text("DELETE FROM inventory_adjustments WHERE item_id = :iid"), {"iid": item_id})

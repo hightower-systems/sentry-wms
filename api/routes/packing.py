@@ -8,6 +8,7 @@ from sqlalchemy import text
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.audit_service import write_audit_log
+from constants import SO_PICKED, SO_PACKED, ACTION_PACK
 
 packing_bp = Blueprint("packing", __name__)
 
@@ -32,7 +33,7 @@ def get_order(barcode):
     if not so:
         return jsonify({"error": "Order not found"}), 404
 
-    if so.status != "PICKED":
+    if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
     lines = g.db.execute(
@@ -115,7 +116,7 @@ def verify_item():
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-    if so.status != "PICKED":
+    if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
     # Find matching item on this SO by barcode
@@ -157,9 +158,9 @@ def verify_item():
 
     g.db.execute(
         text(
-            """
+            f"""
             UPDATE sales_order_lines
-            SET quantity_packed = :qty, status = CASE WHEN :qty >= quantity_picked THEN 'PACKED' ELSE status END
+            SET quantity_packed = :qty, status = CASE WHEN :qty >= quantity_picked THEN '{SO_PACKED}' ELSE status END
             WHERE so_line_id = :sol_id
             """
         ),
@@ -212,7 +213,7 @@ def complete_packing():
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-    if so.status != "PICKED":
+    if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
     # Check all lines verified
@@ -231,7 +232,7 @@ def complete_packing():
 
     # Update SO
     g.db.execute(
-        text("UPDATE sales_orders SET status = 'PACKED', packed_at = NOW() WHERE so_id = :so_id"),
+        text(f"UPDATE sales_orders SET status = '{SO_PACKED}', packed_at = NOW() WHERE so_id = :so_id"),
         {"so_id": so_id},
     )
 
@@ -251,7 +252,7 @@ def complete_packing():
 
     write_audit_log(
         g.db,
-        action_type="PACK",
+        action_type=ACTION_PACK,
         entity_type="SO",
         entity_id=so_id,
         user_id=g.current_user["username"],

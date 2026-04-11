@@ -62,17 +62,17 @@ INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, defau
 ('TST-002', 'Woolly Bugger Black (Sz 8)',     'Versatile streamer pattern',           '100000000002', 'Flies',       0.01, 4),
 ('TST-003', 'Adams Dry Fly (Sz 16)',          'All-purpose dry fly',                  '100000000003', 'Flies',       0.01, 5),
 ('TST-004', 'Pheasant Tail Nymph (Sz 12)',    'Classic nymph pattern',                '100000000004', 'Flies',       0.01, 6),
-('TST-005', 'Rio Gold Fly Line (5wt)',        'Premium weight-forward fly line',      '100000000005', 'Lines',       0.25, 7),
-('TST-006', 'Simms G3 Wading Boot',          'Premium felt-sole wading boot',        '100000000006', 'Footwear',    2.50, 8),
-('TST-007', 'SA Leader 9ft 5X',              'Scientific Anglers tapered leader',    '100000000007', 'Terminal',    0.02, 9),
-('TST-008', 'Orvis Clearwater Rod 9ft',      '5-weight 4-piece fly rod',             '100000000008', 'Rods',        3.00, 10),
-('TST-009', 'Umpqua Fly Box (Large)',         'Waterproof fly storage box',           '100000000009', 'Accessories', 0.30, 11),
-('TST-010', 'Loon UV Wader Repair',          'UV-cure wader patch kit',              '100000000010', 'Repair',      0.15, 11),
-('TST-011', 'Redington Classic Trout Rod',   '4-weight 4-piece rod',                 '100000000011', 'Rods',        2.80, 3),
-('TST-012', 'Rio InTouch Gold WF5F',         'Weight-forward floating line',         '100000000012', 'Lines',       0.25, 4),
-('TST-013', 'Simms Freestone Waders',        'Stockingfoot chest waders',            '100000000013', 'Waders',      3.50, 5),
-('TST-014', 'Orvis Mirage Reel (III)',       'Large arbor fly reel',                 '100000000014', 'Reels',       0.45, 6),
-('TST-015', 'Fishpond Thunderhead Sling',    'Waterproof sling pack',                '100000000015', 'Packs',       1.20, 7),
+('TST-005', 'Weight Forward Fly Line 5wt',    'Premium weight-forward fly line',      '100000000005', 'Lines',       0.25, 7),
+('TST-006', 'Felt Sole Wading Boot',         'Premium felt-sole wading boot',        '100000000006', 'Footwear',    2.50, 8),
+('TST-007', 'Tapered Leader 9ft 5X',         'Knotless tapered leader',              '100000000007', 'Terminal',    0.02, 9),
+('TST-008', '9ft 5wt Fly Rod',               '5-weight 4-piece fly rod',             '100000000008', 'Rods',        3.00, 10),
+('TST-009', 'Large Slim Fly Box',            'Waterproof fly storage box',           '100000000009', 'Accessories', 0.30, 11),
+('TST-010', 'UV Wader Repair Kit',           'UV-cure wader patch kit',              '100000000010', 'Repair',      0.15, 11),
+('TST-011', '4pc Trout Rod 9ft',             '4-weight 4-piece rod',                 '100000000011', 'Rods',        2.80, 3),
+('TST-012', 'Premium Fly Line WF5F',         'Weight-forward floating line',         '100000000012', 'Lines',       0.25, 4),
+('TST-013', 'Stockingfoot Chest Waders',     'Breathable stockingfoot waders',       '100000000013', 'Waders',      3.50, 5),
+('TST-014', 'Large Arbor Fly Reel',          'Large arbor fly reel',                 '100000000014', 'Reels',       0.45, 6),
+('TST-015', 'Waterproof Sling Pack',         'Waterproof sling pack',                '100000000015', 'Packs',       1.20, 7),
 ('TST-016', 'Hare''s Ear Nymph (Sz 14)',     'Classic bead-head nymph',              '100000000016', 'Flies',       0.01, 8),
 ('TST-017', 'Copper John (Sz 16)',           'Weighted nymph pattern',               '100000000017', 'Flies',       0.01, 9),
 ('TST-018', 'Parachute Adams (Sz 18)',       'High-visibility dry fly',              '100000000018', 'Flies',       0.01, 10),
@@ -189,9 +189,9 @@ INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehous
 
 INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES
 (1, 1, 2, 1),   -- SO-001: 2x Elk Hair Caddis
-(2, 5, 1, 1),   -- SO-002: 1x Rio Gold Fly Line
-(3, 8, 1, 1),   -- SO-003: 1x Orvis Clearwater Rod
-(4, 9, 1, 1),   -- SO-004: 1x Umpqua Fly Box
+(2, 5, 1, 1),   -- SO-002: 1x Fly Line
+(3, 8, 1, 1),   -- SO-003: 1x Fly Rod
+(4, 9, 1, 1),   -- SO-004: 1x Fly Box
 (5, 20, 5, 1);  -- SO-005: 5x San Juan Worm
 
 -- SO-2026-006 through 010: Multi-item orders
@@ -250,7 +250,7 @@ INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehous
 ('SO-2026-020', 'SO-2026-020', 'Test Customer 5', 'OPEN', 1, 'GROUND', NOW(), 'admin');
 
 INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES
--- SO-019: wants 99 of item with only 10 on hand (TST-006 Simms boots)
+-- SO-019: wants 99 of item with only 10 on hand (TST-006 wading boots)
 (19, 6, 99, 1),
 -- SO-020: wants 999 of item with only 200 on hand (TST-020 San Juan Worms)
 (20, 20, 999, 1);

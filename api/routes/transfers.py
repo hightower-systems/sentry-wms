@@ -5,6 +5,7 @@ Bin transfer endpoint: general-purpose bin-to-bin inventory moves.
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
+from constants import ACTION_TRANSFER
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.audit_service import write_audit_log
@@ -95,7 +96,7 @@ def move():
     # 4. Audit log
     write_audit_log(
         g.db,
-        action_type="TRANSFER",
+        action_type=ACTION_TRANSFER,
         entity_type="ITEM",
         entity_id=item_id,
         user_id=username,

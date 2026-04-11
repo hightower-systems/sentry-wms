@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
+from constants import (
+    PO_OPEN, PO_PARTIAL, PO_RECEIVED, PO_CLOSED,
+    POL_PENDING, POL_PARTIAL, POL_RECEIVED,
+    ACTION_RECEIVE, ACTION_RECEIVE_CANCEL,
+)
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.audit_service import write_audit_log
@@ -36,7 +41,7 @@ def lookup_po(barcode):
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
 
-    if po.status == "CLOSED":
+    if po.status == PO_CLOSED:
         return jsonify({"error": "Purchase order is closed"}), 400
 
     lines = g.db.execute(
@@ -106,7 +111,7 @@ def receive_items():
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
 
-    if po.status not in ("OPEN", "PARTIAL"):
+    if po.status not in (PO_OPEN, PO_PARTIAL):
         return jsonify({"error": f"Purchase order status is {po.status}, cannot receive"}), 400
 
     warehouse_id = po.warehouse_id
@@ -185,7 +190,7 @@ def receive_items():
 
         # 2 & 3. Update PO line quantity and status
         new_qty_received = po_line.quantity_received + quantity
-        new_line_status = "RECEIVED" if new_qty_received >= po_line.quantity_ordered else "PARTIAL"
+        new_line_status = POL_RECEIVED if new_qty_received >= po_line.quantity_ordered else POL_PARTIAL
         g.db.execute(
             text(
                 """
@@ -203,7 +208,7 @@ def receive_items():
         # 5. Audit log
         write_audit_log(
             g.db,
-            action_type="RECEIVE",
+            action_type=ACTION_RECEIVE,
             entity_type="PO",
             entity_id=po_id,
             user_id=username,
@@ -217,18 +222,18 @@ def receive_items():
         {"po_id": po_id},
     ).fetchall()
 
-    if all(l.status == "RECEIVED" for l in all_lines):
+    if all(l.status == POL_RECEIVED for l in all_lines):
         g.db.execute(
-            text("UPDATE purchase_orders SET status = 'RECEIVED', received_at = NOW() WHERE po_id = :po_id"),
+            text(f"UPDATE purchase_orders SET status = '{PO_RECEIVED}', received_at = NOW() WHERE po_id = :po_id"),
             {"po_id": po_id},
         )
-        po_status = "RECEIVED"
+        po_status = PO_RECEIVED
     else:
         g.db.execute(
-            text("UPDATE purchase_orders SET status = 'PARTIAL' WHERE po_id = :po_id"),
+            text(f"UPDATE purchase_orders SET status = '{PO_PARTIAL}' WHERE po_id = :po_id"),
             {"po_id": po_id},
         )
-        po_status = "PARTIAL"
+        po_status = PO_PARTIAL
 
     g.db.commit()
 
@@ -257,6 +262,11 @@ def cancel_receiving():
     username = g.current_user["username"]
     reversed_count = 0
 
+    # Collect PO IDs before deleting receipts
+    po_ids = set()
+    if data.get("po_id"):
+        po_ids.add(data["po_id"])
+
     for rid in receipt_ids:
         receipt = g.db.execute(
             text("SELECT receipt_id, po_id, po_line_id, item_id, quantity_received, bin_id, warehouse_id FROM item_receipts WHERE receipt_id = :rid"),
@@ -264,6 +274,8 @@ def cancel_receiving():
         ).fetchone()
         if not receipt:
             continue
+
+        po_ids.add(receipt.po_id)
 
         # 1. Reverse inventory
         g.db.execute(
@@ -276,12 +288,12 @@ def cancel_receiving():
 
         # 2. Reverse PO line quantity
         g.db.execute(
-            text("""
+            text(f"""
                 UPDATE purchase_order_lines
                 SET quantity_received = GREATEST(0, quantity_received - :qty),
-                    status = CASE WHEN GREATEST(0, quantity_received - :qty) = 0 THEN 'OPEN'
-                                  WHEN GREATEST(0, quantity_received - :qty) >= quantity_ordered THEN 'RECEIVED'
-                                  ELSE 'PARTIAL' END
+                    status = CASE WHEN GREATEST(0, quantity_received - :qty) = 0 THEN '{POL_PENDING}'
+                                  WHEN GREATEST(0, quantity_received - :qty) >= quantity_ordered THEN '{POL_RECEIVED}'
+                                  ELSE '{POL_PARTIAL}' END
                 WHERE po_line_id = :plid
             """),
             {"qty": receipt.quantity_received, "plid": receipt.po_line_id},
@@ -292,37 +304,17 @@ def cancel_receiving():
 
         reversed_count += 1
 
-    # Recalculate PO status for affected POs
-    affected_pos = set()
-    for rid in receipt_ids:
-        # We already deleted the receipts, so get PO ID from data
-        pass
-
-    # Recalculate PO status from the receipt_ids we were given
-    po_ids = set()
-    for rid in receipt_ids:
-        po_row = g.db.execute(
-            text("SELECT DISTINCT po_id FROM purchase_order_lines WHERE po_line_id IN (SELECT po_line_id FROM item_receipts WHERE receipt_id = :rid)"),
-            {"rid": rid},
-        ).fetchone()
-        if po_row:
-            po_ids.add(po_row.po_id)
-
-    # Also get PO IDs from the data if provided
-    if data.get("po_id"):
-        po_ids.add(data["po_id"])
-
     for pid in po_ids:
         all_lines = g.db.execute(
             text("SELECT quantity_received, quantity_ordered FROM purchase_order_lines WHERE po_id = :pid"),
             {"pid": pid},
         ).fetchall()
         if all(l.quantity_received >= l.quantity_ordered for l in all_lines):
-            new_status = "RECEIVED"
+            new_status = PO_RECEIVED
         elif any(l.quantity_received > 0 for l in all_lines):
-            new_status = "PARTIAL"
+            new_status = PO_PARTIAL
         else:
-            new_status = "OPEN"
+            new_status = PO_OPEN
         g.db.execute(
             text("UPDATE purchase_orders SET status = :status WHERE po_id = :pid"),
             {"status": new_status, "pid": pid},
@@ -331,7 +323,7 @@ def cancel_receiving():
     # Audit log
     write_audit_log(
         g.db,
-        action_type="RECEIVE_CANCEL",
+        action_type=ACTION_RECEIVE_CANCEL,
         entity_type="PO",
         entity_id=data.get("po_id", 0),
         user_id=username,

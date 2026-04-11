@@ -140,7 +140,7 @@ export default function PickWalkScreen({ navigation, route }) {
     try {
       await client.post('/api/picking/complete-batch', { batch_id });
     } catch {
-      // Batch may already be complete — proceed to done state
+      // Batch may already be complete  -  proceed to done state
     }
     setBatchComplete(true);
   };
@@ -516,7 +516,7 @@ const styles = StyleSheet.create({
   binCard: {
     backgroundColor: colors.accentRed,
     borderRadius: radii.heroCard,
-    padding: 20, marginBottom: 16, alignItems: 'center',
+    padding: 14, marginBottom: 10, alignItems: 'center',
   },
   binLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.cream, opacity: 0.5, letterSpacing: 2, marginBottom: 4 },
   binCode: { fontFamily: fonts.mono, fontSize: 36, fontWeight: '700', color: colors.cream, letterSpacing: 3 },
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
 
   itemCard: {
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 16, marginBottom: 16,
+    padding: 12, marginBottom: 10,
   },
   itemCardInner: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   itemLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
@@ -542,7 +542,7 @@ const styles = StyleSheet.create({
 
   nextCard: {
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 14, marginBottom: 16,
+    padding: 10, marginBottom: 10,
   },
   nextLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 1, marginBottom: 4 },
   nextSku: { fontFamily: fonts.mono, fontSize: 12, fontWeight: '700', color: colors.textPrimary },

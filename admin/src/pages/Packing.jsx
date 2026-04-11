@@ -1,31 +1,34 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 import Modal from '../components/Modal.jsx';
 
 export default function Packing() {
+  const { warehouseId } = useWarehouse();
   const [orders, setOrders] = useState([]);
   const [packingEnabled, setPackingEnabled] = useState(null);
   const [detail, setDetail] = useState(null);
 
   useEffect(() => {
+    if (!warehouseId) return;
     api.get('/admin/settings/require_packing_before_shipping').then(async (res) => {
       if (!res?.ok) return;
       const data = await res.json();
       const enabled = data.value !== 'false' && data.value !== false;
       setPackingEnabled(enabled);
       if (enabled) {
-        const soRes = await api.get('/admin/sales-orders?status=PICKED&warehouse_id=1&per_page=50');
+        const soRes = await api.get(`/admin/sales-orders?status=PICKED&warehouse_id=${warehouseId}&per_page=50`);
         if (soRes?.ok) {
           const soData = await soRes.json();
           setOrders(soData.sales_orders || []);
         }
       }
     }).catch(() => setPackingEnabled(true));
-  }, []);
+  }, [warehouseId]);
 
   const columns = [
     { key: 'order_number', label: 'SO Number', mono: true },

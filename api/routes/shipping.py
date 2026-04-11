@@ -8,6 +8,7 @@ from sqlalchemy import text
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.audit_service import write_audit_log
+from constants import SO_PICKED, SO_PACKED, SO_SHIPPED, ACTION_SHIP, TASK_PICKED, TASK_SHORT
 
 shipping_bp = Blueprint("shipping", __name__)
 
@@ -47,10 +48,10 @@ def get_order(barcode):
         return jsonify({"error": "Order not found"}), 404
 
     packing_required = _require_packing(g.db)
-    allowed_statuses = ["PACKED"] if packing_required else ["PICKED", "PACKED"]
+    allowed_statuses = [SO_PACKED] if packing_required else [SO_PICKED, SO_PACKED]
 
     if so.status not in allowed_statuses:
-        if packing_required and so.status == "PICKED":
+        if packing_required and so.status == SO_PICKED:
             return jsonify({"error": "Order must be packed before shipping"}), 400
         return jsonify({"error": f"Order is not ready for shipping. Current status: {so.status}"}), 400
 
@@ -145,7 +146,7 @@ def fulfill():
         return jsonify({"error": "Order not found"}), 404
 
     packing_required = _require_packing(g.db)
-    allowed_statuses = ["PACKED"] if packing_required else ["PICKED", "PACKED"]
+    allowed_statuses = [SO_PACKED] if packing_required else [SO_PICKED, SO_PACKED]
 
     if so.status not in allowed_statuses:
         if packing_required:
@@ -155,9 +156,9 @@ def fulfill():
     # 1. Create item_fulfillments record
     result = g.db.execute(
         text(
-            """
+            f"""
             INSERT INTO item_fulfillments (so_id, warehouse_id, tracking_number, carrier, ship_method, shipped_by, status)
-            VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, 'SHIPPED')
+            VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, '{SO_SHIPPED}')
             RETURNING fulfillment_id
             """
         ),
@@ -191,9 +192,9 @@ def fulfill():
         # Find bin_id from pick_tasks
         pick_task = g.db.execute(
             text(
-                """
+                f"""
                 SELECT bin_id FROM pick_tasks
-                WHERE so_id = :so_id AND item_id = :item_id AND status IN ('PICKED', 'SHORT')
+                WHERE so_id = :so_id AND item_id = :item_id AND status IN ('{TASK_PICKED}', '{TASK_SHORT}')
                 ORDER BY pick_task_id ASC
                 LIMIT 1
                 """
@@ -222,7 +223,7 @@ def fulfill():
         # 3. Update SO line
         g.db.execute(
             text(
-                "UPDATE sales_order_lines SET quantity_shipped = quantity_picked, status = 'SHIPPED' WHERE so_line_id = :sol_id"
+                f"UPDATE sales_order_lines SET quantity_shipped = quantity_picked, status = '{SO_SHIPPED}' WHERE so_line_id = :sol_id"
             ),
             {"sol_id": line.so_line_id},
         )
@@ -233,9 +234,9 @@ def fulfill():
     # 4. Update SO status with carrier and tracking
     g.db.execute(
         text(
-            """
+            f"""
             UPDATE sales_orders
-            SET status = 'SHIPPED', shipped_at = NOW(), carrier = :carrier, tracking_number = :tracking
+            SET status = '{SO_SHIPPED}', shipped_at = NOW(), carrier = :carrier, tracking_number = :tracking
             WHERE so_id = :so_id
             """
         ),
@@ -245,7 +246,7 @@ def fulfill():
     # 5. Audit log
     write_audit_log(
         g.db,
-        action_type="SHIP",
+        action_type=ACTION_SHIP,
         entity_type="SO",
         entity_id=so_id,
         user_id=username,

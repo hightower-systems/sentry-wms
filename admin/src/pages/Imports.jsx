@@ -89,8 +89,8 @@ export default function Imports() {
       <PageHeader title="Import" />
 
       <div className="settings-section">
-        <h3>Import Type</h3>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+        <h3>Import Data</h3>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           {IMPORT_TYPES.map((t) => (
             <button
               key={t.value}
@@ -102,12 +102,8 @@ export default function Imports() {
           ))}
         </div>
         <p className="settings-note">{IMPORT_TYPES.find((t) => t.value === importType)?.desc}</p>
-      </div>
 
-      <div className="settings-section">
-        <h3>Upload File</h3>
-        <p className="settings-note" style={{ marginBottom: 12 }}>Upload a CSV or JSON file. Use the template for the correct format.</p>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
           <input ref={fileRef} type="file" accept=".csv,.json" style={{ fontSize: 13 }} />
           <button className="btn btn-primary" onClick={handleImport} disabled={importing}>
             {importing ? 'Importing...' : 'Import'}

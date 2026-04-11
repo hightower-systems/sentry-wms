@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 
 const NAV = [
   {
@@ -36,6 +37,8 @@ const NAV = [
       { to: '/zones', label: 'Zones' },
       { to: '/items', label: 'Items' },
       { to: '/preferred-bins', label: 'Preferred Bins' },
+      { to: '/adjustments', label: 'Adjustments' },
+      { to: '/inter-warehouse-transfers', label: 'Transfers' },
     ],
   },
   {
@@ -51,10 +54,12 @@ const NAV = [
 
 export default function Sidebar() {
   const location = useLocation();
+  const { warehouseId } = useWarehouse();
   const [counts, setCounts] = useState({});
 
   useEffect(() => {
-    api.get('/admin/dashboard?warehouse_id=1').then(async (res) => {
+    if (!warehouseId) return;
+    api.get(`/admin/dashboard?warehouse_id=${warehouseId}`).then(async (res) => {
       if (!res || !res.ok) return;
       const data = await res.json();
       setCounts({
@@ -66,12 +71,13 @@ export default function Sidebar() {
         '/count-approvals': data.pending_adjustments || 0,
       });
     });
-  }, [location.pathname]);
+  }, [location.pathname, warehouseId]);
 
   return (
     <nav className="sidebar">
+      <div className="sidebar-wordmark">SENTRY</div>
       {NAV.map((group) => (
-        <div key={group.label}>
+        <div key={group.label} className="sidebar-card">
           <div className="sidebar-group-label">{group.label}</div>
           {group.items.map((item) => (
             <NavLink

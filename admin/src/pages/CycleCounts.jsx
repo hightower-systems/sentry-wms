@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 
 export default function CycleCounts() {
+  const { warehouseId } = useWarehouse();
   const [counts, setCounts] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [bins, setBins] = useState([]);
@@ -26,7 +28,7 @@ export default function CycleCounts() {
   }
 
   async function openCreate() {
-    const res = await api.get('/admin/bins?warehouse_id=1');
+    const res = await api.get(`/admin/bins?warehouse_id=${warehouseId}`);
     if (res?.ok) {
       const data = await res.json();
       setBins(data.bins || []);
@@ -45,7 +47,7 @@ export default function CycleCounts() {
     if (selectedBins.length === 0) return;
     const res = await api.post('/inventory/cycle-count/create', {
       bin_ids: selectedBins,
-      warehouse_id: 1,
+      warehouse_id: warehouseId,
     });
     if (res?.ok) {
       setMessage('Cycle count created');

@@ -3,9 +3,12 @@
 from flask import g, jsonify, request
 from sqlalchemy import text
 
+from constants import ACTION_TRANSFER
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import VALID_BIN_TYPES, VALID_ZONE_TYPES, admin_bp
+from services.audit_service import write_audit_log
+from services.inventory_service import add_inventory
 
 
 # ── Warehouses ────────────────────────────────────────────────────────────────
@@ -88,14 +91,15 @@ def update_warehouse(warehouse_id):
     if not wh:
         return jsonify({"error": "Warehouse not found"}), 404
 
+    ALLOWED_FIELDS = {"warehouse_code", "warehouse_name", "address", "is_active"}
     fields, params = [], {"wid": warehouse_id}
-    for col in ("warehouse_code", "warehouse_name", "address", "is_active"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
     if not fields:
-        return jsonify({"error": "No fields to update"}), 400
+        return jsonify({"error": "No valid fields provided"}), 400
 
     g.db.execute(text(f"UPDATE warehouses SET {', '.join(fields)} WHERE warehouse_id = :wid"), params)
     g.db.commit()
@@ -215,14 +219,15 @@ def update_zone(zone_id):
     if not existing:
         return jsonify({"error": "Zone not found"}), 404
 
+    ALLOWED_FIELDS = {"zone_code", "zone_name", "zone_type", "is_active"}
     fields, params = [], {"zid": zone_id}
-    for col in ("zone_code", "zone_name", "zone_type", "is_active"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
     if not fields:
-        return jsonify({"error": "No fields to update"}), 400
+        return jsonify({"error": "No valid fields provided"}), 400
 
     g.db.execute(text(f"UPDATE zones SET {', '.join(fields)} WHERE zone_id = :zid"), params)
     g.db.commit()
@@ -374,14 +379,15 @@ def update_bin(bin_id):
     if not existing:
         return jsonify({"error": "Bin not found"}), 404
 
+    ALLOWED_FIELDS = {"bin_code", "bin_barcode", "bin_type", "aisle", "row_num", "level_num", "position_num", "pick_sequence", "putaway_sequence", "is_active", "zone_id"}
     fields, params = [], {"bid": bin_id}
-    for col in ("bin_code", "bin_barcode", "bin_type", "aisle", "row_num", "level_num", "position_num", "pick_sequence", "putaway_sequence", "is_active", "zone_id"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
     if not fields:
-        return jsonify({"error": "No fields to update"}), 400
+        return jsonify({"error": "No valid fields provided"}), 400
 
     g.db.execute(text(f"UPDATE bins SET {', '.join(fields)} WHERE bin_id = :bid"), params)
     g.db.commit()
@@ -400,4 +406,184 @@ def update_bin(bin_id):
         "aisle": row.aisle, "row_num": row.row_num, "level_num": row.level_num,
         "position_num": row.position_num, "pick_sequence": row.pick_sequence,
         "putaway_sequence": row.putaway_sequence, "is_active": row.is_active,
+    })
+
+
+# ── Inter-Warehouse Transfers ────────────────────────────────────────────────
+
+@admin_bp.route("/inter-warehouse-transfer", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def create_inter_warehouse_transfer():
+    """Move inventory from one warehouse/bin to another warehouse/bin."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Request body is required"}), 400
+
+    required = ("item_id", "from_bin_id", "from_warehouse_id", "to_bin_id", "to_warehouse_id", "quantity")
+    missing = [f for f in required if data.get(f) is None]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+
+    item_id = data["item_id"]
+    from_bin_id = data["from_bin_id"]
+    from_warehouse_id = data["from_warehouse_id"]
+    to_bin_id = data["to_bin_id"]
+    to_warehouse_id = data["to_warehouse_id"]
+    quantity = int(data["quantity"])
+    reason = data.get("reason", "")
+
+    if quantity <= 0:
+        return jsonify({"error": "quantity must be greater than 0"}), 400
+
+    # Validate item exists
+    item = g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
+    if not item:
+        return jsonify({"error": "Item not found"}), 404
+
+    # Validate source bin exists in source warehouse
+    from_bin = g.db.execute(
+        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
+        {"bid": from_bin_id, "wid": from_warehouse_id},
+    ).fetchone()
+    if not from_bin:
+        return jsonify({"error": "Source bin not found in the specified source warehouse"}), 404
+
+    # Validate destination bin exists in destination warehouse
+    to_bin = g.db.execute(
+        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
+        {"bid": to_bin_id, "wid": to_warehouse_id},
+    ).fetchone()
+    if not to_bin:
+        return jsonify({"error": "Destination bin not found in the specified destination warehouse"}), 404
+
+    # Validate sufficient inventory in source bin
+    source_inv = g.db.execute(
+        text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid"),
+        {"iid": item_id, "bid": from_bin_id},
+    ).fetchone()
+    available = source_inv.quantity_on_hand if source_inv else 0
+    if available < quantity:
+        return jsonify({"error": f"Insufficient inventory in source bin. Available: {available}"}), 400
+
+    # Decrement source
+    new_source_qty = available - quantity
+    if new_source_qty == 0:
+        g.db.execute(text("DELETE FROM inventory WHERE inventory_id = :inv_id"), {"inv_id": source_inv.inventory_id})
+    else:
+        g.db.execute(
+            text("UPDATE inventory SET quantity_on_hand = :qty, updated_at = NOW() WHERE inventory_id = :inv_id"),
+            {"qty": new_source_qty, "inv_id": source_inv.inventory_id},
+        )
+
+    # Upsert destination (different warehouse, so use add_inventory directly)
+    add_inventory(g.db, item_id, to_bin_id, to_warehouse_id, quantity)
+
+    # Create bin_transfers record
+    transfer = g.db.execute(
+        text("""
+            INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, quantity, transferred_by, transfer_type, notes)
+            VALUES (:iid, :from_bid, :to_bid, :qty, :user_id, 'INTER_WAREHOUSE', :notes)
+            RETURNING transfer_id, transferred_at
+        """),
+        {
+            "iid": item_id, "from_bid": from_bin_id, "to_bid": to_bin_id,
+            "qty": quantity, "user_id": g.current_user["user_id"],
+            "notes": reason,
+        },
+    ).fetchone()
+
+    user_id = g.current_user["user_id"]
+    transfer_details = {
+        "transfer_id": transfer.transfer_id,
+        "item_id": item_id,
+        "from_bin_id": from_bin_id,
+        "to_bin_id": to_bin_id,
+        "from_warehouse_id": from_warehouse_id,
+        "to_warehouse_id": to_warehouse_id,
+        "quantity": quantity,
+        "reason": reason,
+    }
+
+    # Audit log for source warehouse
+    write_audit_log(
+        g.db, ACTION_TRANSFER, "ITEM", item_id,
+        user_id=user_id, warehouse_id=from_warehouse_id,
+        details={**transfer_details, "direction": "OUT"},
+    )
+    # Audit log for destination warehouse
+    write_audit_log(
+        g.db, ACTION_TRANSFER, "ITEM", item_id,
+        user_id=user_id, warehouse_id=to_warehouse_id,
+        details={**transfer_details, "direction": "IN"},
+    )
+
+    g.db.commit()
+    return jsonify({
+        "transfer_id": transfer.transfer_id,
+        "item_id": item_id,
+        "sku": item.sku,
+        "from_bin_id": from_bin_id,
+        "from_bin_code": from_bin.bin_code,
+        "from_warehouse_id": from_warehouse_id,
+        "to_bin_id": to_bin_id,
+        "to_bin_code": to_bin.bin_code,
+        "to_warehouse_id": to_warehouse_id,
+        "quantity": quantity,
+        "reason": reason,
+        "transferred_at": transfer.transferred_at.isoformat() if transfer.transferred_at else None,
+    }), 201
+
+
+@admin_bp.route("/inter-warehouse-transfers", methods=["GET"])
+@require_auth
+@with_db
+def list_inter_warehouse_transfers():
+    """Return recent inter-warehouse transfers with item, bin, and warehouse details."""
+    limit = request.args.get("limit", 50, type=int)
+
+    rows = g.db.execute(
+        text("""
+            SELECT bt.transfer_id, bt.item_id, bt.from_bin_id, bt.to_bin_id,
+                   bt.quantity, bt.transferred_by, bt.transferred_at, bt.notes,
+                   i.sku,
+                   fb.bin_code AS from_bin_code, fb.warehouse_id AS from_warehouse_id,
+                   fw.warehouse_name AS from_warehouse_name,
+                   tb.bin_code AS to_bin_code, tb.warehouse_id AS to_warehouse_id,
+                   tw.warehouse_name AS to_warehouse_name
+            FROM bin_transfers bt
+            JOIN items i ON i.item_id = bt.item_id
+            JOIN bins fb ON fb.bin_id = bt.from_bin_id
+            JOIN warehouses fw ON fw.warehouse_id = fb.warehouse_id
+            JOIN bins tb ON tb.bin_id = bt.to_bin_id
+            JOIN warehouses tw ON tw.warehouse_id = tb.warehouse_id
+            WHERE bt.transfer_type = 'INTER_WAREHOUSE'
+            ORDER BY bt.transferred_at DESC
+            LIMIT :lim
+        """),
+        {"lim": limit},
+    ).fetchall()
+
+    return jsonify({
+        "transfers": [
+            {
+                "transfer_id": r.transfer_id,
+                "item_id": r.item_id,
+                "sku": r.sku,
+                "from_bin_id": r.from_bin_id,
+                "from_bin_code": r.from_bin_code,
+                "from_warehouse_id": r.from_warehouse_id,
+                "from_warehouse_name": r.from_warehouse_name,
+                "to_bin_id": r.to_bin_id,
+                "to_bin_code": r.to_bin_code,
+                "to_warehouse_id": r.to_warehouse_id,
+                "to_warehouse_name": r.to_warehouse_name,
+                "quantity": r.quantity,
+                "transferred_by": r.transferred_by,
+                "transferred_at": r.transferred_at.isoformat() if r.transferred_at else None,
+                "notes": r.notes,
+            }
+            for r in rows
+        ]
     })

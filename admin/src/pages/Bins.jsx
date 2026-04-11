@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
@@ -7,6 +8,7 @@ import Modal from '../components/Modal.jsx';
 const BIN_TYPES = ['Staging', 'PickableStaging', 'Pickable'];
 
 export default function Bins() {
+  const { warehouseId } = useWarehouse();
   const [bins, setBins] = useState([]);
   const [zones, setZones] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -16,10 +18,10 @@ export default function Bins() {
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
 
-  useEffect(() => { loadBins(); loadZones(); }, []);
+  useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId]);
 
   async function loadBins() {
-    const res = await api.get('/admin/bins?warehouse_id=1');
+    const res = await api.get(`/admin/bins?warehouse_id=${warehouseId}`);
     if (res?.ok) {
       const data = await res.json();
       setBins(data.bins || []);
@@ -27,7 +29,7 @@ export default function Bins() {
   }
 
   async function loadZones() {
-    const res = await api.get('/admin/zones?warehouse_id=1');
+    const res = await api.get(`/admin/zones?warehouse_id=${warehouseId}`);
     if (res?.ok) {
       const data = await res.json();
       setZones(data.zones || []);
@@ -50,7 +52,7 @@ export default function Bins() {
     const body = { bin_code: form.bin_code, barcode: form.barcode, bin_type: form.bin_type, zone_id: form.zone_id, aisle: form.aisle, rack: form.rack, shelf: form.shelf, position: form.position, pick_sequence: form.pick_sequence ? Number(form.pick_sequence) : null, is_active: form.is_active };
     const res = editing
       ? await api.put(`/admin/bins/${selected.id}`, body)
-      : await api.post('/admin/bins', { ...body, warehouse_id: 1 });
+      : await api.post('/admin/bins', { ...body, warehouse_id: warehouseId });
     if (res?.ok) {
       setSelected(null); setDetail(null); setShowCreate(false); setEditing(false);
       loadBins();

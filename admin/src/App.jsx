@@ -21,6 +21,8 @@ import AuditLog from './pages/AuditLog.jsx';
 import PreferredBins from './pages/PreferredBins.jsx';
 import Settings from './pages/Settings.jsx';
 import Imports from './pages/Imports.jsx';
+import Adjustments from './pages/Adjustments.jsx';
+import InterWarehouseTransfers from './pages/InterWarehouseTransfers.jsx';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -53,6 +55,8 @@ export default function App() {
         <Route path="/audit-log" element={<AuditLog />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/imports" element={<Imports />} />
+        <Route path="/adjustments" element={<Adjustments />} />
+        <Route path="/inter-warehouse-transfers" element={<InterWarehouseTransfers />} />
       </Route>
     </Routes>
   );

@@ -51,7 +51,7 @@ public class ChainwayScannerModule extends ReactContextBaseJavaModule {
     private static final String TAG = "ChainwayScanner";
     private static final String EVENT_NAME = "onBarcodeScan";
 
-    // Defaults — overridden by startListening() params
+    // Defaults  -  overridden by startListening() params
     private String intentAction = "com.chainway.sdk.barcode.BARCODE_DECODING_DATA";
     private String extraKey = "BARCODE_DATA_EXTRA";
 
@@ -69,13 +69,13 @@ public class ChainwayScannerModule extends ReactContextBaseJavaModule {
 
     /**
      * Start listening for broadcast intents.
-     * @param action  Intent action string (nullable — uses default)
-     * @param extra   Intent extra key for barcode data (nullable — uses default)
+     * @param action  Intent action string (nullable  -  uses default)
+     * @param extra   Intent extra key for barcode data (nullable  -  uses default)
      */
     @ReactMethod
     public void startListening(String action, String extra) {
         if (listening) {
-            Log.d(TAG, "Already listening — call stopListening first");
+            Log.d(TAG, "Already listening  -  call stopListening first");
             return;
         }
 
@@ -119,7 +119,7 @@ public class ChainwayScannerModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void stopListening() {
         if (!listening || receiver == null) {
-            Log.d(TAG, "Not listening — nothing to stop");
+            Log.d(TAG, "Not listening  -  nothing to stop");
             return;
         }
         try {

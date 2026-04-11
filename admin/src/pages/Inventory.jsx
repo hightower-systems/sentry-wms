@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 
 export default function Inventory() {
+  const { warehouseId } = useWarehouse();
   const [data, setData] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
@@ -12,7 +14,8 @@ export default function Inventory() {
   const [sortDir, setSortDir] = useState('asc');
 
   useEffect(() => {
-    const params = new URLSearchParams({ warehouse_id: 1, page, per_page: 50 });
+    if (!warehouseId) return;
+    const params = new URLSearchParams({ warehouse_id: warehouseId, page, per_page: 50 });
     if (search) params.set('q', search);
     api.get(`/admin/inventory?${params}`).then(async (res) => {
       if (!res?.ok) return;
@@ -20,7 +23,7 @@ export default function Inventory() {
       setData(json.inventory || []);
       setPagination({ page: json.page, pages: json.pages, total: json.total, per_page: json.per_page });
     });
-  }, [page, search]);
+  }, [page, search, warehouseId]);
 
   function handleSort(key) {
     if (sortKey === key) {

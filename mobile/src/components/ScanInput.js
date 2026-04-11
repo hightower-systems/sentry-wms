@@ -65,7 +65,7 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
     setValue('');
     bufferRef.current = '';
     if (!trimmed || !onScan || scanInFlightRef.current) {
-      console.log('[SCAN_DEBUG] SKIPPED — empty:', !trimmed, 'noHandler:', !onScan, 'inFlight:', scanInFlightRef.current);
+      console.log('[SCAN_DEBUG] SKIPPED  -  empty:', !trimmed, 'noHandler:', !onScan, 'inFlight:', scanInFlightRef.current);
       setTimeout(() => inputRef.current?.focus(), 50);
       return;
     }

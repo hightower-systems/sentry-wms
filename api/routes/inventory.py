@@ -5,6 +5,10 @@ Inventory management endpoints: cycle count creation, retrieval, and submission.
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
+from constants import (
+    COUNT_PENDING, COUNT_IN_PROGRESS, COUNT_COMPLETED, COUNT_VARIANCE,
+    ADJ_PENDING, ACTION_COUNT,
+)
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.audit_service import write_audit_log
@@ -52,11 +56,11 @@ def create_cycle_count():
             text(
                 """
                 INSERT INTO cycle_counts (warehouse_id, bin_id, status, assigned_to)
-                VALUES (:wh, :bid, 'PENDING', :user)
+                VALUES (:wh, :bid, :status, :user)
                 RETURNING count_id
                 """
             ),
-            {"wh": warehouse_id, "bid": bid, "user": username},
+            {"wh": warehouse_id, "bid": bid, "status": COUNT_PENDING, "user": username},
         )
         count_id = result.fetchone()[0]
 
@@ -94,7 +98,7 @@ def create_cycle_count():
             "count_id": count_id,
             "bin_id": bid,
             "bin_code": bin_row.bin_code,
-            "status": "PENDING",
+            "status": COUNT_PENDING,
             "lines": line_count,
             "assigned_to": username,
         })
@@ -201,7 +205,7 @@ def submit_cycle_count():
 
     if not cc:
         return jsonify({"error": "Cycle count not found"}), 404
-    if cc.status not in ("PENDING", "IN_PROGRESS"):
+    if cc.status not in (COUNT_PENDING, COUNT_IN_PROGRESS):
         return jsonify({"error": f"Cycle count status is {cc.status}, cannot submit"}), 400
 
     username = g.current_user["username"]
@@ -218,7 +222,7 @@ def submit_cycle_count():
             return jsonify({"error": f"counted_quantity must be >= 0 for line {cl_id}"}), 400
 
         if is_unexpected:
-            # Unexpected item — not in original snapshot. Create a new count line.
+            # Unexpected item  -  not in original snapshot. Create a new count line.
             item_id = sub.get("item_id")
             sku = sub.get("sku", "UNKNOWN")
             if not item_id:
@@ -244,7 +248,7 @@ def submit_cycle_count():
                     """
                     INSERT INTO inventory_adjustments
                         (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id)
-                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, 'PENDING', :user, :cid)
+                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :adj_status, :user, :cid)
                     RETURNING adjustment_id
                     """
                 ),
@@ -254,6 +258,7 @@ def submit_cycle_count():
                     "wh": cc.warehouse_id,
                     "change": counted_qty,
                     "detail": reason_detail,
+                    "adj_status": ADJ_PENDING,
                     "user": username,
                     "cid": count_id,
                 },
@@ -304,14 +309,14 @@ def submit_cycle_count():
         if variance != 0:
             lines_with_variance += 1
 
-            # 3. Create pending adjustment (no inventory update — requires admin approval)
+            # 3. Create pending adjustment (no inventory update  -  requires admin approval)
             reason_detail = f"Cycle count variance: expected {cl.expected_quantity}, counted {counted_qty}"
             adj_result = g.db.execute(
                 text(
                     """
                     INSERT INTO inventory_adjustments
                         (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id)
-                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, 'PENDING', :user, :cid)
+                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :adj_status, :user, :cid)
                     RETURNING adjustment_id
                     """
                 ),
@@ -321,6 +326,7 @@ def submit_cycle_count():
                     "wh": cc.warehouse_id,
                     "change": variance,
                     "detail": reason_detail,
+                    "adj_status": ADJ_PENDING,
                     "user": username,
                     "cid": count_id,
                 },
@@ -346,7 +352,7 @@ def submit_cycle_count():
         )
 
     # Set final status
-    final_status = "VARIANCE" if lines_with_variance > 0 else "COMPLETED"
+    final_status = COUNT_VARIANCE if lines_with_variance > 0 else COUNT_COMPLETED
     g.db.execute(
         text(
             "UPDATE cycle_counts SET status = :status, completed_at = NOW() WHERE count_id = :cid"
@@ -357,7 +363,7 @@ def submit_cycle_count():
     # Audit log
     write_audit_log(
         g.db,
-        action_type="COUNT",
+        action_type=ACTION_COUNT,
         entity_type="BIN",
         entity_id=cc.bin_id,
         user_id=username,

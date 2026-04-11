@@ -194,7 +194,7 @@ class TestCycleCountCorrectsInventory:
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "VARIANCE"
 
-        # 4. Verify inventory was NOT changed (pending audit — requires admin approval)
+        # 4. Verify inventory was NOT changed (pending audit  -  requires admin approval)
         new_qty = _query_val(
             "SELECT quantity_on_hand FROM inventory WHERE item_id = 1 AND bin_id = 3"
         )

@@ -5,6 +5,11 @@ import math
 from flask import g, jsonify, request
 from sqlalchemy import text
 
+from constants import (
+    PO_OPEN, PO_CLOSED, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_CANCELLED,
+    TASK_PENDING, ADJ_PENDING,
+    ACTION_PICK,
+)
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
@@ -118,9 +123,9 @@ def create_purchase_order():
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
 
     result = g.db.execute(
-        text("""
+        text(f"""
             INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, expected_date, warehouse_id, notes, created_by, status)
-            VALUES (:pn, :pb, :vendor, :exp_date, :wid, :notes, :created_by, 'OPEN')
+            VALUES (:pn, :pb, :vendor, :exp_date, :wid, :notes, :created_by, '{PO_OPEN}')
             RETURNING po_id
         """),
         {
@@ -160,17 +165,18 @@ def update_purchase_order(po_id):
     po = g.db.execute(text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"), {"pid": po_id}).fetchone()
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
-    if po.status != "OPEN":
+    if po.status != PO_OPEN:
         return jsonify({"error": f"Can only update POs with OPEN status. Current: {po.status}"}), 400
 
+    ALLOWED_FIELDS = {"po_number", "po_barcode", "vendor_name", "expected_date", "notes"}
     fields, params = [], {"pid": po_id}
-    for col in ("po_number", "po_barcode", "vendor_name", "expected_date", "notes"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
     if not fields:
-        return jsonify({"error": "No fields to update"}), 400
+        return jsonify({"error": "No valid fields provided"}), 400
 
     g.db.execute(text(f"UPDATE purchase_orders SET {', '.join(fields)} WHERE po_id = :pid"), params)
     g.db.commit()
@@ -197,7 +203,7 @@ def close_purchase_order(po_id):
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
 
-    g.db.execute(text("UPDATE purchase_orders SET status = 'CLOSED' WHERE po_id = :pid"), {"pid": po_id})
+    g.db.execute(text(f"UPDATE purchase_orders SET status = '{PO_CLOSED}' WHERE po_id = :pid"), {"pid": po_id})
     g.db.commit()
     return jsonify({"message": "Purchase order closed"})
 
@@ -316,9 +322,9 @@ def create_sales_order():
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
 
     result = g.db.execute(
-        text("""
+        text(f"""
             INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status)
-            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, 'OPEN')
+            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, '{SO_OPEN}')
             RETURNING so_id
         """),
         {
@@ -359,17 +365,18 @@ def update_sales_order(so_id):
     so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
     if not so:
         return jsonify({"error": "Sales order not found"}), 404
-    if so.status != "OPEN":
+    if so.status != SO_OPEN:
         return jsonify({"error": f"Can only update SOs with OPEN status. Current: {so.status}"}), 400
 
+    ALLOWED_FIELDS = {"so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority"}
     fields, params = [], {"sid": so_id}
-    for col in ("so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority"):
+    for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
             params[col] = data[col]
 
     if not fields:
-        return jsonify({"error": "No fields to update"}), 400
+        return jsonify({"error": "No valid fields provided"}), 400
 
     g.db.execute(text(f"UPDATE sales_orders SET {', '.join(fields)} WHERE so_id = :sid"), params)
     g.db.commit()
@@ -394,11 +401,11 @@ def cancel_sales_order(so_id):
     so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
     if not so:
         return jsonify({"error": "Sales order not found"}), 404
-    if so.status not in ("OPEN", "ALLOCATED", "PICKING"):
+    if so.status not in (SO_OPEN, "ALLOCATED", SO_PICKING):
         return jsonify({"error": f"Can only cancel OPEN, ALLOCATED, or PICKING orders. Current: {so.status}"}), 400
 
     # If ALLOCATED or PICKING, release allocated inventory
-    if so.status in ("ALLOCATED", "PICKING"):
+    if so.status in ("ALLOCATED", SO_PICKING):
         lines = g.db.execute(
             text("SELECT so_line_id, item_id, quantity_allocated FROM sales_order_lines WHERE so_id = :sid AND quantity_allocated > 0"),
             {"sid": so_id},
@@ -407,7 +414,7 @@ def cancel_sales_order(so_id):
         for line in lines:
             # Find the inventory rows that were allocated via pick_tasks
             tasks = g.db.execute(
-                text("SELECT bin_id, quantity_to_pick FROM pick_tasks WHERE so_line_id = :sol_id AND status = 'PENDING'"),
+                text(f"SELECT bin_id, quantity_to_pick FROM pick_tasks WHERE so_line_id = :sol_id AND status = '{TASK_PENDING}'"),
                 {"sol_id": line.so_line_id},
             ).fetchall()
 
@@ -426,7 +433,7 @@ def cancel_sales_order(so_id):
         g.db.execute(text("DELETE FROM pick_tasks WHERE so_id = :sid"), {"sid": so_id})
         g.db.execute(text("DELETE FROM pick_batch_orders WHERE so_id = :sid"), {"sid": so_id})
 
-    g.db.execute(text("UPDATE sales_orders SET status = 'CANCELLED' WHERE so_id = :sid"), {"sid": so_id})
+    g.db.execute(text(f"UPDATE sales_orders SET status = '{SO_CANCELLED}' WHERE so_id = :sid"), {"sid": so_id})
     g.db.commit()
     return jsonify({"message": "Sales order cancelled"})
 
@@ -457,7 +464,7 @@ def get_short_picks():
                    a.details->>'batch_id' AS batch_id
             FROM audit_log a
             LEFT JOIN bins b ON b.bin_id = (a.details->>'bin_id')::int
-            WHERE a.action_type = 'PICK'
+            WHERE a.action_type = '{ACTION_PICK}'
               AND a.details->>'type' = 'SHORT_PICK'
               AND a.created_at >= NOW() - make_interval(days => :days)
               {wh_clause}

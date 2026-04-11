@@ -1,18 +1,21 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 
 export default function PutAway() {
+  const { warehouseId } = useWarehouse();
   const [items, setItems] = useState([]);
 
   useEffect(() => {
-    api.get('/putaway/pending/1').then(async (res) => {
+    if (!warehouseId) return;
+    api.get(`/putaway/pending/${warehouseId}`).then(async (res) => {
       if (!res?.ok) return;
       const data = await res.json();
       setItems(data.pending_items || []);
     });
-  }, []);
+  }, [warehouseId]);
 
   const columns = [
     { key: 'sku', label: 'SKU', mono: true },

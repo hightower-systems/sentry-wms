@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
@@ -7,16 +8,17 @@ import Modal from '../components/Modal.jsx';
 const ZONE_TYPES = ['STORAGE', 'RECEIVING', 'STAGING', 'SHIPPING', 'QUALITY', 'DAMAGE'];
 
 export default function Zones() {
+  const { warehouseId } = useWarehouse();
   const [zones, setZones] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
 
-  useEffect(() => { loadZones(); }, []);
+  useEffect(() => { if (warehouseId) loadZones(); }, [warehouseId]);
 
   async function loadZones() {
-    const res = await api.get('/admin/zones?warehouse_id=1');
+    const res = await api.get(`/admin/zones?warehouse_id=${warehouseId}`);
     if (res?.ok) {
       const data = await res.json();
       setZones(data.zones || []);
@@ -42,7 +44,7 @@ export default function Zones() {
     const body = { zone_code: form.zone_code, zone_name: form.zone_name, zone_type: form.zone_type, is_active: form.is_active };
     const res = editId
       ? await api.put(`/admin/zones/${editId}`, body)
-      : await api.post('/admin/zones', { ...body, warehouse_id: 1 });
+      : await api.post('/admin/zones', { ...body, warehouse_id: warehouseId });
     if (res?.ok) {
       setShowModal(false);
       loadZones();

@@ -150,7 +150,7 @@ def lookup_bin(barcode):
 @require_auth
 @with_db
 def lookup_so(barcode):
-    """Generic SO lookup — returns SO data regardless of status."""
+    """Generic SO lookup  -  returns SO data regardless of status."""
     barcode = barcode.strip()
     print(f"[LOOKUP] SO lookup received: '{barcode}' (len={len(barcode)})")
 

@@ -18,10 +18,18 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
         "DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry"
     )
-    app.config["JWT_SECRET"] = os.getenv("JWT_SECRET", "change-this-to-a-random-string")
 
-    # CORS - allow mobile app and admin panel
-    CORS(app)
+    jwt_secret = os.getenv("JWT_SECRET")
+    if not jwt_secret:
+        raise RuntimeError("JWT_SECRET environment variable is required")
+    app.config["JWT_SECRET"] = jwt_secret
+
+    # CORS - restrict to known origins, configurable via env var
+    cors_origins = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://localhost:8081",
+    ).split(",")
+    CORS(app, origins=[o.strip() for o in cors_origins])
 
     # Register blueprints
     from routes.auth import auth_bp

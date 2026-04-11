@@ -5,6 +5,11 @@ Picking endpoints: batch creation, task management, pick confirmation, batch com
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
+from constants import (
+    BATCH_OPEN, BATCH_IN_PROGRESS, BATCH_CANCELLED,
+    SO_OPEN, SO_PICKING,
+    TASK_PENDING, TASK_PICKED, TASK_SHORT, TASK_SKIPPED,
+)
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from services.picking_service import (
@@ -29,11 +34,11 @@ picking_bp = Blueprint("picking", __name__)
 def active_batch():
     username = g.current_user["username"]
     batch = g.db.execute(
-        text("""
+        text(f"""
             SELECT batch_id, total_orders, created_at
             FROM pick_batches
             WHERE assigned_to = :username
-              AND status IN ('OPEN', 'IN_PROGRESS')
+              AND status IN ('{BATCH_OPEN}', '{BATCH_IN_PROGRESS}')
             ORDER BY created_at DESC
             LIMIT 1
         """),
@@ -44,10 +49,10 @@ def active_batch():
         return jsonify({"active": False})
 
     counts = g.db.execute(
-        text("""
+        text(f"""
             SELECT
                 COUNT(*) AS total_picks,
-                COUNT(*) FILTER (WHERE status IN ('PICKED', 'SHORT')) AS completed_picks
+                COUNT(*) FILTER (WHERE status IN ('{TASK_PICKED}', '{TASK_SHORT}')) AS completed_picks
             FROM pick_tasks
             WHERE batch_id = :batch_id
         """),
@@ -226,7 +231,7 @@ def complete():
 @require_auth
 @with_db
 def cancel_batch():
-    """Cancel/delete a batch — releases allocated inventory and resets SO statuses."""
+    """Cancel/delete a batch  -  releases allocated inventory and resets SO statuses."""
     data = request.get_json()
     if not data or not data.get("batch_id"):
         return jsonify({"error": "batch_id is required"}), 400
@@ -241,10 +246,10 @@ def cancel_batch():
 
     # Release allocated inventory for pending tasks
     pending_tasks = g.db.execute(
-        text("""
+        text(f"""
             SELECT pick_task_id, item_id, bin_id, quantity_to_pick
             FROM pick_tasks
-            WHERE batch_id = :bid AND status = 'PENDING'
+            WHERE batch_id = :bid AND status = '{TASK_PENDING}'
         """),
         {"bid": batch_id},
     ).fetchall()
@@ -261,22 +266,22 @@ def cancel_batch():
 
     # Reset SO statuses back to OPEN for orders that haven't been picked
     g.db.execute(
-        text("""
-            UPDATE sales_orders SET status = 'OPEN'
+        text(f"""
+            UPDATE sales_orders SET status = '{SO_OPEN}'
             WHERE so_id IN (
                 SELECT DISTINCT so_id FROM pick_tasks WHERE batch_id = :bid
-            ) AND status IN ('PICKING', 'OPEN')
+            ) AND status IN ('{SO_PICKING}', '{SO_OPEN}')
         """),
         {"bid": batch_id},
     )
 
     # Mark batch and all pending tasks as cancelled
     g.db.execute(
-        text("UPDATE pick_tasks SET status = 'SKIPPED' WHERE batch_id = :bid AND status = 'PENDING'"),
+        text(f"UPDATE pick_tasks SET status = '{TASK_SKIPPED}' WHERE batch_id = :bid AND status = '{TASK_PENDING}'"),
         {"bid": batch_id},
     )
     g.db.execute(
-        text("UPDATE pick_batches SET status = 'CANCELLED' WHERE batch_id = :bid"),
+        text(f"UPDATE pick_batches SET status = '{BATCH_CANCELLED}' WHERE batch_id = :bid"),
         {"bid": batch_id},
     )
 

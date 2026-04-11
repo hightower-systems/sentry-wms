@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
 export default function PreferredBins() {
+  const { warehouseId } = useWarehouse();
   const [rows, setRows] = useState([]);
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
@@ -30,7 +32,7 @@ export default function PreferredBins() {
   async function openAdd() {
     const [itemRes, binRes] = await Promise.all([
       api.get('/admin/items?per_page=200'),
-      api.get('/admin/bins?warehouse_id=1'),
+      api.get(`/admin/bins?warehouse_id=${warehouseId}`),
     ]);
     if (itemRes?.ok) setItems((await itemRes.json()).items || []);
     if (binRes?.ok) setBins((await binRes.json()).bins || []);

@@ -1,10 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../auth.jsx';
+import { useWarehouse } from '../warehouse.jsx';
 
 export default function TopBar() {
   const { user, logout } = useAuth();
+  const { warehouses, warehouseId, warehouse, setWarehouseId } = useWarehouse();
   const [showMenu, setShowMenu] = useState(false);
+  const [showWhPicker, setShowWhPicker] = useState(false);
   const menuRef = useRef(null);
+  const whRef = useRef(null);
 
   const initials = user?.full_name
     ? user.full_name.split(' ').map(n => n[0]).join('').toUpperCase()
@@ -15,10 +19,20 @@ export default function TopBar() {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
         setShowMenu(false);
       }
+      if (whRef.current && !whRef.current.contains(e.target)) {
+        setShowWhPicker(false);
+      }
     }
-    if (showMenu) document.addEventListener('mousedown', handleClickOutside);
+    if (showMenu || showWhPicker) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showMenu]);
+  }, [showMenu, showWhPicker]);
+
+  function selectWarehouse(id) {
+    setWarehouseId(id);
+    setShowWhPicker(false);
+  }
+
+  const whCode = warehouse?.warehouse_code || warehouse?.code || '...';
 
   return (
     <div className="topbar">
@@ -36,8 +50,34 @@ export default function TopBar() {
         </svg>
         Sentry WMS
       </div>
-      <div className="topbar-breadcrumb">
-        <span>/</span> APT-LAB
+      <div className="topbar-breadcrumb" ref={whRef} style={{ position: 'relative' }}>
+        <span
+          className="topbar-wh-picker"
+          onClick={() => setShowWhPicker(!showWhPicker)}
+        >
+          <span>/</span> {whCode}
+          <svg width="10" height="10" viewBox="0 0 10 10" style={{ marginLeft: 4, opacity: 0.5 }}>
+            <path d="M2 4 L5 7 L8 4" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+          </svg>
+        </span>
+        {showWhPicker && warehouses.length > 0 && (
+          <div className="topbar-wh-dropdown">
+            {warehouses.map((w) => {
+              const wId = w.warehouse_id || w.id;
+              const isActive = wId === warehouseId;
+              return (
+                <div
+                  key={wId}
+                  className={`topbar-wh-option${isActive ? ' active' : ''}`}
+                  onClick={() => selectWarehouse(wId)}
+                >
+                  <span className="topbar-wh-code">{w.warehouse_code || w.code}</span>
+                  <span className="topbar-wh-name">{w.warehouse_name || w.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="topbar-search">
         <input type="text" placeholder="Search items, bins, orders..." />
@@ -49,8 +89,8 @@ export default function TopBar() {
         {showMenu && (
           <div className="topbar-dropdown">
             <div className="topbar-dropdown-header">
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{user?.full_name || user?.username}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{user?.role}</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: '#fdf4e3' }}>{user?.full_name || user?.username}</div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{user?.role}</div>
             </div>
             <div className="topbar-dropdown-divider" />
             <button className="topbar-dropdown-item" onClick={logout}>

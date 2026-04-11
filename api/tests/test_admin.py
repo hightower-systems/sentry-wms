@@ -822,14 +822,14 @@ class TestPreferredBinsCRUD:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# REPEAT OFFENDER TESTS — v0.9.7
+# REPEAT OFFENDER TESTS  -  v0.9.7
 # Each bug was reported in v0.9.5, "fixed" in v0.9.6, but still broken.
 # These tests MUST pass before marking any of them done.
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class TestRepeatOffender12_LoginUsername:
-    """Bug #12: Admin login — username must NOT clear on bad password."""
+    """Bug #12: Admin login  -  username must NOT clear on bad password."""
 
     def test_bad_password_returns_401_not_redirect(self, client):
         """The /auth/login endpoint must return 401 JSON, not trigger a redirect."""

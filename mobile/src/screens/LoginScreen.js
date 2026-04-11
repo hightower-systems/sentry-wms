@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Modal, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../auth/AuthContext';
 import WarehouseSelector from '../components/WarehouseSelector';
 import client, { getStoredApiUrl, setApiUrl } from '../api/client';
 import { colors, fonts, radii } from '../theme/styles';
+
+const SENTRY_LOGIN_RENDERED = '__sentry_login_rendered__';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -15,14 +17,28 @@ export default function LoginScreen() {
   const [showWarehousePicker, setShowWarehousePicker] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [showServerModal, setShowServerModal] = useState(false);
   const [serverUrl, setServerUrlLocal] = useState('');
+  const [serverDisplay, setServerDisplay] = useState('');
+  const [renderGuard] = useState(() => {
+    // Guard against duplicate renders  -  only allow one instance
+    if (global[SENTRY_LOGIN_RENDERED]) return false;
+    global[SENTRY_LOGIN_RENDERED] = true;
+    return true;
+  });
+
+  useEffect(() => {
+    return () => { global[SENTRY_LOGIN_RENDERED] = false; };
+  }, []);
 
   useEffect(() => {
     // Restore cached username
     AsyncStorage.getItem('sentry_last_username').then((saved) => {
       if (saved) setUsername(saved);
     }).catch(() => {});
+
+    // Load current server URL for display
+    getStoredApiUrl().then((url) => setServerDisplay(url || ''));
 
     client.get('/api/warehouses/list')
       .then((resp) => {
@@ -46,7 +62,6 @@ export default function LoginScreen() {
     }
     setError('');
     setLoading(true);
-    // Cache username for next login attempt
     AsyncStorage.setItem('sentry_last_username', username).catch(() => {});
     try {
       await login(username, password, selectedWarehouse);
@@ -61,6 +76,33 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
+
+  const openServerModal = () => {
+    getStoredApiUrl().then((url) => {
+      setServerUrlLocal(url || '');
+      setShowServerModal(true);
+    });
+  };
+
+  const saveServerUrl = () => {
+    const trimmed = serverUrl.trim();
+    if (trimmed) {
+      setApiUrl(trimmed);
+      setServerDisplay(trimmed);
+      // Reload warehouses with new server
+      client.get('/api/warehouses/list')
+        .then((resp) => {
+          const list = resp.data.warehouses || [];
+          setWarehouses(list);
+          if (list.length === 1) setSelectedWarehouse(list[0].id);
+          setError('');
+        })
+        .catch(() => setError('Could not connect to server'));
+    }
+    setShowServerModal(false);
+  };
+
+  if (!renderGuard) return null;
 
   return (
     <KeyboardAvoidingView
@@ -112,61 +154,45 @@ export default function LoginScreen() {
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
+      </View>
 
-        <TouchableOpacity
-          style={styles.versionBtn}
-          onPress={() => {
-            getStoredApiUrl().then(setServerUrlLocal);
-            setShowServerConfig(!showServerConfig);
-          }}
-        >
-          <Text style={styles.version}>v0.9.7</Text>
-        </TouchableOpacity>
+      {/* Bottom: version + server URL (static, tap opens modal) */}
+      <TouchableOpacity style={styles.bottomBar} onPress={openServerModal}>
+        <Text style={styles.version}>v0.9.8</Text>
+        {serverDisplay ? (
+          <Text style={styles.serverUrlText} numberOfLines={1}>{serverDisplay}</Text>
+        ) : null}
+      </TouchableOpacity>
 
-        {showServerConfig && (
-          <View style={styles.serverConfig}>
-            <Text style={styles.serverLabel}>SERVER</Text>
+      {/* Server URL modal */}
+      <Modal visible={showServerModal} transparent animationType="fade">
+        <Pressable style={styles.modalOverlay} onPress={() => setShowServerModal(false)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>SERVER URL</Text>
             <TextInput
-              style={styles.serverInput}
+              style={styles.modalInput}
               value={serverUrl}
               onChangeText={setServerUrlLocal}
-              onBlur={() => {
-                if (serverUrl.trim()) {
-                  setApiUrl(serverUrl.trim());
-                  // Reload warehouses with new server
-                  client.get('/api/warehouses/list')
-                    .then((resp) => {
-                      const list = resp.data.warehouses || [];
-                      setWarehouses(list);
-                      if (list.length === 1) setSelectedWarehouse(list[0].id);
-                      setError('');
-                    })
-                    .catch(() => setError('Could not connect to server'));
-                }
-              }}
               placeholder="http://10.1.10.150:5000"
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
               placeholderTextColor={colors.textPlaceholder}
               returnKeyType="done"
-              onSubmitEditing={() => {
-                if (serverUrl.trim()) {
-                  setApiUrl(serverUrl.trim());
-                  client.get('/api/warehouses/list')
-                    .then((resp) => {
-                      const list = resp.data.warehouses || [];
-                      setWarehouses(list);
-                      if (list.length === 1) setSelectedWarehouse(list[0].id);
-                      setError('');
-                    })
-                    .catch(() => setError('Could not connect to server'));
-                }
-              }}
+              onSubmitEditing={saveServerUrl}
+              autoFocus
             />
-          </View>
-        )}
-      </View>
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={saveServerUrl}>
+                <Text style={styles.modalSaveBtnText}>SAVE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowServerModal(false)}>
+                <Text style={styles.modalCancelBtnText}>CANCEL</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <WarehouseSelector
         visible={showWarehousePicker}
@@ -270,13 +296,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
-  versionBtn: {
-    position: 'absolute',
-    bottom: 24,
-    left: 0,
-    right: 0,
+  // Bottom bar (static, replaces inline server input)
+  bottomBar: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
     alignItems: 'center',
-    padding: 8,
   },
   version: {
     fontFamily: fonts.mono,
@@ -284,29 +308,80 @@ const styles = StyleSheet.create({
     color: colors.textPlaceholder,
     textAlign: 'center',
   },
-  serverConfig: {
-    position: 'absolute',
-    bottom: 56,
-    left: 32,
-    right: 32,
-  },
-  serverLabel: {
+  serverUrlText: {
     fontFamily: fonts.mono,
     fontSize: 9,
-    fontWeight: '600',
+    color: colors.textPlaceholder,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  // Server URL modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: colors.background,
+    borderRadius: radii.card,
+    padding: 20,
+    width: '100%',
+    maxWidth: 320,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  modalTitle: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    fontWeight: '700',
     color: colors.textMuted,
     letterSpacing: 0.5,
-    marginBottom: 4,
+    marginBottom: 12,
   },
-  serverInput: {
+  modalInput: {
     borderWidth: 1,
     borderColor: colors.inputBorder,
     borderRadius: radii.input,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 12,
+    paddingVertical: 10,
+    fontSize: 13,
     fontFamily: fonts.mono,
     color: colors.textPrimary,
     backgroundColor: colors.inputBg,
+    marginBottom: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modalSaveBtn: {
+    flex: 1,
+    backgroundColor: colors.accentRed,
+    borderRadius: radii.button,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalSaveBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.cream,
+    letterSpacing: 0.5,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    backgroundColor: colors.cardBorder,
+    borderRadius: radii.button,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  modalCancelBtnText: {
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.5,
   },
 });

@@ -1,12 +1,12 @@
 /**
- * ScanSettingsContext — app-wide scan mode management.
+ * ScanSettingsContext  -  app-wide scan mode management.
  *
  * Wraps useScanSettings and ChainwayScanner into a single provider.
  * When mode is 'intent', the native BroadcastReceiver is active.
  * When mode is 'keyboard', the receiver is stopped.
  *
  * Any component can subscribe to intent scans via the onIntentScan
- * callback ref — ScanInput uses this to route intent scans into
+ * callback ref  -  ScanInput uses this to route intent scans into
  * the same onScan handler as keyboard scans.
  */
 

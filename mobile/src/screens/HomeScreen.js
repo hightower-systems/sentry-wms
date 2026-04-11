@@ -98,6 +98,7 @@ export default function HomeScreen({ navigation }) {
     useCallback(() => {
       setBatchDismissed(false);
       loadData();
+      getStoredApiUrl().then(setServerUrl);
     }, [loadData])
   );
 
@@ -150,7 +151,7 @@ export default function HomeScreen({ navigation }) {
       // Not a PO
     }
 
-    // Try SO lookup — generic first to check status, then route appropriately
+    // Try SO lookup  -  generic first to check status, then route appropriately
     try {
       const soResp = await client.get(`/api/lookup/so/${encoded}`);
       if (soResp.data && soResp.data.sales_order) {
@@ -163,7 +164,7 @@ export default function HomeScreen({ navigation }) {
           navigation.navigate('Ship', { so_number: so.so_number });
           return;
         }
-        // SO exists but not in actionable status — show info
+        // SO exists but not in actionable status  -  show info
         const infoLines = [so.customer_name, so.customer_phone, `Status: ${so.status}`].filter(Boolean);
         setInfoModal({ visible: true, title: so.so_number, message: infoLines.join('\n') });
         return;
@@ -236,7 +237,7 @@ export default function HomeScreen({ navigation }) {
               keyboardType="url"
               placeholderTextColor={colors.textPlaceholder}
             />
-            <Text style={[styles.scanConfigHint, { marginBottom: 16 }]}>API server address — change requires re-login</Text>
+            <Text style={[styles.scanConfigHint, { marginBottom: 16 }]}>API server address  -  change requires re-login</Text>
 
             <Text style={styles.scanConfigLabel}>SCAN MODE</Text>
             <View style={styles.scanModeRow}>
@@ -280,7 +281,7 @@ export default function HomeScreen({ navigation }) {
                   placeholderTextColor={colors.textPlaceholder}
                 />
                 {!scanSettings.scannerAvailable && (
-                  <Text style={styles.scanConfigWarn}>Native module not available — intent mode requires a standalone APK build</Text>
+                  <Text style={styles.scanConfigWarn}>Native module not available  -  intent mode requires a standalone APK build</Text>
                 )}
               </>
             )}
@@ -369,7 +370,10 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>v0.9.7 / {warehouseName}</Text>
+        <TouchableOpacity onPress={() => { getStoredApiUrl().then(setServerUrl); setShowScanConfig(true); }}>
+          <Text style={styles.footerIp}>{serverUrl || 'Set Server URL'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.footerText}>v0.9.8 / {warehouseName}</Text>
       </View>
 
       {/* Info modal (replaces Alert.alert for lookups) */}
@@ -622,6 +626,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
     backgroundColor: colors.background,
+  },
+  footerIp: {
+    fontFamily: fonts.mono,
+    fontSize: 9,
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
+    marginBottom: 2,
   },
   footerText: {
     fontFamily: fonts.mono,

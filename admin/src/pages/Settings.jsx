@@ -1,50 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useBlocker } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { useWarehouse } from '../warehouse.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
-const CSV_TEMPLATES = {
-  items: `sku,name,description,upc,default_bin,quantity
-WIDGET-001,Blue Widget,Standard blue widget,012345678901,A-01-01-01,100
-WIDGET-002,Red Widget,Standard red widget,012345678902,A-01-01-02,50
-GADGET-001,Mini Gadget,Compact gadget device,012345678903,B-02-01-01,200`,
-  'purchase-orders': `po_number,vendor,sku,quantity,expected_date
-PO-1001,Acme Supply Co,WIDGET-001,100,2026-05-01
-PO-1001,Acme Supply Co,WIDGET-002,50,2026-05-01
-PO-1002,Global Parts Inc,GADGET-001,200,2026-05-15`,
-  'sales-orders': `so_number,customer,customer_phone,customer_address,sku,quantity
-SO-5001,John Smith,555-0101,123 Main St,WIDGET-001,2
-SO-5001,John Smith,555-0101,123 Main St,GADGET-001,1
-SO-5002,Jane Doe,555-0102,456 Oak Ave,WIDGET-002,3`,
-  bins: `bin_code,zone,aisle,bin_type,pick_sequence,description
-C-01-01-01,STORAGE,C,Pickable,100,Shelf C Row 1 Level 1
-C-01-02-01,STORAGE,C,Pickable,101,Shelf C Row 2 Level 1
-D-01-01-01,PICKING,D,Pickable,200,Pick zone D`,
-};
-
-function downloadTemplate(type) {
-  const csv = CSV_TEMPLATES[type];
-  if (!csv) return;
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `import-${type}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function Settings() {
+  const { warehouseId } = useWarehouse();
   const [warehouse, setWarehouse] = useState(null);
   const [whForm, setWhForm] = useState({});
   const [editingWh, setEditingWh] = useState(false);
-  const [importType, setImportType] = useState('items');
-  const [importResult, setImportResult] = useState(null);
   const [showPO, setShowPO] = useState(false);
   const [showSO, setShowSO] = useState(false);
-  const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', warehouse_id: 1, lines: [{ item_id: '', quantity_expected: '' }] });
-  const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', warehouse_id: 1, lines: [{ item_id: '', quantity: '' }] });
+  const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: null, lines: [{ item_id: '', quantity_expected: '' }] });
+  const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: null, lines: [{ item_id: '', quantity: '' }] });
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
@@ -55,12 +23,8 @@ export default function Settings() {
   const [settingsError, setSettingsError] = useState('');
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [receivingBins, setReceivingBins] = useState([]);
-  const fileRef = useRef(null);
 
   const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
-
-  // Block React Router navigation when there are unsaved changes
-  const blocker = useBlocker(hasUnsavedChanges);
 
   // Warn on browser navigation away with unsaved changes
   useEffect(() => {
@@ -75,7 +39,8 @@ export default function Settings() {
   }, [hasUnsavedChanges]);
 
   useEffect(() => {
-    api.get('/admin/warehouses/1').then(async (res) => {
+    if (!warehouseId) return;
+    api.get(`/admin/warehouses/${warehouseId}`).then(async (res) => {
       if (res?.ok) {
         const data = await res.json();
         setWarehouse(data);
@@ -106,20 +71,20 @@ export default function Settings() {
       setDraftSettings({ ...initial });
     });
 
-    api.get('/admin/bins?warehouse_id=1&bin_type=Staging').then(async (res) => {
+    api.get(`/admin/bins?warehouse_id=${warehouseId}&bin_type=Staging`).then(async (res) => {
       if (res?.ok) {
         const data = await res.json();
         setReceivingBins(data.bins || []);
       }
     }).catch(() => {
-      api.get('/admin/bins?warehouse_id=1').then(async (res) => {
+      api.get(`/admin/bins?warehouse_id=${warehouseId}`).then(async (res) => {
         if (res?.ok) {
           const data = await res.json();
           setReceivingBins((data.bins || []).filter((b) => b.bin_type === 'Staging'));
         }
       }).catch(() => {});
     });
-  }, []);
+  }, [warehouseId]);
 
   function updateDraft(key, value) {
     setDraftSettings((prev) => ({ ...prev, [key]: value }));
@@ -142,43 +107,11 @@ export default function Settings() {
   }
 
   async function saveWarehouse() {
-    const res = await api.put('/admin/warehouses/1', { warehouse_name: whForm.warehouse_name, address: whForm.address });
+    const res = await api.put(`/admin/warehouses/${warehouseId}`, { warehouse_name: whForm.warehouse_name, address: whForm.address });
     if (res?.ok) {
       setWarehouse(await res.json());
       setEditingWh(false);
     }
-  }
-
-  async function handleImport() {
-    const file = fileRef.current?.files?.[0];
-    if (!file) return;
-    setImportResult(null);
-
-    const text = await file.text();
-    let rows;
-
-    if (file.name.endsWith('.json')) {
-      rows = JSON.parse(text);
-    } else {
-      const lines = text.trim().split('\n');
-      const headers = lines[0].split(',').map((h) => h.trim().replace(/^"|"$/g, ''));
-      rows = lines.slice(1).map((line) => {
-        const vals = line.split(',').map((v) => v.trim().replace(/^"|"$/g, ''));
-        const obj = {};
-        headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
-        return obj;
-      });
-    }
-
-    const res = await api.post(`/admin/import/${importType}`, { records: rows });
-    if (res?.ok) {
-      const data = await res.json();
-      setImportResult(data);
-    } else {
-      const data = await res?.json();
-      setImportResult({ error: data?.error || 'Import failed' });
-    }
-    fileRef.current.value = '';
   }
 
   // PO lines
@@ -196,7 +129,7 @@ export default function Settings() {
     if (res?.ok) {
       setFormSuccess('PO created');
       setShowPO(false);
-      setPoForm({ po_number: '', vendor_name: '', warehouse_id: 1, lines: [{ item_id: '', quantity_expected: '' }] });
+      setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_expected: '' }] });
     } else {
       const data = await res?.json();
       setFormError(data?.error || 'Failed to create PO');
@@ -213,12 +146,21 @@ export default function Settings() {
 
   async function createSO() {
     setFormError(''); setFormSuccess('');
-    const body = { ...soForm, lines: soForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity: Number(l.quantity), quantity_ordered: Number(l.quantity) })) };
+    const shipAddress = [soForm.address_line_1, soForm.address_line_2, soForm.city, soForm.state, soForm.zip].filter(Boolean).join(', ');
+    const body = {
+      so_number: soForm.order_number,
+      customer_name: soForm.customer_name,
+      customer_phone: soForm.phone,
+      customer_address: shipAddress,
+      ship_address: shipAddress,
+      warehouse_id: soForm.warehouse_id,
+      lines: soForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity: Number(l.quantity), quantity_ordered: Number(l.quantity) })),
+    };
     const res = await api.post('/admin/sales-orders', body);
     if (res?.ok) {
       setFormSuccess('SO created');
       setShowSO(false);
-      setSoForm({ order_number: '', customer_name: '', warehouse_id: 1, lines: [{ item_id: '', quantity: '' }] });
+      setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity: '' }] });
     } else {
       const data = await res?.json();
       setFormError(data?.error || 'Failed to create SO');
@@ -260,44 +202,6 @@ export default function Settings() {
               <button className="btn" onClick={() => setEditingWh(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={saveWarehouse}>Save</button>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* Import tools */}
-      <div className="settings-section">
-        <h3>Import Tools</h3>
-        <p className="settings-note">Upload a CSV or JSON file to bulk import records.</p>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select className="form-select" style={{ width: 160 }} value={importType} onChange={(e) => setImportType(e.target.value)}>
-            <option value="items">Items</option>
-            <option value="bins">Bins</option>
-            <option value="purchase-orders">Purchase Orders</option>
-            <option value="sales-orders">Sales Orders</option>
-          </select>
-          <input ref={fileRef} type="file" accept=".csv,.json" style={{ fontSize: 13 }} />
-          <button className="btn" onClick={handleImport}>Import</button>
-          <button className="btn btn-sm" onClick={() => downloadTemplate(importType)} style={{ fontSize: 12 }}>Download Template</button>
-        </div>
-        {importResult && (
-          <div className="import-results">
-            {importResult.error ? (
-              <div className="errors">{importResult.error}</div>
-            ) : (
-              <>
-                <div className="success">Imported: {importResult.imported ?? 0}</div>
-                {importResult.errors?.length > 0 && (
-                  <div className="errors" style={{ marginTop: 4 }}>
-                    Errors: {importResult.errors.length}
-                    <ul style={{ margin: '4px 0 0 16px', fontSize: 12 }}>
-                      {importResult.errors.slice(0, 10).map((err, i) => (
-                        <li key={i}>Row {err.row}: {err.error}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </>
-            )}
           </div>
         )}
       </div>
@@ -392,7 +296,7 @@ export default function Settings() {
       <div className="settings-section">
         <h3>About</h3>
         <div className="detail-grid">
-          <span className="detail-label">Version</span><span className="mono">0.9.6</span>
+          <span className="detail-label">Version</span><span className="mono">0.9.8</span>
           <span className="detail-label">Repository</span><span><a href="https://github.com/hightower-systems/sentry-wms" target="_blank" rel="noopener noreferrer">github.com/hightower-systems/sentry-wms</a></span>
         </div>
       </div>
@@ -412,6 +316,10 @@ export default function Settings() {
               <label>Vendor</label>
               <input className="form-input" value={poForm.vendor_name} onChange={(e) => setPoForm({ ...poForm, vendor_name: e.target.value })} />
             </div>
+          </div>
+          <div className="form-group">
+            <label>Vendor Address</label>
+            <input className="form-input" value={poForm.vendor_address} onChange={(e) => setPoForm({ ...poForm, vendor_address: e.target.value })} placeholder="Optional" />
           </div>
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -448,6 +356,34 @@ export default function Settings() {
               <input className="form-input" value={soForm.customer_name} onChange={(e) => setSoForm({ ...soForm, customer_name: e.target.value })} />
             </div>
           </div>
+          <div className="form-group">
+            <label>Address Line 1</label>
+            <input className="form-input" value={soForm.address_line_1} onChange={(e) => setSoForm({ ...soForm, address_line_1: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Address Line 2</label>
+            <input className="form-input" value={soForm.address_line_2} onChange={(e) => setSoForm({ ...soForm, address_line_2: e.target.value })} />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label>City</label>
+              <input className="form-input" value={soForm.city} onChange={(e) => setSoForm({ ...soForm, city: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>State</label>
+              <input className="form-input" value={soForm.state} onChange={(e) => setSoForm({ ...soForm, state: e.target.value })} />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label>Zip</label>
+              <input className="form-input" value={soForm.zip} onChange={(e) => setSoForm({ ...soForm, zip: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Phone</label>
+              <input className="form-input" value={soForm.phone} onChange={(e) => setSoForm({ ...soForm, phone: e.target.value })} />
+            </div>
+          </div>
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)' }}>Lines</label>
@@ -467,19 +403,6 @@ export default function Settings() {
         </Modal>
       )}
 
-      {/* Leave without saving warning (triggered by React Router navigation) */}
-      {blocker.state === 'blocked' && (
-        <Modal title="Unsaved Changes" onClose={() => blocker.reset()}
-          footer={
-            <>
-              <button className="btn" onClick={() => blocker.reset()}>Stay</button>
-              <button className="btn btn-danger" onClick={() => blocker.proceed()}>Leave Without Saving</button>
-            </>
-          }
-        >
-          <p style={{ fontSize: 13 }}>You have unsaved settings changes. Leave without saving?</p>
-        </Modal>
-      )}
     </div>
   );
 }

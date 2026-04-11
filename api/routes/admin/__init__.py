@@ -13,14 +13,4 @@ VALID_BIN_TYPES = ("Staging", "PickableStaging", "Pickable")
 VALID_ROLES = ("ADMIN", "USER")
 
 
-def _paginate(query_base, count_base, params, page, per_page):
-    """Add pagination to a query. Returns (rows, total, pages)."""
-    total = None
-    pages = 1
-    offset = (page - 1) * per_page
-    params["limit"] = per_page
-    params["offset"] = offset
-    return per_page, offset
-
-
 from routes.admin import admin_warehouse, admin_items, admin_orders, admin_users  # noqa: E402, F401

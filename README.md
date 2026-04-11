@@ -3,7 +3,7 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.9.7-8e2716)
+  ![Version](https://img.shields.io/badge/version-0.9.8-8e2716)
   ![Tests](https://img.shields.io/badge/tests-277%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -27,6 +27,8 @@ Sentry is the link between the warehouse floor and your system of record. It con
 - **Shipping** - Carrier/tracking entry, fulfillment recording (separate screen from packing)
 - **Cycle Counting** - Bin-level counts with variance detection
 - **Bin Transfers** - Move inventory between locations
+- **Inter-Warehouse Transfers** - Cross-warehouse inventory moves with audit trail
+- **Inventory Adjustments** - Direct add/remove with reason tracking
 
 ## What Sentry Is Not
 
@@ -36,10 +38,10 @@ Sentry is not an ERP. It does not manage orders, products, or customers. It conn
 
 | Layer | Technology |
 |-------|-----------|
-| Mobile App | React Native (Expo) — shared hooks (`useScreenError`), reusable components (`ScreenHeader`, `ModeSelector`, `ScanInput`) |
-| API | Python / Flask — `@with_db` middleware, `inventory_service` + `picking_service` service layer |
+| Mobile App | React Native (Expo)  -  shared hooks (`useScreenError`), reusable components (`ScreenHeader`, `ModeSelector`, `ScanInput`) |
+| API | Python / Flask  -  `@with_db` middleware, `inventory_service` + `picking_service` service layer, `constants.py` status enums |
 | Database | PostgreSQL 16 (dev Docker) · PostgreSQL Cloud (prod) |
-| Admin Panel | React Web App |
+| Admin Panel | React Web App  -  dark theme, warehouse context picker, `WarehouseContext` provider |
 
 ## Quick Start
 
@@ -51,8 +53,11 @@ cd sentry-wms
 # Copy environment config
 cp .env.example .env
 
-# Start PostgreSQL + API with Docker
+# Start PostgreSQL + API with Docker (includes demo seed data)
 docker-compose up -d
+
+# Or start with a clean system (no demo data):
+# SKIP_SEED=true docker-compose up -d
 
 # API is now running at http://localhost:5000
 # Health check: http://localhost:5000/api/health
@@ -81,11 +86,15 @@ The admin panel is a React web app for warehouse managers to monitor operations 
 - **Cycle Counts** - create and track bin-level counts
 - **Receiving / Put-Away / Picking / Packing / Shipping** - workflow status views
 - **Bins / Zones / Items** - warehouse setup with create, edit, and detail views
+- **Adjustments** - direct inventory add/remove with reason tracking
+- **Inter-Warehouse Transfers** - move inventory between warehouses
 - **Users** - user management with role assignment
-- **Audit Log** - filterable log viewer
-- **Settings** - warehouse config, CSV import, manual PO/SO entry
+- **Audit Log** - filterable log viewer with entity name resolution
+- **Import** - CSV/JSON bulk import for items, bins, POs, SOs with templates
+- **Settings** - warehouse config, manual PO/SO entry, fulfillment workflow toggles
+- **Warehouse Picker** - header dropdown to switch warehouse context (all pages filter dynamically)
 
-Built with React 18, Vite, React Router, and plain CSS. No component libraries.
+Built with React 18, Vite, React Router, and plain CSS. Dark theme with copper accents. No component libraries.
 
 ## API Endpoints
 
@@ -153,6 +162,14 @@ Built with React 18, Vite, React Router, and plain CSS. No component libraries.
 |--------|----------|-------------|
 | POST | `/api/transfers/move` | Move items between bins |
 
+### Inventory Adjustments & Inter-Warehouse Transfers
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/adjustments/direct` | Create and auto-approve inventory adjustment |
+| GET | `/api/admin/adjustments/list` | List adjustments with item/bin details |
+| POST | `/api/admin/inter-warehouse-transfer` | Move inventory between warehouses |
+| GET | `/api/admin/inter-warehouse-transfers` | Recent inter-warehouse transfer history |
+
 ### Admin CRUD
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -213,6 +230,8 @@ The apartment lab seed (`db/seed-apartment-lab.sql`) matches 61 printed Zebra ba
 - 5 purchase orders (10/3/8/5/1 lines)
 - 20 sales orders (single-item, multi-item, contention, serpentine walk, short pick test)
 
+Set `SKIP_SEED=true` to start with a clean system (admin user + one empty warehouse only, no demo data).
+
 ### Testing
 
 277 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~4.5 seconds.
@@ -239,12 +258,13 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.9.0 | Mobile scanner app (10 screens, C6000 support) | ✅ Complete |
 | v0.9.1 | Apartment lab testing, preferred bins, bug fixes | ✅ Complete |
 | v0.9.2 | Test infrastructure, bin type simplification, short pick reporting | ✅ Complete |
-| v0.9.3 | UI revamp — tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
-| v0.9.4 | Structural refactor — service layer, admin split, shared styles/hooks | ✅ Complete |
+| v0.9.3 | UI revamp  -  tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
+| v0.9.4 | Structural refactor  -  service layer, admin split, shared styles/hooks | ✅ Complete |
 | v0.9.5 | Scan hardening, cycle count approval, admin UX overhaul, CSV templates | ✅ Complete |
 | v0.9.6 | Scan hardening, put-away reorder, manual picking, role simplification | ✅ Complete |
 | v0.9.7 | 27-bug hardware test fix (repeat offenders, styled modals, EAS build) | ✅ Complete |
-| v1.0.0 | Production release — hardware tested, full warehouse workflow | Planned |
+| v0.9.8 | Admin dark theme, warehouse picker, security hardening, status constants, SKIP_SEED | ✅ Complete |
+| v1.0.0 | Production release  -  hardware tested, full warehouse workflow | Planned |
 | v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -257,4 +277,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.7
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.8

@@ -38,6 +38,7 @@ export default function ReceiveScreen({ navigation, route }) {
   const [showBinPicker, setShowBinPicker] = useState(false);
   const [binPickerValue, setBinPickerValue] = useState('');
   const [allowOverReceiving, setAllowOverReceiving] = useState(true);
+  const [stagingBins, setStagingBins] = useState([]);
   // Track qty field focus to suppress scan input auto-refocus
   const [qtyFocused, setQtyFocused] = useState(false);
   // Track items that have already shown over-receive warning (show only once per item)
@@ -56,6 +57,13 @@ export default function ReceiveScreen({ navigation, route }) {
       .then((resp) => {
         const val = resp.data?.value;
         setAllowOverReceiving(val !== 'false' && val !== false);
+      })
+      .catch(() => {});
+    // Load staging bins for the bin picker
+    client.get(`/api/admin/bins?warehouse_id=${warehouseId}`)
+      .then((r) => {
+        const bins = r.data?.bins || [];
+        setStagingBins(bins.filter((b) => b.bin_type === 'Staging' || b.bin_type === 'PickableStaging'));
       })
       .catch(() => {});
     // Load default receiving bin from settings
@@ -89,7 +97,7 @@ export default function ReceiveScreen({ navigation, route }) {
   useEffect(() => {
     const handler = BackHandler.addEventListener('hardwareBackPress', () => {
       if (phase === 'receiving') {
-        return true; // consumed — prevent back-out during scan
+        return true; // consumed  -  prevent back-out during scan
       }
       return false;
     });
@@ -224,7 +232,7 @@ export default function ReceiveScreen({ navigation, route }) {
         });
         return;
       }
-      // Already warned — allow silently
+      // Already warned  -  allow silently
       setActiveItem(match);
       setQuantity('1');
       return;
@@ -267,7 +275,7 @@ export default function ReceiveScreen({ navigation, route }) {
         showError(`Cannot receive more than ordered (${remaining > 0 ? remaining : 0} remaining)`);
         return;
       }
-      // Show warning but allow — EVERY time
+      // Show warning but allow  -  EVERY time
       const overAmount = totalAfterReceive - activeItem.quantity_ordered;
       setConfirmModal({
         visible: true,
@@ -340,26 +348,24 @@ export default function ReceiveScreen({ navigation, route }) {
   };
 
   const handleCancel = () => {
-    if (sessionReceiptIds.length === 0) {
-      navigation.goBack();
-      return;
-    }
     setConfirmModal({
       visible: true,
       title: 'Cancel Receiving',
-      message: 'This will discard ALL items received in this session. Are you sure?',
-      confirmText: 'Discard & Exit',
+      message: 'Are you sure? Items already received will not be saved.',
+      confirmText: 'Cancel',
       cancelText: 'Stay',
       onConfirm: async () => {
         setConfirmModal((p) => ({ ...p, visible: false }));
-        try {
-          await client.post('/api/receiving/cancel', {
-            receipt_ids: sessionReceiptIds,
-            po_id: po?.po_id,
-            warehouse_id: warehouseId,
-          });
-        } catch {
-          // Best effort — still exit
+        if (sessionReceiptIds.length > 0) {
+          try {
+            await client.post('/api/receiving/cancel', {
+              receipt_ids: sessionReceiptIds,
+              po_id: po?.po_id,
+              warehouse_id: warehouseId,
+            });
+          } catch {
+            // Best effort  -  still exit
+          }
         }
         navigation.goBack();
       },
@@ -586,10 +592,10 @@ export default function ReceiveScreen({ navigation, route }) {
       {/* Bin picker modal */}
       <Modal visible={showBinPicker} transparent animationType="fade">
         <View style={styles.modeOverlay}>
-          <View style={styles.modeCard}>
+          <View style={[styles.modeCard, { maxHeight: '70%' }]}>
             <Text style={styles.modeTitle}>CHANGE RECEIVING BIN</Text>
             <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 12 }}>
-              Scan or type bin code
+              Scan or select a staging bin
             </Text>
             <ScanInput
               placeholder="SCAN BIN"
@@ -597,10 +603,13 @@ export default function ReceiveScreen({ navigation, route }) {
                 console.log('[SCAN_DEBUG] ReceiveScreen.binPicker received:', JSON.stringify(barcode));
                 try {
                   const resp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
-                  if (resp.data?.bin) {
-                    setReceivingBinId(resp.data.bin.bin_id);
-                    setReceivingBinCode(resp.data.bin.bin_code);
+                  const bin = resp.data?.bin;
+                  if (bin && (bin.bin_type === 'Staging' || bin.bin_type === 'PickableStaging')) {
+                    setReceivingBinId(bin.bin_id);
+                    setReceivingBinCode(bin.bin_code);
                     setShowBinPicker(false);
+                  } else if (bin) {
+                    showError(`${bin.bin_code} is ${bin.bin_type}  -  must be Staging or PickableStaging`);
                   } else {
                     showError('Bin not found');
                   }
@@ -610,6 +619,24 @@ export default function ReceiveScreen({ navigation, route }) {
               }}
               disabled={false}
             />
+            {stagingBins.length > 0 && (
+              <ScrollView style={{ maxHeight: 180, marginTop: 8 }}>
+                {stagingBins.map((bin) => (
+                  <TouchableOpacity
+                    key={bin.bin_id}
+                    style={[listStyles.row, { padding: 10, marginBottom: 4 }, bin.bin_id === receivingBinId && { borderColor: colors.accentRed }]}
+                    onPress={() => {
+                      setReceivingBinId(bin.bin_id);
+                      setReceivingBinCode(bin.bin_code);
+                      setShowBinPicker(false);
+                    }}
+                  >
+                    <Text style={{ fontFamily: fonts.mono, fontSize: 13, fontWeight: '700', color: colors.textPrimary }}>{bin.bin_code}</Text>
+                    <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted, marginLeft: 8 }}>{bin.bin_type}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
             <TouchableOpacity
               style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
               onPress={() => setShowBinPicker(false)}
@@ -665,7 +692,7 @@ const styles = StyleSheet.create({
   poDetail: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
 
   // Phase 2: Receiving
-  poHeader: { marginBottom: 16 },
+  poHeader: { marginBottom: 10 },
   poHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   poHeaderNumber: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   poProgress: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted },
@@ -684,7 +711,7 @@ const styles = StyleSheet.create({
   turboText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.success },
   receiveCard: {
     borderWidth: 1.5, borderColor: colors.accentRed, borderRadius: radii.card,
-    padding: 16, marginBottom: 16,
+    padding: 12, marginBottom: 10,
   },
   expectedText: { fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted, marginTop: 6 },
   qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 12 },

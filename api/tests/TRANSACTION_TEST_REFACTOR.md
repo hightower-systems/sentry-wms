@@ -15,16 +15,16 @@ This document summarizes the changes that replaced **per-test `TRUNCATE` + full 
 
 - Thread-local storage for the **raw DB-API connection** (psycopg2) that matches the SQLAlchemy connection used for the current test’s outer transaction.
 - API:
-  - `set_raw_connection(conn)` — set by `conftest` at the start of each test transaction.
-  - `get_raw_connection()` — used by tests/helpers instead of `psycopg2.connect(...)`.
-  - `clear_raw_connection()` — cleared in `conftest` teardown.
+  - `set_raw_connection(conn)`  -  set by `conftest` at the start of each test transaction.
+  - `get_raw_connection()`  -  used by tests/helpers instead of `psycopg2.connect(...)`.
+  - `clear_raw_connection()`  -  cleared in `conftest` teardown.
 
 ## Modified files
 
 ### `api/tests/conftest.py`
 
 - **`sys.path`**: Inserts the `tests/` directory (in addition to the API parent) so `import db_test_context` works when the working directory is `/app` or `api/`.
-- **`_seed_session_database`** (session-scoped fixture): Calls `_seed_database()` once — `TRUNCATE … CASCADE` on `ALL_TABLES`, then runs `seed-apartment-lab.sql`.
+- **`_seed_session_database`** (session-scoped fixture): Calls `_seed_database()` once  -  `TRUNCATE … CASCADE` on `ALL_TABLES`, then runs `seed-apartment-lab.sql`.
 - **`app`**: Now depends on `_seed_session_database` so the DB is seeded before the Flask app is created.
 - **`_db_transaction`** (function-scoped, autouse):
   - `engine.connect()`, `begin()` outer transaction.

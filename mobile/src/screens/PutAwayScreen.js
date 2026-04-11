@@ -145,11 +145,11 @@ export default function PutAwayScreen({ navigation }) {
     }
   };
 
-  // Handle scan during process phase — match to a queue item or a bin
+  // Handle scan during process phase  -  match to a queue item or a bin
   const handleProcessScan = async (barcode) => {
     console.log('[SCAN_DEBUG] PutAwayScreen.handleProcessScan received:', JSON.stringify(barcode), 'activeItem:', !!activeItem);
     if (!activeItem) {
-      // No item selected — try to match a queue item by barcode
+      // No item selected  -  try to match a queue item by barcode
       const match = queue.find((q) => q.upc === barcode || q.sku === barcode);
       if (match) {
         await selectItem(match);
@@ -158,7 +158,7 @@ export default function PutAwayScreen({ navigation }) {
       showError('Scan an item from the list');
       return;
     }
-    // Active item selected — this scan is a bin
+    // Active item selected  -  this scan is a bin
     await handleScanBin(barcode);
   };
 
@@ -330,7 +330,7 @@ export default function PutAwayScreen({ navigation }) {
       {/* Process Phase */}
       {phase === 'process' && (
         <>
-          {/* Active item detail — scrollable for small screens */}
+          {/* Active item detail  -  scrollable for small screens */}
           {activeItem ? (
             <ScrollView ref={scrollRef} style={screenStyles.content} contentContainerStyle={screenStyles.contentInner} keyboardShouldPersistTaps="handled">
               <ScanInput
@@ -390,14 +390,14 @@ export default function PutAwayScreen({ navigation }) {
               )}
 
               <TouchableOpacity
-                style={[buttonStyles.buttonSecondary, { marginTop: 8 }]}
+                style={[buttonStyles.buttonSecondary, { marginTop: 4 }]}
                 onPress={() => { setActiveItem(null); setPreferredBin(null); setScannedBin(null); setProcessPhase('scan_bin'); }}
               >
                 <Text style={buttonStyles.buttonSecondaryText}>BACK TO LIST</Text>
               </TouchableOpacity>
             </ScrollView>
           ) : (
-            /* Queue list — tap any item to select */
+            /* Queue list  -  tap any item to select */
             <View style={screenStyles.content}>
               <View style={{ padding: 16, paddingBottom: 0 }}>
                 <ScanInput
@@ -552,7 +552,7 @@ const styles = StyleSheet.create({
   // Process phase
   itemCard: {
     backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: radii.card,
-    padding: 12, marginBottom: 10,
+    padding: 8, marginBottom: 6,
   },
   itemName: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
   sku: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '600', color: colors.textMuted, marginTop: 1 },
@@ -560,26 +560,26 @@ const styles = StyleSheet.create({
 
   suggestCard: {
     borderWidth: 2, borderStyle: 'dashed', borderColor: colors.copper, borderRadius: 0,
-    padding: 12, marginBottom: 10, alignItems: 'center',
+    padding: 6, marginBottom: 6, alignItems: 'center',
   },
-  suggestLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
-  suggestBinCode: { fontFamily: fonts.mono, fontSize: 24, fontWeight: '700', color: colors.copper },
-  suggestZone: { fontFamily: fonts.mono, fontSize: 11, color: colors.copper, letterSpacing: 0.3, marginTop: 2, textTransform: 'uppercase' },
+  suggestLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 1 },
+  suggestBinCode: { fontFamily: fonts.mono, fontSize: 20, fontWeight: '700', color: colors.copper },
+  suggestZone: { fontFamily: fonts.mono, fontSize: 10, color: colors.copper, letterSpacing: 0.3, marginTop: 1, textTransform: 'uppercase' },
 
   noPreferredCard: {
     borderWidth: 2, borderStyle: 'dashed', borderColor: colors.copper, borderRadius: 0,
-    padding: 12, marginBottom: 10, alignItems: 'center',
+    padding: 6, marginBottom: 6, alignItems: 'center',
   },
-  noPreferredText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '600', color: colors.textMuted },
-  noPreferredSub: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
+  noPreferredText: { fontFamily: fonts.mono, fontSize: 13, fontWeight: '600', color: colors.textMuted },
+  noPreferredSub: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
 
   confirmCard: {
     borderWidth: 1, borderColor: colors.success, borderRadius: radii.card,
-    padding: 12, marginTop: 6,
+    padding: 10, marginTop: 4,
   },
-  confirmLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 4 },
-  confirmBinCode: { fontFamily: fonts.mono, fontSize: 22, fontWeight: '700', color: colors.success, marginBottom: 12 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  confirmLabel: { fontFamily: fonts.mono, fontSize: 9, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3, marginBottom: 2 },
+  confirmBinCode: { fontFamily: fonts.mono, fontSize: 20, fontWeight: '700', color: colors.success, marginBottom: 8 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   qtyLabel: { fontFamily: fonts.mono, fontSize: 10, fontWeight: '600', color: colors.textMuted, letterSpacing: 0.3 },
 
   // Session history

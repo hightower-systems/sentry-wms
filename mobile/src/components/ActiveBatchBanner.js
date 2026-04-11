@@ -15,17 +15,17 @@ export default function ActiveBatchBanner({ batch, onResume, onDismiss, onDelete
         {batch.total_orders} order{batch.total_orders !== 1 ? 's' : ''}
       </Text>
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.resumeButton} onPress={onResume}>
-          <Text style={styles.resumeText}>RESUME</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.dismissButton} onPress={onDismiss}>
-          <Text style={styles.dismissText}>Dismiss</Text>
-        </TouchableOpacity>
         {onDelete && (
           <TouchableOpacity style={styles.deleteButton} onPress={onDelete}>
             <Text style={styles.deleteText}>Delete</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity style={styles.dismissButton} onPress={onDismiss}>
+          <Text style={styles.dismissText}>Dismiss</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.resumeButton} onPress={onResume}>
+          <Text style={styles.resumeText}>RESUME</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -65,14 +65,14 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 8,
   },
   resumeButton: {
+    flex: 1,
     borderWidth: 1.5,
     borderColor: colors.textPrimary,
     borderRadius: radii.button,
     paddingVertical: 10,
-    paddingHorizontal: 20,
     minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
@@ -85,8 +85,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   dismissButton: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: colors.cardBorder,
+    borderRadius: radii.button,
     paddingVertical: 10,
-    paddingHorizontal: 16,
     minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',
@@ -98,8 +101,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   deleteButton: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: colors.accentRed,
+    borderRadius: radii.button,
     paddingVertical: 10,
-    paddingHorizontal: 16,
     minHeight: 40,
     alignItems: 'center',
     justifyContent: 'center',

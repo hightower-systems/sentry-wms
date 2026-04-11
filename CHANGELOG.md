@@ -2,6 +2,46 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v0.9.8] - 2026-04-11
+
+### Security
+- **JWT_SECRET required**  -  app raises `RuntimeError` on startup if `JWT_SECRET` env var is missing (was silently falling back to hardcoded default)
+- **CORS restricted**  -  `CORS(app)` wildcard replaced with explicit origin whitelist (`CORS_ORIGINS` env var, defaults to `localhost:3000,localhost:8081`)
+- **Explicit allowed-field sets**  -  all admin update endpoints (items, POs, SOs, users, warehouses, zones, bins) now use `ALLOWED_FIELDS` sets instead of iterating arbitrary request keys
+- **Dead code removed**  -  unused `_paginate()` helper deleted from admin `__init__.py`
+
+### Admin Panel
+- Dark theme overhaul  -  header (#2a2520), sidebar, copper accents, cream text, 48px header with 192px sidebar
+- Warehouse picker dropdown in header  -  admin users switch warehouse context from the topbar
+- `WarehouseContext` provider persists selection in sessionStorage, auto-selects first warehouse on login
+- All pages use dynamic `warehouseId` from context instead of hardcoded `warehouse_id=1`
+- All pages re-fetch data automatically when warehouse selection changes
+- **Adjustments page**  -  direct inventory add/remove with searchable bin/item pickers, recent adjustments table
+- **Inter-Warehouse Transfers page**  -  cross-warehouse inventory moves with cascading warehouse/bin/item selects, transfer history
+- **Imports page**  -  merged import type selector and file upload into single card with download template buttons
+- Settings: removed import tools (moved to Imports page), added address fields to SO modal, vendor address to PO modal
+- Audit log: batch-resolves entity IDs to human-readable names (bins, items, SOs, POs)
+- Sidebar: added Adjustments and Transfers nav items under Warehouse group
+- 4 new API endpoints: `POST /admin/adjustments/direct`, `GET /admin/adjustments/list`, `POST /admin/inter-warehouse-transfer`, `GET /admin/inter-warehouse-transfers`
+
+### Mobile
+- PutAwayScreen: compressed spacing for suggest/item/confirm cards
+- TransferScreen: tightened step dots, labels, info cards, quantity row
+- PickWalkScreen: reduced bin/item/next card padding and margins
+- CountScreen: reduced bin header, turbo card, count input spacing
+- ReceiveScreen: reduced PO header and receive card spacing
+- LoginScreen: server URL moved to modal popup (was inline toggle), render guard for duplicate mount prevention
+- ActiveBatchBanner: layout fixes for C6000 small screen
+- Mobile version updated to v0.9.8
+
+### Code Quality
+- New `constants.py` with named constants for all status strings (PO, SO, batch, task, count, adjustment, audit action, bin type, role)
+- All 12 route files + `picking_service.py` refactored from hardcoded string literals (`'OPEN'`, `'PICKED'`, `'PENDING'`, etc.) to imported constants  -  eliminates typo risk across 100+ status comparisons
+
+### Data
+- Renamed 11 branded items to generic descriptions (e.g. "Orvis Clearwater Rod 9ft" → "9ft 5wt Fly Rod"); fly pattern names kept as-is (not trademarked)
+- Added `SKIP_SEED` environment variable: `SKIP_SEED=true` creates only admin user + default warehouse + default bins (no demo data); seed script converted to shell wrapper (`db/seed.sh`)
+
 ## [v0.9.7] - 2026-04-10
 
 ### Repeat Offender Fixes (8 bugs, 14 new tests)
@@ -65,18 +105,18 @@ All notable changes to Sentry WMS will be documented in this file.
 - Settings: batch Save button replaces auto-save, "Unsaved changes" indicator, browser beforeunload warning
 - Admin panel version updated to 0.9.5
 
-### Mobile (Batch 1 — Scan Debug)
+### Mobile (Batch 1  -  Scan Debug)
 - Added `[SCAN_DEBUG]` logging to every scan handler across all screens
 - Added `[API_DEBUG]` request/response logging to API client
 - ScanInput: removed 300ms auto-submit timer (caused partial barcodes on C6000), added processing lock, improved whitespace/CR sanitization
 - All scan handlers: process only on Enter/Submit, trim `\r\n\s`, ignore empty, disable during processing
 
-### Mobile (Batch 2 — Features)
+### Mobile (Batch 2  -  Features)
 - Put-away: replaced forced sequential flow with scrollable item list (scan or tap any item)
 - Pick walk: item detail modal now has PICK + CLOSE buttons side by side for manual picking
 - Pick walk: replaced Alert.alert cancel with styled app modal (white card, 12px radius, tan border)
-- Pick walk: fixed NEXT ITEM PREVIEW — wrong API URL, stale task list, forward-scan logic for next PENDING task, "LAST ITEM IN BATCH" on final item
-- Cycle count architecture: removed auto-adjustment of inventory on variance — creates PENDING audit records instead
+- Pick walk: fixed NEXT ITEM PREVIEW  -  wrong API URL, stale task list, forward-scan logic for next PENDING task, "LAST ITEM IN BATCH" on final item
+- Cycle count architecture: removed auto-adjustment of inventory on variance  -  creates PENDING audit records instead
 - Cycle count: support for unexpected items (items found during count not in snapshot), flagged with "NEW" badge
 - Cycle count: blind count mode respects `count_show_expected` setting from admin
 - Transfer: X clear buttons on FROM BIN and TO BIN fields to correct mis-scans
@@ -96,13 +136,13 @@ All notable changes to Sentry WMS will be documented in this file.
 ## [v0.9.4] - 2026-04-08
 
 ### Refactored
-- Extracted `inventory_service.py` with `add_inventory()` and `move_inventory()` — inventory math now lives in one place instead of 3 route files
-- Created `@with_db` decorator — eliminates manual db session boilerplate from all 10 route files + 43 admin routes
+- Extracted `inventory_service.py` with `add_inventory()` and `move_inventory()`  -  inventory math now lives in one place instead of 3 route files
+- Created `@with_db` decorator  -  eliminates manual db session boilerplate from all 10 route files + 43 admin routes
 - Split 1,925-line `admin.py` monolith into 4 focused modules: `admin_warehouse.py`, `admin_items.py`, `admin_orders.py`, `admin_users.py`
-- Extracted shared mobile StyleSheets: `screenStyles`, `buttonStyles`, `modalStyles`, `listStyles`, `doneStyles` — removed ~360 lines of duplicate styles across 12 screens
-- Created `useScreenError` hook — consolidated error + scanDisabled state in 10 screens
-- Created `ScreenHeader` component — replaced ~20 lines of duplicated header JSX per screen
-- Created `ModeSelector` component — reusable Standard/Turbo toggle for Receive and Count screens
+- Extracted shared mobile StyleSheets: `screenStyles`, `buttonStyles`, `modalStyles`, `listStyles`, `doneStyles`  -  removed ~360 lines of duplicate styles across 12 screens
+- Created `useScreenError` hook  -  consolidated error + scanDisabled state in 10 screens
+- Created `ScreenHeader` component  -  replaced ~20 lines of duplicated header JSX per screen
+- Created `ModeSelector` component  -  reusable Standard/Turbo toggle for Receive and Count screens
 - Added `ActivityIndicator` loading states to HomeScreen and PickWalkScreen
 
 ### Fixed
@@ -128,7 +168,7 @@ All notable changes to Sentry WMS will be documented in this file.
 ### Added
 - Short pick admin reporting endpoint (GET /api/admin/short-picks) with SKU, bin, expected/picked/shortage, picker, timestamp
 - Short pick count on dashboard pipeline (7d rolling, red when > 0)
-- Pick walk item detail modal — tap any item card for SKU, UPC, bin, zone, qty, contributing orders
+- Pick walk item detail modal  -  tap any item card for SKU, UPC, bin, zone, qty, contributing orders
 - `count_show_expected` setting enforced (hides expected qty for blind counts)
 
 ### Changed

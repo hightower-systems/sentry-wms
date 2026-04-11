@@ -6,7 +6,7 @@ import { useRef, useCallback, useState } from 'react';
  * don't race or get dropped while an API call is in-flight.
  *
  * Pass errorRef (from useScreenError) so the queue pauses while an
- * error popup is visible — prevents stacked popups and crashes.
+ * error popup is visible  -  prevents stacked popups and crashes.
  *
  * Returns [enqueue, isProcessing]
  */
