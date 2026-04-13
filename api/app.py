@@ -27,9 +27,11 @@ def create_app():
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
         "CORS_ORIGINS",
-        "http://localhost:3000,http://localhost:8081",
+        "http://localhost:3000,http://localhost:5000,http://localhost:8081",
     ).split(",")
-    CORS(app, origins=[o.strip() for o in cors_origins])
+    resolved_origins = [o.strip() for o in cors_origins]
+    print(f"[CORS] Allowed origins: {resolved_origins}")
+    CORS(app, origins=resolved_origins)
 
     # Register blueprints
     from routes.auth import auth_bp
@@ -66,4 +68,5 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     port = int(os.getenv("FLASK_PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.getenv("FLASK_ENV") == "development"
+    app.run(host="0.0.0.0", port=port, debug=debug)

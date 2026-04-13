@@ -217,35 +217,64 @@ function withChainwayScannerFiles(config) {
 
 function withChainwayScannerPackageRegistration(config) {
   return withMainApplication(config, (cfg) => {
-    const contents = cfg.modResults.contents;
+    let contents = cfg.modResults.contents;
+    const isKotlin = !contents.includes("package " + PACKAGE + ";");
 
     // Add import if not present
-    const importLine = `import ${PACKAGE}.ChainwayScannerPackage;`;
-    if (!contents.includes(importLine)) {
-      cfg.modResults.contents = contents.replace(
-        /^(package .+;\n)/m,
-        `$1\n${importLine}\n`
-      );
+    if (!contents.includes("ChainwayScannerPackage")) {
+      if (isKotlin) {
+        // Kotlin: no semicolons on import/package lines
+        contents = contents.replace(
+          /^(package .+\n)/m,
+          `$1\nimport ${PACKAGE}.ChainwayScannerPackage\n`
+        );
+      } else {
+        // Java: semicolons on import/package lines
+        contents = contents.replace(
+          /^(package .+;\n)/m,
+          `$1\nimport ${PACKAGE}.ChainwayScannerPackage;\n`
+        );
+      }
     }
 
-    // Add to getPackages() if not present
-    if (!cfg.modResults.contents.includes("ChainwayScannerPackage")) {
-      cfg.modResults.contents = cfg.modResults.contents.replace(
-        /(packages\.add\(new \w+\(\)\);)/,
-        `$1\n          packages.add(new ChainwayScannerPackage());`
-      );
+    // Register package in getPackages() if not present
+    if (!contents.includes("ChainwayScannerPackage()")) {
+      if (isKotlin) {
+        // Kotlin with .apply { } block (Expo 54+ / RN 0.81+)
+        contents = contents.replace(
+          /(PackageList\(this\)\.packages\.apply\s*\{[^}]*?)(\/\/.*add.*\n\s*)/m,
+          `$1$2              add(ChainwayScannerPackage())\n              `
+        );
+        // Fallback: just insert inside .apply { }
+        if (!contents.includes("ChainwayScannerPackage()")) {
+          contents = contents.replace(
+            /(\.packages\.apply\s*\{)\s*\n/m,
+            `$1\n              add(ChainwayScannerPackage())\n`
+          );
+        }
+      } else {
+        // Java: older RN pattern
+        contents = contents.replace(
+          /(packages\.add\(new \w+\(\)\);)/,
+          `$1\n          packages.add(new ChainwayScannerPackage());`
+        );
+        if (!contents.includes("ChainwayScannerPackage")) {
+          contents = contents.replace(
+            /(return packages;)/,
+            `packages.add(new ChainwayScannerPackage());\n          $1`
+          );
+        }
+      }
     }
 
-    // Fallback: if the above pattern didn't match (newer RN uses a different pattern),
-    // try the PackageList approach
-    if (!cfg.modResults.contents.includes("ChainwayScannerPackage")) {
-      cfg.modResults.contents = cfg.modResults.contents.replace(
-        /(return packages;)/,
-        `packages.add(new ChainwayScannerPackage());\n          $1`
-      );
+    cfg.modResults.contents = contents;
+
+    if (contents.includes("ChainwayScannerPackage")) {
+      console.log("[chainway-scanner] Registered package in MainApplication (" + (isKotlin ? "Kotlin" : "Java") + ")");
+    } else {
+      console.warn("[chainway-scanner] WARNING: Failed to register package - manual registration required");
     }
 
-    console.log("[chainway-scanner] Registered package in MainApplication");
     return cfg;
   });
 }

@@ -168,8 +168,8 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
     # 6. Update each SO status to PICKING
     for order in orders_info:
         db.execute(
-            text(f"UPDATE sales_orders SET status = '{SO_PICKING}' WHERE so_id = :so_id"),
-            {"so_id": order["so_id"]},
+            text("UPDATE sales_orders SET status = :status WHERE so_id = :so_id"),
+            {"so_id": order["so_id"], "status": SO_PICKING},
         )
 
     # 7. Update batch totals
@@ -374,8 +374,8 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
 
     # 6. Get remaining count
     remaining = db.execute(
-        text(f"SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid AND status = '{TASK_PENDING}'"),
-        {"bid": task.batch_id},
+        text("SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid AND status = :task_status"),
+        {"bid": task.batch_id, "task_status": TASK_PENDING},
     ).scalar()
 
     # 7. Audit log
@@ -567,8 +567,8 @@ def complete_batch(db, batch_id, username):
 
     # Check all tasks are in terminal state
     pending_count = db.execute(
-        text(f"SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid AND status = '{TASK_PENDING}'"),
-        {"bid": batch_id},
+        text("SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid AND status = :task_status"),
+        {"bid": batch_id, "task_status": TASK_PENDING},
     ).scalar()
 
     if pending_count > 0:
@@ -577,9 +577,9 @@ def complete_batch(db, batch_id, username):
     # 2. Update batch
     db.execute(
         text(
-            f"UPDATE pick_batches SET status = '{BATCH_COMPLETED}', completed_at = NOW() WHERE batch_id = :bid"
+            "UPDATE pick_batches SET status = :batch_status, completed_at = NOW() WHERE batch_id = :bid"
         ),
-        {"bid": batch_id},
+        {"bid": batch_id, "batch_status": BATCH_COMPLETED},
     )
 
     # 3. Update each SO to PICKING
@@ -597,8 +597,8 @@ def complete_batch(db, batch_id, username):
 
     for so in so_rows:
         db.execute(
-            text(f"UPDATE sales_orders SET status = '{SO_PICKED}', picked_at = NOW() WHERE so_id = :so_id"),
-            {"so_id": so.so_id},
+            text("UPDATE sales_orders SET status = :status, picked_at = NOW() WHERE so_id = :so_id"),
+            {"so_id": so.so_id, "status": SO_PICKED},
         )
 
     # 4. Audit log
@@ -940,8 +940,8 @@ def wave_create(db, so_ids, warehouse_id, username):
     # 6. Update SO statuses to PICKING
     for so in sales_orders:
         db.execute(
-            text(f"UPDATE sales_orders SET status = '{SO_PICKING}' WHERE so_id = :so_id"),
-            {"so_id": so.so_id},
+            text("UPDATE sales_orders SET status = :status WHERE so_id = :so_id"),
+            {"so_id": so.so_id, "status": SO_PICKING},
         )
 
     # 7. Update batch totals

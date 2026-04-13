@@ -9,7 +9,9 @@ import jwt
 
 from models.user import User
 
-JWT_SECRET = os.getenv("JWT_SECRET", "change-this-to-a-random-string")
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET environment variable is required")
 JWT_ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 24
 
@@ -34,6 +36,7 @@ def generate_token(user_dict):
         "username": user_dict["username"],
         "role": user_dict["role"],
         "warehouse_id": user_dict["warehouse_id"],
+        "warehouse_ids": user_dict.get("warehouse_ids", []),
         "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRY_HOURS),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)

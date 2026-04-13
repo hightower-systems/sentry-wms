@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@0no-co/graphql.web": "^1.2.0",
+    "@expo/env": "^2.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^7.0.0",
     "@react-navigation/native-stack": "^7.0.0",

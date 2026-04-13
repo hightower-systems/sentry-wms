@@ -22,6 +22,20 @@ def require_auth(f):
             return jsonify({"error": "Token expired"}), 401
 
         g.current_user = payload
+
+        # Warehouse authorization: non-admin users can only access assigned warehouses
+        if payload.get("role") != "ADMIN":
+            allowed = payload.get("warehouse_ids") or []
+            req_wid = None
+            if request.is_json:
+                body = request.get_json(silent=True)
+                if body:
+                    req_wid = body.get("warehouse_id")
+            if req_wid is None:
+                req_wid = request.args.get("warehouse_id", type=int)
+            if req_wid is not None and int(req_wid) not in allowed:
+                return jsonify({"error": "Access denied for this warehouse"}), 403
+
         return f(*args, **kwargs)
 
     return decorated

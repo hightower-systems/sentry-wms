@@ -123,16 +123,16 @@ def create_purchase_order():
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
 
     result = g.db.execute(
-        text(f"""
+        text("""
             INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, expected_date, warehouse_id, notes, created_by, status)
-            VALUES (:pn, :pb, :vendor, :exp_date, :wid, :notes, :created_by, '{PO_OPEN}')
+            VALUES (:pn, :pb, :vendor, :exp_date, :wid, :notes, :created_by, :status)
             RETURNING po_id
         """),
         {
             "pn": data["po_number"], "pb": data.get("po_barcode", data["po_number"]),
             "vendor": data.get("vendor_name"), "exp_date": data.get("expected_date"),
             "wid": data["warehouse_id"], "notes": data.get("notes"),
-            "created_by": g.current_user["username"],
+            "created_by": g.current_user["username"], "status": PO_OPEN,
         },
     )
     po_id = result.fetchone()[0]
@@ -203,7 +203,7 @@ def close_purchase_order(po_id):
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
 
-    g.db.execute(text(f"UPDATE purchase_orders SET status = '{PO_CLOSED}' WHERE po_id = :pid"), {"pid": po_id})
+    g.db.execute(text("UPDATE purchase_orders SET status = :status WHERE po_id = :pid"), {"pid": po_id, "status": PO_CLOSED})
     g.db.commit()
     return jsonify({"message": "Purchase order closed"})
 
@@ -322,9 +322,9 @@ def create_sales_order():
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
 
     result = g.db.execute(
-        text(f"""
+        text("""
             INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status)
-            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, '{SO_OPEN}')
+            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, :status)
             RETURNING so_id
         """),
         {
@@ -334,6 +334,7 @@ def create_sales_order():
             "wid": data["warehouse_id"],
             "ship": data.get("ship_method"), "addr": data.get("ship_address"),
             "ship_by": data.get("ship_by_date"), "created_by": g.current_user["username"],
+            "status": SO_OPEN,
         },
     )
     so_id = result.fetchone()[0]
@@ -414,8 +415,8 @@ def cancel_sales_order(so_id):
         for line in lines:
             # Find the inventory rows that were allocated via pick_tasks
             tasks = g.db.execute(
-                text(f"SELECT bin_id, quantity_to_pick FROM pick_tasks WHERE so_line_id = :sol_id AND status = '{TASK_PENDING}'"),
-                {"sol_id": line.so_line_id},
+                text("SELECT bin_id, quantity_to_pick FROM pick_tasks WHERE so_line_id = :sol_id AND status = :task_status"),
+                {"sol_id": line.so_line_id, "task_status": TASK_PENDING},
             ).fetchall()
 
             for task in tasks:
@@ -433,7 +434,7 @@ def cancel_sales_order(so_id):
         g.db.execute(text("DELETE FROM pick_tasks WHERE so_id = :sid"), {"sid": so_id})
         g.db.execute(text("DELETE FROM pick_batch_orders WHERE so_id = :sid"), {"sid": so_id})
 
-    g.db.execute(text(f"UPDATE sales_orders SET status = '{SO_CANCELLED}' WHERE so_id = :sid"), {"sid": so_id})
+    g.db.execute(text("UPDATE sales_orders SET status = :status WHERE so_id = :sid"), {"sid": so_id, "status": SO_CANCELLED})
     g.db.commit()
     return jsonify({"message": "Sales order cancelled"})
 
@@ -453,6 +454,7 @@ def get_short_picks():
     if warehouse_id:
         params["wid"] = warehouse_id
 
+    params["action_type"] = ACTION_PICK
     rows = g.db.execute(
         text(f"""
             SELECT a.log_id, a.user_id, a.created_at,
@@ -464,7 +466,7 @@ def get_short_picks():
                    a.details->>'batch_id' AS batch_id
             FROM audit_log a
             LEFT JOIN bins b ON b.bin_id = (a.details->>'bin_id')::int
-            WHERE a.action_type = '{ACTION_PICK}'
+            WHERE a.action_type = :action_type
               AND a.details->>'type' = 'SHORT_PICK'
               AND a.created_at >= NOW() - make_interval(days => :days)
               {wh_clause}

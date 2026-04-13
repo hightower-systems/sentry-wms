@@ -416,3 +416,41 @@ CREATE TABLE preferred_bins (
 );
 
 CREATE INDEX ix_preferred_bins_item_priority ON preferred_bins(item_id, priority);
+
+-- ============================================================
+-- FOREIGN KEY INDEXES
+-- PostgreSQL does not auto-index FK columns. These are needed
+-- for JOIN performance and cascading delete efficiency.
+-- ============================================================
+
+-- Locations
+CREATE INDEX ix_zones_warehouse ON zones(warehouse_id);
+
+-- Orders
+CREATE INDEX ix_purchase_orders_warehouse ON purchase_orders(warehouse_id);
+CREATE INDEX ix_purchase_order_lines_po ON purchase_order_lines(po_id);
+CREATE INDEX ix_sales_orders_warehouse ON sales_orders(warehouse_id);
+CREATE INDEX ix_sales_order_lines_so ON sales_order_lines(so_id);
+
+-- Receiving
+CREATE INDEX ix_item_receipts_po ON item_receipts(po_id);
+CREATE INDEX ix_item_receipts_po_line ON item_receipts(po_line_id);
+
+-- Picking
+CREATE INDEX ix_pick_batches_warehouse ON pick_batches(warehouse_id);
+CREATE INDEX ix_pick_batch_orders_so ON pick_batch_orders(so_id);
+CREATE INDEX ix_pick_tasks_so ON pick_tasks(so_id);
+CREATE INDEX ix_pick_tasks_so_line ON pick_tasks(so_line_id);
+
+-- Shipping
+CREATE INDEX ix_item_fulfillments_so ON item_fulfillments(so_id);
+CREATE INDEX ix_fulfillment_lines_fulfillment ON item_fulfillment_lines(fulfillment_id);
+
+-- Inventory operations
+CREATE INDEX ix_transfers_warehouse ON bin_transfers(warehouse_id);
+CREATE INDEX ix_cycle_counts_warehouse ON cycle_counts(warehouse_id);
+CREATE INDEX ix_cycle_count_lines_count ON cycle_count_lines(count_id);
+CREATE INDEX ix_inventory_adjustments_warehouse ON inventory_adjustments(warehouse_id);
+
+-- Audit
+CREATE INDEX ix_audit_log_warehouse ON audit_log(warehouse_id);

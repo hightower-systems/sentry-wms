@@ -34,29 +34,29 @@ picking_bp = Blueprint("picking", __name__)
 def active_batch():
     username = g.current_user["username"]
     batch = g.db.execute(
-        text(f"""
+        text("""
             SELECT batch_id, total_orders, created_at
             FROM pick_batches
             WHERE assigned_to = :username
-              AND status IN ('{BATCH_OPEN}', '{BATCH_IN_PROGRESS}')
+              AND status IN (:s_open, :s_inprog)
             ORDER BY created_at DESC
             LIMIT 1
         """),
-        {"username": username},
+        {"username": username, "s_open": BATCH_OPEN, "s_inprog": BATCH_IN_PROGRESS},
     ).fetchone()
 
     if not batch:
         return jsonify({"active": False})
 
     counts = g.db.execute(
-        text(f"""
+        text("""
             SELECT
                 COUNT(*) AS total_picks,
-                COUNT(*) FILTER (WHERE status IN ('{TASK_PICKED}', '{TASK_SHORT}')) AS completed_picks
+                COUNT(*) FILTER (WHERE status IN (:s_picked, :s_short)) AS completed_picks
             FROM pick_tasks
             WHERE batch_id = :batch_id
         """),
-        {"batch_id": batch.batch_id},
+        {"batch_id": batch.batch_id, "s_picked": TASK_PICKED, "s_short": TASK_SHORT},
     ).fetchone()
 
     return jsonify({
@@ -246,12 +246,12 @@ def cancel_batch():
 
     # Release allocated inventory for pending tasks
     pending_tasks = g.db.execute(
-        text(f"""
+        text("""
             SELECT pick_task_id, item_id, bin_id, quantity_to_pick
             FROM pick_tasks
-            WHERE batch_id = :bid AND status = '{TASK_PENDING}'
+            WHERE batch_id = :bid AND status = :task_status
         """),
-        {"bid": batch_id},
+        {"bid": batch_id, "task_status": TASK_PENDING},
     ).fetchall()
 
     for task in pending_tasks:
@@ -266,23 +266,23 @@ def cancel_batch():
 
     # Reset SO statuses back to OPEN for orders that haven't been picked
     g.db.execute(
-        text(f"""
-            UPDATE sales_orders SET status = '{SO_OPEN}'
+        text("""
+            UPDATE sales_orders SET status = :so_status
             WHERE so_id IN (
                 SELECT DISTINCT so_id FROM pick_tasks WHERE batch_id = :bid
-            ) AND status IN ('{SO_PICKING}', '{SO_OPEN}')
+            ) AND status IN (:s_picking, :s_open)
         """),
-        {"bid": batch_id},
+        {"bid": batch_id, "so_status": SO_OPEN, "s_picking": SO_PICKING, "s_open": SO_OPEN},
     )
 
     # Mark batch and all pending tasks as cancelled
     g.db.execute(
-        text(f"UPDATE pick_tasks SET status = '{TASK_SKIPPED}' WHERE batch_id = :bid AND status = '{TASK_PENDING}'"),
-        {"bid": batch_id},
+        text("UPDATE pick_tasks SET status = :new_status WHERE batch_id = :bid AND status = :old_status"),
+        {"bid": batch_id, "new_status": TASK_SKIPPED, "old_status": TASK_PENDING},
     )
     g.db.execute(
-        text(f"UPDATE pick_batches SET status = '{BATCH_CANCELLED}' WHERE batch_id = :bid"),
-        {"bid": batch_id},
+        text("UPDATE pick_batches SET status = :batch_status WHERE batch_id = :bid"),
+        {"bid": batch_id, "batch_status": BATCH_CANCELLED},
     )
 
     g.db.commit()

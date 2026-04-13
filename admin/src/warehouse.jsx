@@ -1,9 +1,11 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api } from './api.js';
+import { useAuth } from './auth.jsx';
 
 const WarehouseContext = createContext(null);
 
 export function WarehouseProvider({ children }) {
+  const { user } = useAuth();
   const [warehouses, setWarehouses] = useState([]);
   const [warehouseId, setWarehouseIdState] = useState(() => {
     const saved = sessionStorage.getItem('sentry_warehouse_id');
@@ -11,6 +13,7 @@ export function WarehouseProvider({ children }) {
   });
 
   useEffect(() => {
+    if (!user) return;
     api.get('/admin/warehouses').then(async (res) => {
       if (!res?.ok) return;
       const data = await res.json();
@@ -28,7 +31,7 @@ export function WarehouseProvider({ children }) {
         }
       }
     });
-  }, []);
+  }, [user]);
 
   function setWarehouseId(id) {
     setWarehouseIdState(id);

@@ -10,6 +10,7 @@ async function apiFetch(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (res.status === 401 && !path.startsWith('/auth/login')) {
     localStorage.removeItem('sentry_token');
+    localStorage.removeItem('sentry_user');
     window.location.href = '/login';
     return;
   }

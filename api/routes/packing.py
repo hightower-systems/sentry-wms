@@ -232,8 +232,8 @@ def complete_packing():
 
     # Update SO
     g.db.execute(
-        text(f"UPDATE sales_orders SET status = '{SO_PACKED}', packed_at = NOW() WHERE so_id = :so_id"),
-        {"so_id": so_id},
+        text("UPDATE sales_orders SET status = :status, packed_at = NOW() WHERE so_id = :so_id"),
+        {"so_id": so_id, "status": SO_PACKED},
     )
 
     # Calculate weight and total

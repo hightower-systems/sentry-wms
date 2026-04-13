@@ -223,9 +223,9 @@ def fulfill():
         # 3. Update SO line
         g.db.execute(
             text(
-                f"UPDATE sales_order_lines SET quantity_shipped = quantity_picked, status = '{SO_SHIPPED}' WHERE so_line_id = :sol_id"
+                "UPDATE sales_order_lines SET quantity_shipped = quantity_picked, status = :status WHERE so_line_id = :sol_id"
             ),
-            {"sol_id": line.so_line_id},
+            {"sol_id": line.so_line_id, "status": SO_SHIPPED},
         )
 
         lines_shipped += 1

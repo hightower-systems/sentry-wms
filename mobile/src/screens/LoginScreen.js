@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingVi
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../auth/AuthContext';
 import WarehouseSelector from '../components/WarehouseSelector';
-import client, { getStoredApiUrl, setApiUrl } from '../api/client';
+import client, { getStoredApiUrl, setApiUrl, hasStoredApiUrl } from '../api/client';
 import { colors, fonts, radii } from '../theme/styles';
 
 const SENTRY_LOGIN_RENDERED = '__sentry_login_rendered__';
@@ -20,6 +20,12 @@ export default function LoginScreen() {
   const [showServerModal, setShowServerModal] = useState(false);
   const [serverUrl, setServerUrlLocal] = useState('');
   const [serverDisplay, setServerDisplay] = useState('');
+  const [needsSetup, setNeedsSetup] = useState(null);
+  const [connectUrl, setConnectUrl] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState('');
+  const [modalError, setModalError] = useState('');
+  const [modalChecking, setModalChecking] = useState(false);
   const [renderGuard] = useState(() => {
     // Guard against duplicate renders  -  only allow one instance
     if (global[SENTRY_LOGIN_RENDERED]) return false;
@@ -31,15 +37,8 @@ export default function LoginScreen() {
     return () => { global[SENTRY_LOGIN_RENDERED] = false; };
   }, []);
 
-  useEffect(() => {
-    // Restore cached username
-    AsyncStorage.getItem('sentry_last_username').then((saved) => {
-      if (saved) setUsername(saved);
-    }).catch(() => {});
-
-    // Load current server URL for display
-    getStoredApiUrl().then((url) => setServerDisplay(url || ''));
-
+  const loadWarehouses = () => {
+    setError('');
     client.get('/api/warehouses/list')
       .then((resp) => {
         const list = resp.data.warehouses || [];
@@ -47,9 +46,51 @@ export default function LoginScreen() {
         if (list.length === 1) setSelectedWarehouse(list[0].id);
       })
       .catch(() => setError('Could not load warehouses - check connection'));
+  };
+
+  useEffect(() => {
+    AsyncStorage.getItem('sentry_last_username').then((saved) => {
+      if (saved) setUsername(saved);
+    }).catch(() => {});
+
+    hasStoredApiUrl().then((hasUrl) => {
+      if (hasUrl) {
+        setNeedsSetup(false);
+        getStoredApiUrl().then((url) => setServerDisplay(url || ''));
+        loadWarehouses();
+      } else {
+        setNeedsSetup(true);
+      }
+    });
   }, []);
 
   const selectedName = warehouses.find((w) => w.id === selectedWarehouse);
+
+  const handleConnect = async () => {
+    const trimmed = connectUrl.replace(/\/+$/, '').trim();
+    if (!trimmed) {
+      setConnectError('Enter a server URL');
+      return;
+    }
+    setConnecting(true);
+    setConnectError('');
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const resp = await fetch(`${trimmed}/api/health`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!resp.ok) throw new Error('Bad response');
+      await setApiUrl(trimmed);
+      setServerDisplay(trimmed);
+      setNeedsSetup(false);
+      loadWarehouses();
+    } catch (err) {
+      console.log('[CONNECT] Health check failed:', err.message, err.name);
+      setConnectError(`Could not connect: ${err.message}`);
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -80,29 +121,81 @@ export default function LoginScreen() {
   const openServerModal = () => {
     getStoredApiUrl().then((url) => {
       setServerUrlLocal(url || '');
+      setModalError('');
+      setModalChecking(false);
       setShowServerModal(true);
     });
   };
 
-  const saveServerUrl = () => {
-    const trimmed = serverUrl.trim();
-    if (trimmed) {
-      setApiUrl(trimmed);
+  const saveServerUrl = async () => {
+    const trimmed = serverUrl.replace(/\/+$/, '').trim();
+    if (!trimmed) return;
+    setModalChecking(true);
+    setModalError('');
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const resp = await fetch(`${trimmed}/api/health`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!resp.ok) throw new Error('Bad response');
+      await setApiUrl(trimmed);
       setServerDisplay(trimmed);
-      // Reload warehouses with new server
-      client.get('/api/warehouses/list')
-        .then((resp) => {
-          const list = resp.data.warehouses || [];
-          setWarehouses(list);
-          if (list.length === 1) setSelectedWarehouse(list[0].id);
-          setError('');
-        })
-        .catch(() => setError('Could not connect to server'));
+      setShowServerModal(false);
+      loadWarehouses();
+    } catch {
+      setModalError('Could not connect to server');
+    } finally {
+      setModalChecking(false);
     }
-    setShowServerModal(false);
   };
 
   if (!renderGuard) return null;
+  if (needsSetup === null) return null;
+
+  if (needsSetup) {
+    return (
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={styles.container}>
+          <View style={styles.logoSection}>
+            <Text style={styles.logoText}>SENTRY</Text>
+            <Text style={styles.logoSubtext}>WAREHOUSE MANAGEMENT</Text>
+          </View>
+
+          <View style={styles.form}>
+            <Text style={styles.setupLabel}>SERVER URL</Text>
+            <TextInput
+              style={styles.input}
+              value={connectUrl}
+              onChangeText={(t) => { setConnectUrl(t); setConnectError(''); }}
+              placeholder="http://192.168.1.100:5000"
+              placeholderTextColor={colors.textPlaceholder}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              returnKeyType="done"
+              onSubmitEditing={handleConnect}
+              autoFocus
+            />
+
+            <TouchableOpacity
+              style={[styles.loginButton, connecting && styles.loginButtonDisabled]}
+              onPress={handleConnect}
+              disabled={connecting}
+            >
+              <Text style={styles.loginButtonText}>
+                {connecting ? 'CONNECTING...' : 'CONNECT'}
+              </Text>
+            </TouchableOpacity>
+
+            {connectError ? <Text style={styles.error}>{connectError}</Text> : null}
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -153,16 +246,15 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <TouchableOpacity style={styles.serverInfo} onPress={openServerModal}>
+            <Text style={styles.version}>v0.9.8</Text>
+            {serverDisplay ? (
+              <Text style={styles.serverUrlText} numberOfLines={1}>{serverDisplay}</Text>
+            ) : null}
+          </TouchableOpacity>
         </View>
       </View>
-
-      {/* Bottom: version + server URL (static, tap opens modal) */}
-      <TouchableOpacity style={styles.bottomBar} onPress={openServerModal}>
-        <Text style={styles.version}>v0.9.8</Text>
-        {serverDisplay ? (
-          <Text style={styles.serverUrlText} numberOfLines={1}>{serverDisplay}</Text>
-        ) : null}
-      </TouchableOpacity>
 
       {/* Server URL modal */}
       <Modal visible={showServerModal} transparent animationType="fade">
@@ -172,7 +264,7 @@ export default function LoginScreen() {
             <TextInput
               style={styles.modalInput}
               value={serverUrl}
-              onChangeText={setServerUrlLocal}
+              onChangeText={(t) => { setServerUrlLocal(t); setModalError(''); }}
               placeholder="http://10.1.10.150:5000"
               autoCapitalize="none"
               autoCorrect={false}
@@ -182,9 +274,14 @@ export default function LoginScreen() {
               onSubmitEditing={saveServerUrl}
               autoFocus
             />
+            {modalError ? <Text style={styles.modalErrorText}>{modalError}</Text> : null}
             <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalSaveBtn} onPress={saveServerUrl}>
-                <Text style={styles.modalSaveBtnText}>SAVE</Text>
+              <TouchableOpacity
+                style={[styles.modalSaveBtn, modalChecking && styles.loginButtonDisabled]}
+                onPress={saveServerUrl}
+                disabled={modalChecking}
+              >
+                <Text style={styles.modalSaveBtnText}>{modalChecking ? 'CHECKING...' : 'SAVE'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowServerModal(false)}>
                 <Text style={styles.modalCancelBtnText}>CANCEL</Text>
@@ -296,11 +393,17 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
-  // Bottom bar (static, replaces inline server input)
-  bottomBar: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
+  setupLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  serverInfo: {
     alignItems: 'center',
+    marginTop: 16,
   },
   version: {
     fontFamily: fonts.mono,
@@ -351,6 +454,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.inputBg,
     marginBottom: 16,
+  },
+  modalErrorText: {
+    color: colors.accentRed,
+    fontSize: 12,
+    marginBottom: 12,
   },
   modalActions: {
     flexDirection: 'row',

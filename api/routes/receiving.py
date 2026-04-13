@@ -224,14 +224,14 @@ def receive_items():
 
     if all(l.status == POL_RECEIVED for l in all_lines):
         g.db.execute(
-            text(f"UPDATE purchase_orders SET status = '{PO_RECEIVED}', received_at = NOW() WHERE po_id = :po_id"),
-            {"po_id": po_id},
+            text("UPDATE purchase_orders SET status = :status, received_at = NOW() WHERE po_id = :po_id"),
+            {"po_id": po_id, "status": PO_RECEIVED},
         )
         po_status = PO_RECEIVED
     else:
         g.db.execute(
-            text(f"UPDATE purchase_orders SET status = '{PO_PARTIAL}' WHERE po_id = :po_id"),
-            {"po_id": po_id},
+            text("UPDATE purchase_orders SET status = :status WHERE po_id = :po_id"),
+            {"po_id": po_id, "status": PO_PARTIAL},
         )
         po_status = PO_PARTIAL
 
@@ -288,15 +288,16 @@ def cancel_receiving():
 
         # 2. Reverse PO line quantity
         g.db.execute(
-            text(f"""
+            text("""
                 UPDATE purchase_order_lines
                 SET quantity_received = GREATEST(0, quantity_received - :qty),
-                    status = CASE WHEN GREATEST(0, quantity_received - :qty) = 0 THEN '{POL_PENDING}'
-                                  WHEN GREATEST(0, quantity_received - :qty) >= quantity_ordered THEN '{POL_RECEIVED}'
-                                  ELSE '{POL_PARTIAL}' END
+                    status = CASE WHEN GREATEST(0, quantity_received - :qty) = 0 THEN :pol_pending
+                                  WHEN GREATEST(0, quantity_received - :qty) >= quantity_ordered THEN :pol_received
+                                  ELSE :pol_partial END
                 WHERE po_line_id = :plid
             """),
-            {"qty": receipt.quantity_received, "plid": receipt.po_line_id},
+            {"qty": receipt.quantity_received, "plid": receipt.po_line_id,
+             "pol_pending": POL_PENDING, "pol_received": POL_RECEIVED, "pol_partial": POL_PARTIAL},
         )
 
         # 3. Delete receipt record

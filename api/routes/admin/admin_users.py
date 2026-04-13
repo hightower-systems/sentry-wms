@@ -292,29 +292,29 @@ def dashboard():
     wh_filter = "AND warehouse_id = :wid" if warehouse_id else ""
     wh_params = {"wid": warehouse_id} if warehouse_id else {}
 
-    open_pos = g.db.execute(text(f"SELECT COUNT(*) FROM purchase_orders WHERE status IN ('{PO_OPEN}', '{PO_PARTIAL}') {wh_filter}"), wh_params).scalar()
+    open_pos = g.db.execute(text(f"SELECT COUNT(*) FROM purchase_orders WHERE status IN (:po_open, :po_partial) {wh_filter}"), {**wh_params, "po_open": PO_OPEN, "po_partial": PO_PARTIAL}).scalar()
 
     pending_receipts = g.db.execute(
-        text(f"SELECT COALESCE(SUM(pol.quantity_ordered - pol.quantity_received), 0) FROM purchase_order_lines pol JOIN purchase_orders po ON po.po_id = pol.po_id WHERE po.status IN ('{PO_OPEN}', '{PO_PARTIAL}') {wh_filter.replace('warehouse_id', 'po.warehouse_id')}"),
-        wh_params,
+        text(f"SELECT COALESCE(SUM(pol.quantity_ordered - pol.quantity_received), 0) FROM purchase_order_lines pol JOIN purchase_orders po ON po.po_id = pol.po_id WHERE po.status IN (:po_open, :po_partial) {wh_filter.replace('warehouse_id', 'po.warehouse_id')}"),
+        {**wh_params, "po_open": PO_OPEN, "po_partial": PO_PARTIAL},
     ).scalar()
 
     items_awaiting_putaway = g.db.execute(
-        text(f"SELECT COALESCE(SUM(inv.quantity_on_hand), 0) FROM inventory inv JOIN bins b ON b.bin_id = inv.bin_id WHERE b.bin_type = '{BIN_STAGING}' {wh_filter.replace('warehouse_id', 'inv.warehouse_id')}"),
-        wh_params,
+        text(f"SELECT COALESCE(SUM(inv.quantity_on_hand), 0) FROM inventory inv JOIN bins b ON b.bin_id = inv.bin_id WHERE b.bin_type = :bin_staging {wh_filter.replace('warehouse_id', 'inv.warehouse_id')}"),
+        {**wh_params, "bin_staging": BIN_STAGING},
     ).scalar()
 
-    open_sos = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_OPEN}' {wh_filter}"), wh_params).scalar()
-    ready_to_pick = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN ('{SO_OPEN}') {wh_filter}"), wh_params).scalar()
-    in_picking = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PICKING}' {wh_filter}"), wh_params).scalar()
+    open_sos = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_open {wh_filter}"), {**wh_params, "so_open": SO_OPEN}).scalar()
+    ready_to_pick = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN (:so_open) {wh_filter}"), {**wh_params, "so_open": SO_OPEN}).scalar()
+    in_picking = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_picking {wh_filter}"), {**wh_params, "so_picking": SO_PICKING}).scalar()
     # Toggle-aware pack/ship counts
     packing_row = g.db.execute(
         text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")
     ).fetchone()
     require_packing = not packing_row or packing_row.value != "false"
 
-    picked_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PICKED}' {wh_filter}"), wh_params).scalar()
-    packed_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PACKED}' {wh_filter}"), wh_params).scalar()
+    picked_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_picked {wh_filter}"), {**wh_params, "so_picked": SO_PICKED}).scalar()
+    packed_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_packed {wh_filter}"), {**wh_params, "so_packed": SO_PACKED}).scalar()
 
     if require_packing:
         ready_to_pack = picked_count
@@ -354,7 +354,8 @@ def dashboard():
 
     # Pending adjustments count
     pending_adjustments = g.db.execute(
-        text(f"SELECT COUNT(*) FROM inventory_adjustments WHERE status = '{ADJ_PENDING}'")
+        text("SELECT COUNT(*) FROM inventory_adjustments WHERE status = :adj_pending"),
+        {"adj_pending": ADJ_PENDING},
     ).scalar()
 
     result = {
@@ -427,7 +428,8 @@ def update_settings():
     # Toggle protection: reject disabling packing when PACKED orders exist
     if data["settings"].get("require_packing_before_shipping") == "false":
         packed_count = g.db.execute(
-            text(f"SELECT COUNT(*) FROM sales_orders WHERE status = '{SO_PACKED}'")
+            text("SELECT COUNT(*) FROM sales_orders WHERE status = :so_packed"),
+            {"so_packed": SO_PACKED},
         ).scalar()
         if packed_count > 0:
             return jsonify({
@@ -518,7 +520,7 @@ def list_cycle_counts():
 def list_pending_adjustments():
     """Return pending inventory adjustments grouped by cycle count."""
     rows = g.db.execute(
-        text(f"""
+        text("""
             SELECT ia.adjustment_id, ia.item_id, ia.bin_id, ia.warehouse_id,
                    ia.quantity_change, ia.reason_code, ia.reason_detail,
                    ia.status, ia.adjusted_by, ia.adjusted_at, ia.cycle_count_id,
@@ -526,9 +528,10 @@ def list_pending_adjustments():
             FROM inventory_adjustments ia
             JOIN items i ON i.item_id = ia.item_id
             JOIN bins b ON b.bin_id = ia.bin_id
-            WHERE ia.status = '{ADJ_PENDING}'
+            WHERE ia.status = :adj_pending
             ORDER BY ia.cycle_count_id, ia.adjustment_id
-        """)
+        """),
+        {"adj_pending": ADJ_PENDING},
     ).fetchall()
 
     return jsonify({
@@ -602,14 +605,14 @@ def review_adjustments():
                 )
 
             g.db.execute(
-                text(f"UPDATE inventory_adjustments SET status = '{ADJ_APPROVED}' WHERE adjustment_id = :aid"),
-                {"aid": adj_id},
+                text("UPDATE inventory_adjustments SET status = :status WHERE adjustment_id = :aid"),
+                {"aid": adj_id, "status": ADJ_APPROVED},
             )
             approved += 1
         else:
             g.db.execute(
-                text(f"UPDATE inventory_adjustments SET status = '{ADJ_REJECTED}' WHERE adjustment_id = :aid"),
-                {"aid": adj_id},
+                text("UPDATE inventory_adjustments SET status = :status WHERE adjustment_id = :aid"),
+                {"aid": adj_id, "status": ADJ_REJECTED},
             )
             rejected += 1
 
