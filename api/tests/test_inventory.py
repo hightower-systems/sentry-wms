@@ -268,3 +268,80 @@ class TestSubmitCycleCount:
             json={"warehouse_id": 1, "bin_ids": [3]},
         )
         assert resp.status_code == 401
+
+
+class TestAdjustmentSelfApproval:
+    """M3: self-approval check on cycle count adjustments."""
+
+    def _create_variance(self, client, auth_headers):
+        """Create a cycle count with variance, returning the adjustment_id."""
+        create_resp = client.post(
+            "/api/inventory/cycle-count/create",
+            json={"warehouse_id": 1, "bin_ids": [3]},
+            headers=auth_headers,
+        )
+        count_id = create_resp.get_json()["counts"][0]["count_id"]
+
+        detail_resp = client.get(
+            f"/api/inventory/cycle-count/{count_id}", headers=auth_headers
+        )
+        lines = detail_resp.get_json()["lines"]
+
+        submit_lines = [
+            {"count_line_id": lines[0]["count_line_id"], "counted_quantity": lines[0]["expected_quantity"] + 5}
+        ]
+        submit_resp = client.post(
+            "/api/inventory/cycle-count/submit",
+            json={"count_id": count_id, "lines": submit_lines},
+            headers=auth_headers,
+        )
+        adj = submit_resp.get_json()["summary"]["adjustments"][0]
+        return adj["adjustment_id"]
+
+    def test_self_approval_allowed_when_setting_off(self, client, auth_headers):
+        """Default (setting absent/false): same user can approve their own count."""
+        adj_id = self._create_variance(client, auth_headers)
+
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["approved"] == 1
+
+    def test_self_approval_logs_audit_when_setting_off(self, client, auth_headers):
+        """Self-approval without separation logs SELF_APPROVED_COUNT."""
+        adj_id = self._create_variance(client, auth_headers)
+
+        client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers=auth_headers,
+        )
+
+        row = _query_one(
+            "SELECT action_type FROM audit_log WHERE action_type = 'SELF_APPROVED_COUNT' AND entity_id = %s",
+            (adj_id,),
+        )
+        assert row is not None
+
+    def test_self_approval_blocked_when_setting_on(self, client, auth_headers):
+        """When require_count_approval_separation is true, self-approval returns 403."""
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('require_count_approval_separation', 'true') "
+            "ON CONFLICT (key) DO UPDATE SET value = 'true'"
+        )
+        cur.close()
+
+        adj_id = self._create_variance(client, auth_headers)
+
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 403
+        assert "Cannot approve your own cycle count" in resp.get_json()["error"]

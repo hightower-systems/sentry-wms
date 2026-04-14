@@ -620,12 +620,22 @@ def review_adjustments():
             continue
 
         row = g.db.execute(
-            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status FROM inventory_adjustments WHERE adjustment_id = :aid"),
+            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status, adjusted_by, cycle_count_id FROM inventory_adjustments WHERE adjustment_id = :aid"),
             {"aid": adj_id},
         ).fetchone()
 
         if not row or row.status != ADJ_PENDING:
             continue
+
+        # Separation of duties check for cycle count adjustments
+        is_self_approval = row.cycle_count_id and row.adjusted_by == g.current_user["username"]
+        if is_self_approval and action == "approve":
+            sep_row = g.db.execute(
+                text("SELECT value FROM app_settings WHERE key = 'require_count_approval_separation'")
+            ).fetchone()
+            require_separation = sep_row and sep_row.value == "true"
+            if require_separation:
+                return jsonify({"error": "Cannot approve your own cycle count"}), 403
 
         if action == "approve":
             # Apply the inventory adjustment
@@ -650,6 +660,18 @@ def review_adjustments():
                 text("UPDATE inventory_adjustments SET status = :status WHERE adjustment_id = :aid"),
                 {"aid": adj_id, "status": ADJ_APPROVED},
             )
+
+            if is_self_approval:
+                write_audit_log(
+                    g.db,
+                    action_type="SELF_APPROVED_COUNT",
+                    entity_type="ADJUSTMENT",
+                    entity_id=adj_id,
+                    user_id=g.current_user["username"],
+                    warehouse_id=row.warehouse_id,
+                    details={"cycle_count_id": row.cycle_count_id, "quantity_change": row.quantity_change},
+                )
+
             approved += 1
         else:
             g.db.execute(

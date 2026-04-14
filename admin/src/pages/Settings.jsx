@@ -54,6 +54,7 @@ export default function Settings() {
       api.get('/admin/settings/require_packing_before_shipping'),
       api.get('/admin/settings/allow_over_receiving'),
       api.get('/admin/settings/default_receiving_bin'),
+      api.get('/admin/settings/require_count_approval_separation'),
     ]).then(async (responses) => {
       const initial = {};
       for (const res of responses) {
@@ -67,6 +68,7 @@ export default function Settings() {
       if (!('require_packing_before_shipping' in initial)) initial.require_packing_before_shipping = 'true';
       if (!('allow_over_receiving' in initial)) initial.allow_over_receiving = 'true';
       if (!('default_receiving_bin' in initial)) initial.default_receiving_bin = '';
+      if (!('require_count_approval_separation' in initial)) initial.require_count_approval_separation = 'false';
       setSavedSettings({ ...initial });
       setDraftSettings({ ...initial });
     });
@@ -272,6 +274,22 @@ export default function Settings() {
           </label>
         </div>
         <p className="settings-note">When disabled, counters won't see expected quantities - useful for blind counts.</p>
+      </div>
+
+      {/* Inventory */}
+      <div className="settings-section">
+        <h3>Inventory</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={toBool(draftSettings.require_count_approval_separation)}
+              onChange={(e) => updateDraft('require_count_approval_separation', String(e.target.checked))}
+            />
+            Require separate approver for cycle count adjustments
+          </label>
+        </div>
+        <p className="settings-note">When enabled, the admin who performed a cycle count cannot approve the resulting adjustments. A different admin must review and approve.</p>
       </div>
 
       {/* Save button */}
