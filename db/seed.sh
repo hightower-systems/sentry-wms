@@ -8,9 +8,14 @@
 
 set -e
 
+# Generate random admin password unless explicitly provided via env var
+ADMIN_PW="${ADMIN_PASSWORD:-$(head -c 100 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 16)}"
+
 if [ "$SKIP_SEED" = "true" ]; then
   echo "SKIP_SEED=true  -  creating minimal setup (admin user + default warehouse only)"
-  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'MINIMAL'
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v admin_pw="$ADMIN_PW" <<'MINIMAL'
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Default warehouse
 INSERT INTO warehouses (warehouse_code, warehouse_name, address) VALUES
 ('WH-01', 'My Warehouse', '');
@@ -27,9 +32,9 @@ INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_s
 (2, 1, 'PICK-01', 'PICK-01', 'Pickable', 100, 100, 'Default pick bin'),
 (3, 1, 'BULK-01', 'BULK-01', 'Pickable', 0, 0, 'Default bulk bin');
 
--- Admin user (password: admin)
+-- Admin user (password generated at runtime)
 INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions)
-VALUES ('admin', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK', 'Admin User', 'ADMIN', 1, '{}');
+VALUES ('admin', crypt(:'admin_pw', gen_salt('bf')), 'Admin User', 'ADMIN', 1, '{}');
 
 -- Default settings
 INSERT INTO app_settings (key, value) VALUES ('session_timeout_hours', '8');
@@ -41,5 +46,19 @@ MINIMAL
 else
   echo "Running full demo seed..."
   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /seed-data/seed-apartment-lab.sql
+  # Overwrite hardcoded demo admin password with generated one
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v admin_pw="$ADMIN_PW" <<'UPDATE_PW'
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+UPDATE users SET password_hash = crypt(:'admin_pw', gen_salt('bf')) WHERE username = 'admin';
+UPDATE_PW
   echo "Full seed complete."
 fi
+
+echo ""
+echo "================================================="
+echo "  SENTRY WMS INITIAL SETUP COMPLETE"
+echo "  Admin username: admin"
+echo "  Admin password: $ADMIN_PW"
+echo "  >>> CHANGE THIS PASSWORD AFTER FIRST LOGIN <<<"
+echo "================================================="
+echo ""

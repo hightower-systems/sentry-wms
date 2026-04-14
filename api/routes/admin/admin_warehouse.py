@@ -15,6 +15,7 @@ from services.inventory_service import add_inventory
 
 @admin_bp.route("/warehouses", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_warehouses():
     rows = g.db.execute(
@@ -31,6 +32,7 @@ def list_warehouses():
 
 @admin_bp.route("/warehouses/<int:warehouse_id>", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_warehouse(warehouse_id):
     wh = g.db.execute(
@@ -157,6 +159,7 @@ def delete_warehouse(warehouse_id):
 
 @admin_bp.route("/zones", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_zones():
     warehouse_id = request.args.get("warehouse_id", type=int)
@@ -244,6 +247,7 @@ def update_zone(zone_id):
 
 @admin_bp.route("/bins", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_bins():
     where_clauses = []
@@ -287,6 +291,7 @@ def list_bins():
 
 @admin_bp.route("/bins/<int:bin_id>", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_bin(bin_id):
     b = g.db.execute(
@@ -483,14 +488,15 @@ def create_inter_warehouse_transfer():
     # Create bin_transfers record
     transfer = g.db.execute(
         text("""
-            INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, quantity, transferred_by, transfer_type, notes)
-            VALUES (:iid, :from_bid, :to_bid, :qty, :user_id, 'INTER_WAREHOUSE', :notes)
+            INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, warehouse_id, quantity, transferred_by, transfer_type, reason)
+            VALUES (:iid, :from_bid, :to_bid, :wid, :qty, :username, 'INTER_WAREHOUSE', :reason)
             RETURNING transfer_id, transferred_at
         """),
         {
             "iid": item_id, "from_bid": from_bin_id, "to_bid": to_bin_id,
-            "qty": quantity, "user_id": g.current_user["user_id"],
-            "notes": reason,
+            "wid": from_warehouse_id,
+            "qty": quantity, "username": g.current_user["username"],
+            "reason": reason,
         },
     ).fetchone()
 
@@ -538,10 +544,11 @@ def create_inter_warehouse_transfer():
 
 @admin_bp.route("/inter-warehouse-transfers", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_inter_warehouse_transfers():
     """Return recent inter-warehouse transfers with item, bin, and warehouse details."""
-    limit = request.args.get("limit", 50, type=int)
+    limit = min(request.args.get("limit", 50, type=int), 500)
 
     rows = g.db.execute(
         text("""

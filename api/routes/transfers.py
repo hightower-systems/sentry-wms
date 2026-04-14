@@ -6,7 +6,7 @@ from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
 from constants import ACTION_TRANSFER
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 from services.inventory_service import move_inventory
@@ -53,14 +53,21 @@ def move():
         return jsonify({"error": "Source bin not found"}), 404
 
     to_bin = g.db.execute(
-        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid"),
+        text("SELECT bin_id, bin_code, warehouse_id FROM bins WHERE bin_id = :bid"),
         {"bid": to_bin_id},
     ).fetchone()
     if not to_bin:
         return jsonify({"error": "Destination bin not found"}), 404
 
+    if to_bin.warehouse_id != from_bin.warehouse_id:
+        return jsonify({"error": "Cross-warehouse moves are not allowed here. Use the admin inter-warehouse transfer."}), 400
+
     username = g.current_user["username"]
     warehouse_id = from_bin.warehouse_id
+
+    ok, denied = check_warehouse_access(warehouse_id)
+    if not ok:
+        return denied
 
     # 1 & 2. Move inventory (decrement source, upsert destination)
     try:

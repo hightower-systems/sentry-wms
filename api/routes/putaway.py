@@ -6,7 +6,7 @@ and preferred bin management.
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 from services.inventory_service import move_inventory
@@ -19,21 +19,25 @@ putaway_bp = Blueprint("putaway", __name__)
 @require_auth
 @with_db
 def pending_putaway(warehouse_id):
+    ok, denied = check_warehouse_access(warehouse_id)
+    if not ok:
+        return denied
+
     rows = g.db.execute(
         text(
-            f"""
+            """
             SELECT inv.inventory_id, inv.item_id, i.sku, i.item_name, i.upc,
                    inv.quantity_on_hand AS quantity, inv.bin_id, b.bin_code,
                    inv.lot_number
             FROM inventory inv
             JOIN items i ON i.item_id = inv.item_id
             JOIN bins b ON b.bin_id = inv.bin_id
-            WHERE b.bin_type = '{BIN_STAGING}'
+            WHERE b.bin_type = :bin_staging
               AND inv.quantity_on_hand > 0
               AND inv.warehouse_id = :warehouse_id
             """
         ),
-        {"warehouse_id": warehouse_id},
+        {"warehouse_id": warehouse_id, "bin_staging": BIN_STAGING},
     ).fetchall()
 
     return jsonify({
@@ -171,6 +175,10 @@ def confirm_putaway():
 
     username = g.current_user["username"]
     warehouse_id = from_bin.warehouse_id
+
+    ok, denied = check_warehouse_access(warehouse_id)
+    if not ok:
+        return denied
 
     # 1 & 2. Move inventory (decrement source, upsert destination)
     try:

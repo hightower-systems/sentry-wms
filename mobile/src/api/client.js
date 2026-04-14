@@ -17,11 +17,6 @@ export async function initApiUrl() {
   _initPromise = (async () => {
     const stored = await AsyncStorage.getItem(API_URL_KEY).catch(() => null);
     _cachedApiUrl = stored || DEFAULT_API_URL;
-    console.log('[API_DEBUG] initApiUrl:', JSON.stringify({
-      buildDefault: DEFAULT_API_URL,
-      storedOverride: stored,
-      resolved: _cachedApiUrl,
-    }));
   })();
   return _initPromise;
 }
@@ -77,14 +72,12 @@ async function request(method, path, body) {
 
   const apiUrl = await getApiUrl();
   const fullUrl = `${apiUrl}${path}`;
-  console.log(`[API_DEBUG] ${method} ${fullUrl}`, body ? JSON.stringify(body).slice(0, 200) : '');
 
   let response;
   try {
     response = await fetch(fullUrl, options);
   } catch (err) {
     clearTimeout(timeout);
-    console.log(`[API_DEBUG] ${method} ${fullUrl} NETWORK ERROR:`, err.message);
     if (err.name === 'AbortError') {
       const timeoutErr = new Error('Request timeout');
       timeoutErr.response = null;
@@ -103,8 +96,6 @@ async function request(method, path, body) {
       data = text;
     }
   }
-
-  console.log(`[API_DEBUG] ${method} ${fullUrl} -> ${response.status}`, JSON.stringify(data).slice(0, 300));
 
   if (response.status === 401 && logoutHandler) {
     await logoutHandler();

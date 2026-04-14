@@ -10,7 +10,7 @@ from constants import (
     SO_OPEN, SO_PICKING,
     TASK_PENDING, TASK_PICKED, TASK_SHORT, TASK_SKIPPED,
 )
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.picking_service import (
     AlreadyInBatchError,
@@ -137,6 +137,15 @@ def create_wave():
 @require_auth
 @with_db
 def get_batch(batch_id):
+    batch_row = g.db.execute(
+        text("SELECT warehouse_id FROM pick_batches WHERE batch_id = :bid"),
+        {"bid": batch_id},
+    ).fetchone()
+    if not batch_row:
+        return jsonify({"error": "Batch not found"}), 404
+    ok, denied = check_warehouse_access(batch_row.warehouse_id)
+    if not ok:
+        return denied
     result = get_batch_tasks(g.db, batch_id)
     if not result:
         return jsonify({"error": "Batch not found"}), 404
@@ -147,6 +156,14 @@ def get_batch(batch_id):
 @require_auth
 @with_db
 def next_task(batch_id):
+    batch_row = g.db.execute(
+        text("SELECT warehouse_id FROM pick_batches WHERE batch_id = :bid"),
+        {"bid": batch_id},
+    ).fetchone()
+    if batch_row:
+        ok, denied = check_warehouse_access(batch_row.warehouse_id)
+        if not ok:
+            return denied
     task = get_next_task(g.db, batch_id)
     if not task:
         return jsonify({"message": "All tasks complete"})
@@ -164,6 +181,16 @@ def confirm():
     quantity_picked = data.get("quantity_picked", 0)
     if quantity_picked <= 0:
         return jsonify({"error": "quantity_picked must be greater than 0"}), 400
+
+    # Warehouse access check via pick task's batch
+    task_wh = g.db.execute(
+        text("SELECT pb.warehouse_id FROM pick_tasks pt JOIN pick_batches pb ON pb.batch_id = pt.batch_id WHERE pt.pick_task_id = :tid"),
+        {"tid": data["pick_task_id"]},
+    ).fetchone()
+    if task_wh:
+        ok, denied = check_warehouse_access(task_wh.warehouse_id)
+        if not ok:
+            return denied
 
     try:
         result = confirm_pick(
@@ -194,6 +221,15 @@ def short():
     if quantity_available < 0:
         return jsonify({"error": "quantity_available cannot be negative"}), 400
 
+    task_wh = g.db.execute(
+        text("SELECT pb.warehouse_id FROM pick_tasks pt JOIN pick_batches pb ON pb.batch_id = pt.batch_id WHERE pt.pick_task_id = :tid"),
+        {"tid": data["pick_task_id"]},
+    ).fetchone()
+    if task_wh:
+        ok, denied = check_warehouse_access(task_wh.warehouse_id)
+        if not ok:
+            return denied
+
     try:
         result = short_pick(
             g.db,
@@ -214,6 +250,15 @@ def complete():
     data = request.get_json()
     if not data or not data.get("batch_id"):
         return jsonify({"error": "batch_id is required"}), 400
+
+    batch_wh = g.db.execute(
+        text("SELECT warehouse_id FROM pick_batches WHERE batch_id = :bid"),
+        {"bid": data["batch_id"]},
+    ).fetchone()
+    if batch_wh:
+        ok, denied = check_warehouse_access(batch_wh.warehouse_id)
+        if not ok:
+            return denied
 
     try:
         result = complete_batch(
@@ -238,11 +283,15 @@ def cancel_batch():
 
     batch_id = data["batch_id"]
     batch = g.db.execute(
-        text("SELECT batch_id, status FROM pick_batches WHERE batch_id = :bid"),
+        text("SELECT batch_id, status, warehouse_id FROM pick_batches WHERE batch_id = :bid"),
         {"bid": batch_id},
     ).fetchone()
     if not batch:
         return jsonify({"error": "Batch not found"}), 404
+
+    ok, denied = check_warehouse_access(batch.warehouse_id)
+    if not ok:
+        return denied
 
     # Release allocated inventory for pending tasks
     pending_tasks = g.db.execute(

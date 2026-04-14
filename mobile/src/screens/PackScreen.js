@@ -27,7 +27,6 @@ export default function PackScreen({ navigation, route }) {
   }, []);
 
   const handleScanOrder = async (barcode) => {
-    console.log('[SCAN_DEBUG] PackScreen.handleScanOrder received:', JSON.stringify(barcode));
     try {
       const resp = await client.get(`/api/packing/order/${encodeURIComponent(barcode)}`);
       const data = resp.data;
@@ -45,7 +44,6 @@ export default function PackScreen({ navigation, route }) {
   };
 
   const handleScanItem = async (barcode) => {
-    console.log('[SCAN_DEBUG] PackScreen.handleScanItem received:', JSON.stringify(barcode));
     // Client-side check: find the matching item and verify it's not already complete
     const matchedItem = items.find(
       (item) => item.sku === barcode || item.upc === barcode || item.item_barcode === barcode

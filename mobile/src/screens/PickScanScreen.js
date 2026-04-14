@@ -16,7 +16,6 @@ export default function PickScanScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
 
   const handleScan = async (barcode) => {
-    console.log('[SCAN_DEBUG] PickScanScreen.handleScan received:', JSON.stringify(barcode));
     // Client-side duplicate check
     if (orders.find((o) => o.so_barcode === barcode || o.so_number === barcode)) {
       showError('Already scanned');

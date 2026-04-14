@@ -15,6 +15,7 @@ def create_app():
     app = Flask(__name__)
 
     # Config
+    app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB request body limit
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
         "DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry"
     )
@@ -30,8 +31,22 @@ def create_app():
         "http://localhost:3000,http://localhost:5000,http://localhost:8081",
     ).split(",")
     resolved_origins = [o.strip() for o in cors_origins]
-    print(f"[CORS] Allowed origins: {resolved_origins}")
     CORS(app, origins=resolved_origins)
+
+    # Security response headers
+    @app.after_request
+    def set_security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "0"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+    # Prevent stack trace leakage in production
+    @app.errorhandler(500)
+    def internal_error(e):
+        return {"error": "Internal server error"}, 500
 
     # Register blueprints
     from routes.auth import auth_bp
@@ -68,5 +83,4 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     port = int(os.getenv("FLASK_PORT", 5000))
-    debug = os.getenv("FLASK_ENV") == "development"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(host="0.0.0.0", port=port, debug=False)

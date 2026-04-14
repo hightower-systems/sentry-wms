@@ -385,14 +385,14 @@ class TestUsers:
 
     def test_create_user_duplicate(self, client, auth_headers):
         resp = client.post("/api/admin/users", json={
-            "username": "admin", "password": "test", "full_name": "Dupe", "role": "ADMIN"
+            "username": "admin", "password": "testpass1234", "full_name": "Dupe", "role": "ADMIN"
         }, headers=auth_headers)
         assert resp.status_code == 400
         assert "Duplicate" in resp.get_json()["error"]
 
     def test_create_user_invalid_role(self, client, auth_headers):
         resp = client.post("/api/admin/users", json={
-            "username": "bad", "password": "test", "full_name": "Bad", "role": "SUPERUSER"
+            "username": "bad", "password": "testpass1234", "full_name": "Bad", "role": "SUPERUSER"
         }, headers=auth_headers)
         assert resp.status_code == 400
 
@@ -404,20 +404,20 @@ class TestUsers:
     def test_update_user_password(self, client, auth_headers):
         # Create a user, update password, verify login works
         client.post("/api/admin/users", json={
-            "username": "pwtest", "password": "old", "full_name": "PW Test", "role": "USER", "warehouse_id": 1
+            "username": "pwtest", "password": "oldpass1234", "full_name": "PW Test", "role": "USER", "warehouse_id": 1
         }, headers=auth_headers)
 
         user_id = _query_val("SELECT user_id FROM users WHERE username = 'pwtest'")
-        client.put(f"/api/admin/users/{user_id}", json={"password": "newpass"}, headers=auth_headers)
+        client.put(f"/api/admin/users/{user_id}", json={"password": "newpass1234"}, headers=auth_headers)
 
         # Login with new password
-        resp = client.post("/api/auth/login", json={"username": "pwtest", "password": "newpass"})
+        resp = client.post("/api/auth/login", json={"username": "pwtest", "password": "newpass1234"})
         assert resp.status_code == 200
 
     def test_delete_user(self, client, auth_headers):
         # Create a user then hard-delete
         create = client.post("/api/admin/users", json={
-            "username": "delme", "password": "test", "full_name": "Del Me", "role": "USER"
+            "username": "delme", "password": "testpass1234", "full_name": "Del Me", "role": "USER"
         }, headers=auth_headers)
         uid = create.get_json()["user_id"]
 
@@ -638,10 +638,10 @@ class TestRoleEnforcement:
         }, headers=headers)
         assert resp.status_code == 403
 
-    def test_picker_can_read_items(self, client, auth_headers):
+    def test_picker_cannot_read_admin_items(self, client, auth_headers):
         headers = _picker_headers(client)
         resp = client.get("/api/admin/items", headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 403
 
     def test_picker_cannot_create_user(self, client, auth_headers):
         headers = _picker_headers(client)

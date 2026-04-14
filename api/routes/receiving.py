@@ -12,7 +12,7 @@ from constants import (
     POL_PENDING, POL_PARTIAL, POL_RECEIVED,
     ACTION_RECEIVE, ACTION_RECEIVE_CANCEL,
 )
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 from services.inventory_service import add_inventory
@@ -40,6 +40,10 @@ def lookup_po(barcode):
 
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
+
+    ok, denied = check_warehouse_access(po.warehouse_id)
+    if not ok:
+        return denied
 
     if po.status == PO_CLOSED:
         return jsonify({"error": "Purchase order is closed"}), 400
@@ -115,6 +119,9 @@ def receive_items():
         return jsonify({"error": f"Purchase order status is {po.status}, cannot receive"}), 400
 
     warehouse_id = po.warehouse_id
+    ok, denied = check_warehouse_access(warehouse_id)
+    if not ok:
+        return denied
     username = g.current_user["username"]
     receipt_ids = []
     warnings = []
@@ -130,13 +137,15 @@ def receive_items():
         if not item_id or quantity <= 0:
             return jsonify({"error": "Each item must have item_id and quantity > 0"}), 400
 
-        # Validate bin exists
+        # Validate bin exists and belongs to PO warehouse
         bin_row = g.db.execute(
-            text("SELECT bin_id FROM bins WHERE bin_id = :bin_id"),
+            text("SELECT bin_id, warehouse_id FROM bins WHERE bin_id = :bin_id"),
             {"bin_id": bin_id},
         ).fetchone()
         if not bin_row:
             return jsonify({"error": f"Bin {bin_id} not found"}), 404
+        if bin_row.warehouse_id != warehouse_id:
+            return jsonify({"error": f"Bin {bin_id} does not belong to this PO's warehouse"}), 400
 
         # Find matching PO line
         po_line = g.db.execute(
@@ -157,6 +166,15 @@ def receive_items():
         # Check for over-receipt
         remaining = po_line.quantity_ordered - po_line.quantity_received
         if quantity > remaining:
+            over_receipt_row = g.db.execute(
+                text("SELECT value FROM app_settings WHERE key = 'allow_over_receipt'")
+            ).fetchone()
+            if not over_receipt_row or over_receipt_row.value != "true":
+                return jsonify({
+                    "error": f"Over-receipt not allowed on line {po_line.line_number}: "
+                             f"requested {quantity} but only {remaining} remaining. "
+                             f"Enable 'allow_over_receipt' in Settings to permit this."
+                }), 400
             warnings.append(
                 f"Over-receipt on line {po_line.line_number}: received {quantity} but only {remaining} remaining"
             )
@@ -274,6 +292,10 @@ def cancel_receiving():
         ).fetchone()
         if not receipt:
             continue
+
+        ok, denied = check_warehouse_access(receipt.warehouse_id)
+        if not ok:
+            return denied
 
         po_ids.add(receipt.po_id)
 

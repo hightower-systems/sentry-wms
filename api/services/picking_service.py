@@ -49,13 +49,13 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
     # 3. Create pick_batches record
     result = db.execute(
         text(
-            f"""
+            """
             INSERT INTO pick_batches (batch_number, warehouse_id, assigned_to, status)
-            VALUES (:batch_number, :warehouse_id, :assigned_to, '{BATCH_OPEN}')
+            VALUES (:batch_number, :warehouse_id, :assigned_to, :status)
             RETURNING batch_id
             """
         ),
-        {"batch_number": batch_number, "warehouse_id": warehouse_id, "assigned_to": username},
+        {"batch_number": batch_number, "warehouse_id": warehouse_id, "assigned_to": username, "status": BATCH_OPEN},
     )
     batch_id = result.fetchone()[0]
 
@@ -99,7 +99,7 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
             # Find available inventory sorted by bin type preference, then FIFO
             inv_rows = db.execute(
                 text(
-                    f"""
+                    """
                     SELECT inv.inventory_id, inv.bin_id, inv.quantity_on_hand, inv.quantity_allocated,
                            (inv.quantity_on_hand - inv.quantity_allocated) AS available,
                            b.pick_sequence, b.bin_type, inv.lot_number
@@ -108,13 +108,13 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                     WHERE inv.item_id = :item_id
                       AND inv.warehouse_id = :wh
                       AND (inv.quantity_on_hand - inv.quantity_allocated) > 0
-                      AND b.bin_type IN ('{BIN_PICKABLE}', '{BIN_PICKABLE_STAGING}')
+                      AND b.bin_type IN (:bin_pickable, :bin_pickable_staging)
                     ORDER BY
                       b.pick_sequence ASC,
                       inv.updated_at ASC
                     """
                 ),
-                {"item_id": line.item_id, "wh": warehouse_id},
+                {"item_id": line.item_id, "wh": warehouse_id, "bin_pickable": BIN_PICKABLE, "bin_pickable_staging": BIN_PICKABLE_STAGING},
             ).fetchall()
 
             remaining = needed
@@ -143,11 +143,11 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                 # Create pick_tasks record
                 db.execute(
                     text(
-                        f"""
+                        """
                         INSERT INTO pick_tasks (batch_id, so_id, so_line_id, item_id, bin_id,
                                                 quantity_to_pick, pick_sequence, tote_number, status)
                         VALUES (:batch_id, :so_id, :so_line_id, :item_id, :bin_id,
-                                :qty, :pick_seq, :tote, '{TASK_PENDING}')
+                                :qty, :pick_seq, :tote, :task_status)
                         """
                     ),
                     {
@@ -159,6 +159,7 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                         "qty": take,
                         "pick_seq": inv.pick_sequence,
                         "tote": tote_number,
+                        "task_status": TASK_PENDING,
                     },
                 )
 
@@ -239,7 +240,7 @@ def get_batch_tasks(db, batch_id):
 def get_next_task(db, batch_id):
     row = db.execute(
         text(
-            f"""
+            """
             SELECT pt.pick_task_id, pt.pick_sequence, pt.quantity_to_pick, pt.quantity_picked,
                    pt.tote_number, pt.status,
                    b.bin_code, b.bin_barcode, b.aisle, b.row_num, b.level_num,
@@ -251,12 +252,12 @@ def get_next_task(db, batch_id):
             LEFT JOIN zones z ON z.zone_id = b.zone_id
             JOIN items i ON i.item_id = pt.item_id
             JOIN sales_orders so ON so.so_id = pt.so_id
-            WHERE pt.batch_id = :bid AND pt.status = '{TASK_PENDING}'
+            WHERE pt.batch_id = :bid AND pt.status = :task_pending
             ORDER BY pt.pick_sequence ASC
             LIMIT 1
             """
         ),
-        {"bid": batch_id},
+        {"bid": batch_id, "task_pending": TASK_PENDING},
     ).fetchone()
 
     if not row:
@@ -270,12 +271,12 @@ def get_next_task(db, batch_id):
     # Add pick_number / total_picks
     pick_number = db.execute(
         text(
-            f"""
+            """
             SELECT COUNT(*) FROM pick_tasks
-            WHERE batch_id = :bid AND status != '{TASK_PENDING}'
+            WHERE batch_id = :bid AND status != :task_pending
             """
         ),
-        {"bid": batch_id},
+        {"bid": batch_id, "task_pending": TASK_PENDING},
     ).scalar()
     total_picks = db.execute(
         text("SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid"),
@@ -306,6 +307,12 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
     if task.status != TASK_PENDING:
         raise ValueError(f"Pick task is already {task.status}")
 
+    # Cap quantity to task requirement to prevent over-pick
+    if quantity_picked > task.quantity_to_pick:
+        raise ValueError(
+            f"Cannot pick {quantity_picked} - task only requires {task.quantity_to_pick}"
+        )
+
     # 2. Validate barcode
     item = db.execute(
         text("SELECT item_id, sku, upc, barcode_aliases FROM items WHERE item_id = :iid"),
@@ -318,14 +325,14 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
     # 3. Update pick task
     db.execute(
         text(
-            f"""
+            """
             UPDATE pick_tasks
-            SET status = '{TASK_PICKED}', quantity_picked = :qty, picked_by = :user,
+            SET status = :task_status, quantity_picked = :qty, picked_by = :user,
                 picked_at = NOW(), scan_confirmed = TRUE
             WHERE pick_task_id = :tid
             """
         ),
-        {"qty": quantity_picked, "user": username, "tid": pick_task_id},
+        {"qty": quantity_picked, "user": username, "tid": pick_task_id, "task_status": TASK_PICKED},
     )
 
     # 4. Update sales_order_lines.quantity_picked (wave or standard)
@@ -358,13 +365,13 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
             {"qty": quantity_picked, "sol_id": task.so_line_id},
         )
 
-    # 5. Update inventory
+    # 5. Update inventory (floor at zero for safety)
     db.execute(
         text(
             """
             UPDATE inventory
-            SET quantity_on_hand = quantity_on_hand - :picked,
-                quantity_allocated = quantity_allocated - :allocated,
+            SET quantity_on_hand = GREATEST(0, quantity_on_hand - :picked),
+                quantity_allocated = GREATEST(0, quantity_allocated - :allocated),
                 updated_at = NOW()
             WHERE item_id = :iid AND bin_id = :bid
             """
@@ -441,27 +448,33 @@ def short_pick(db, pick_task_id, quantity_available, username):
     if task.status != TASK_PENDING:
         raise ValueError(f"Pick task is already {task.status}")
 
+    if quantity_available > task.quantity_to_pick:
+        raise ValueError(
+            f"Available quantity {quantity_available} exceeds task requirement "
+            f"{task.quantity_to_pick} - use confirm instead"
+        )
+
     shortage = task.quantity_to_pick - quantity_available
 
     # 2. Update pick task
     db.execute(
         text(
-            f"""
+            """
             UPDATE pick_tasks
-            SET status = '{TASK_SHORT}', quantity_picked = :qty, picked_by = :user, picked_at = NOW()
+            SET status = :task_status, quantity_picked = :qty, picked_by = :user, picked_at = NOW()
             WHERE pick_task_id = :tid
             """
         ),
-        {"qty": quantity_available, "user": username, "tid": pick_task_id},
+        {"qty": quantity_available, "user": username, "tid": pick_task_id, "task_status": TASK_SHORT},
     )
 
-    # 3. Update inventory
+    # 3. Update inventory (floor at zero for safety)
     db.execute(
         text(
             """
             UPDATE inventory
-            SET quantity_on_hand = quantity_on_hand - :picked,
-                quantity_allocated = quantity_allocated - :allocated,
+            SET quantity_on_hand = GREATEST(0, quantity_on_hand - :picked),
+                quantity_allocated = GREATEST(0, quantity_allocated - :allocated),
                 updated_at = NOW()
             WHERE item_id = :iid AND bin_id = :bid
             """
@@ -615,13 +628,13 @@ def complete_batch(db, batch_id, username):
     # 5. Summary
     task_stats = db.execute(
         text(
-            f"""
+            """
             SELECT COALESCE(SUM(quantity_picked), 0) AS total_picked,
-                   COUNT(*) FILTER (WHERE status = '{TASK_SHORT}') AS total_shorts
+                   COUNT(*) FILTER (WHERE status = :task_short) AS total_shorts
             FROM pick_tasks WHERE batch_id = :bid
             """
         ),
-        {"bid": batch_id},
+        {"bid": batch_id, "task_short": TASK_SHORT},
     ).fetchone()
 
     db.commit()
@@ -669,15 +682,15 @@ def wave_validate(db, so_barcode, warehouse_id):
         # Check if already in an active pick batch
         active_batch = db.execute(
             text(
-                f"""
+                """
                 SELECT pb.batch_id
                 FROM pick_batch_orders pbo
                 JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
-                WHERE pbo.so_id = :so_id AND pb.status IN ('{BATCH_OPEN}', '{BATCH_IN_PROGRESS}')
+                WHERE pbo.so_id = :so_id AND pb.status IN (:batch_open, :batch_in_progress)
                 LIMIT 1
                 """
             ),
-            {"so_id": so.so_id},
+            {"so_id": so.so_id, "batch_open": BATCH_OPEN, "batch_in_progress": BATCH_IN_PROGRESS},
         ).fetchone()
 
         if active_batch:
@@ -688,15 +701,15 @@ def wave_validate(db, so_barcode, warehouse_id):
     # Check if already in an active batch even if OPEN (edge case)
     active_batch = db.execute(
         text(
-            f"""
+            """
             SELECT pb.batch_id
             FROM pick_batch_orders pbo
             JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
-            WHERE pbo.so_id = :so_id AND pb.status IN ('{BATCH_OPEN}', '{BATCH_IN_PROGRESS}')
+            WHERE pbo.so_id = :so_id AND pb.status IN (:batch_open, :batch_in_progress)
             LIMIT 1
             """
         ),
-        {"so_id": so.so_id},
+        {"so_id": so.so_id, "batch_open": BATCH_OPEN, "batch_in_progress": BATCH_IN_PROGRESS},
     ).fetchone()
 
     if active_batch:
@@ -750,14 +763,14 @@ def wave_create(db, so_ids, warehouse_id, username):
         # Check not already in active batch
         active = db.execute(
             text(
-                f"""
+                """
                 SELECT pb.batch_id FROM pick_batch_orders pbo
                 JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
-                WHERE pbo.so_id = :so_id AND pb.status IN ('{BATCH_OPEN}', '{BATCH_IN_PROGRESS}')
+                WHERE pbo.so_id = :so_id AND pb.status IN (:batch_open, :batch_in_progress)
                 LIMIT 1
                 """
             ),
-            {"so_id": so_id},
+            {"so_id": so_id, "batch_open": BATCH_OPEN, "batch_in_progress": BATCH_IN_PROGRESS},
         ).fetchone()
         if active:
             raise AlreadyInBatchError(so.so_number, active.batch_id)
@@ -778,13 +791,13 @@ def wave_create(db, so_ids, warehouse_id, username):
 
     result = db.execute(
         text(
-            f"""
+            """
             INSERT INTO pick_batches (batch_number, warehouse_id, assigned_to, status)
-            VALUES (:bn, :wh, :user, '{BATCH_OPEN}')
+            VALUES (:bn, :wh, :user, :status)
             RETURNING batch_id
             """
         ),
-        {"bn": batch_number, "wh": warehouse_id, "user": username},
+        {"bn": batch_number, "wh": warehouse_id, "user": username, "status": BATCH_OPEN},
     )
     batch_id = result.fetchone()[0]
 
@@ -836,7 +849,7 @@ def wave_create(db, so_ids, warehouse_id, username):
         # Find available inventory sorted by pick path
         inv_rows = db.execute(
             text(
-                f"""
+                """
                 SELECT inv.inventory_id, inv.bin_id, inv.quantity_on_hand, inv.quantity_allocated,
                        (inv.quantity_on_hand - inv.quantity_allocated) AS available,
                        b.pick_sequence, b.bin_type
@@ -845,13 +858,13 @@ def wave_create(db, so_ids, warehouse_id, username):
                 WHERE inv.item_id = :item_id
                   AND inv.warehouse_id = :wh
                   AND (inv.quantity_on_hand - inv.quantity_allocated) > 0
-                  AND b.bin_type IN ('{BIN_PICKABLE}', '{BIN_PICKABLE_STAGING}')
+                  AND b.bin_type IN (:bin_pickable, :bin_pickable_staging)
                 ORDER BY
                   b.pick_sequence ASC,
                   inv.updated_at ASC
                 """
             ),
-            {"item_id": item_id, "wh": warehouse_id},
+            {"item_id": item_id, "wh": warehouse_id, "bin_pickable": BIN_PICKABLE, "bin_pickable_staging": BIN_PICKABLE_STAGING},
         ).fetchall()
 
         total_available = sum(r.available for r in inv_rows)
@@ -884,11 +897,11 @@ def wave_create(db, so_ids, warehouse_id, username):
             first_contrib = contributions[0]
             task_result = db.execute(
                 text(
-                    f"""
+                    """
                     INSERT INTO pick_tasks (batch_id, so_id, so_line_id, item_id, bin_id,
                                             quantity_to_pick, pick_sequence, tote_number, status)
                     VALUES (:bid, :so_id, :so_line_id, :item_id, :bin_id,
-                            :qty, :pick_seq, 'WAVE', '{TASK_PENDING}')
+                            :qty, :pick_seq, 'WAVE', :task_status)
                     RETURNING pick_task_id
                     """
                 ),
@@ -900,6 +913,7 @@ def wave_create(db, so_ids, warehouse_id, username):
                     "bin_id": inv.bin_id,
                     "qty": take,
                     "pick_seq": inv.pick_sequence,
+                    "task_status": TASK_PENDING,
                 },
             )
             pick_task_id = task_result.fetchone()[0]

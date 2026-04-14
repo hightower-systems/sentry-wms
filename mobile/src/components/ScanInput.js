@@ -56,16 +56,11 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
     // Use bufferRef (synchronous) instead of value (async React state)
     // to avoid the C6000 race where Enter fires before the last onChangeText flushes
     const raw = bufferRef.current;
-    const charCodes = Array.from(raw).map((c) => c.charCodeAt(0));
-    console.log('[SCAN_DEBUG] raw value:', JSON.stringify(raw), 'charCodes:', charCodes);
-
     const trimmed = raw.replace(/[\r\n\s]+/g, '').trim();
-    console.log('[SCAN_DEBUG] trimmed value:', JSON.stringify(trimmed), 'length:', trimmed.length);
 
     setValue('');
     bufferRef.current = '';
     if (!trimmed || !onScan || scanInFlightRef.current) {
-      console.log('[SCAN_DEBUG] SKIPPED  -  empty:', !trimmed, 'noHandler:', !onScan, 'inFlight:', scanInFlightRef.current);
       setTimeout(() => inputRef.current?.focus(), 50);
       return;
     }

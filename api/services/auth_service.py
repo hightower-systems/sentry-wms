@@ -13,7 +13,7 @@ JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
 JWT_ALGORITHM = "HS256"
-TOKEN_EXPIRY_HOURS = 24
+TOKEN_EXPIRY_HOURS = 8
 
 
 def authenticate_user(db_session, username, password):

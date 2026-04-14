@@ -25,7 +25,6 @@ export default function TransferScreen({ navigation }) {
   const [success, setSuccess] = useState(false);
 
   const handleScan = async (barcode) => {
-    console.log('[SCAN_DEBUG] TransferScreen.handleScan received:', JSON.stringify(barcode), 'step:', step);
     if (step === 0) {
       // Scan item
       try {

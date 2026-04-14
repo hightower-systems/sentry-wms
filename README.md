@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.9.8-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-277%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.0.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-288%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
 
   <img src="docs/assets/sentry-preview.png" alt="Sentry WMS Screenshots" width="100%">
@@ -53,22 +53,16 @@ cd sentry-wms
 # Copy environment config
 cp .env.example .env
 
-# Start PostgreSQL + API with Docker (includes demo seed data)
+# Start PostgreSQL + API + Admin Panel with Docker
 docker-compose up -d
 
 # Or start with a clean system (no demo data):
 # SKIP_SEED=true docker-compose up -d
 
 # API is now running at http://localhost:5000
-# Health check: http://localhost:5000/api/health
-
-# Start the admin panel (separate terminal)
-cd admin
-npm install
-npm run dev
-
 # Admin panel is now running at http://localhost:3000
-# Login with admin/admin
+# Health check: http://localhost:5000/api/health
+# Admin password is printed in docker logs on first run
 
 # Start the mobile app (separate terminal)
 cd mobile
@@ -94,7 +88,7 @@ The admin panel is a React web app for warehouse managers to monitor operations 
 - **Settings** - warehouse config, manual PO/SO entry, fulfillment workflow toggles
 - **Warehouse Picker** - header dropdown to switch warehouse context (all pages filter dynamically)
 
-Built with React 18, Vite, React Router, and plain CSS. Dark theme with copper accents. No component libraries.
+Built with React 19, Vite, React Router, and plain CSS. Dark theme with copper accents. No component libraries.
 
 ## API Endpoints
 
@@ -232,9 +226,28 @@ The apartment lab seed (`db/seed-apartment-lab.sql`) matches 61 printed Zebra ba
 
 Set `SKIP_SEED=true` to start with a clean system (admin user + one empty warehouse only, no demo data).
 
+### Security
+
+- JWT authentication with live database validation on every request - `require_auth` verifies the user's role, warehouse access, and active status per-request (not cached in the token)
+- Deactivated users and permission changes take effect immediately
+- Required `JWT_SECRET` environment variable (crashes on startup if missing)
+- Warehouse authorization middleware - non-admin users blocked from unassigned warehouses (403)
+- Lookup endpoints enforce warehouse isolation - users only see inventory, bins, and orders for their assigned warehouses
+- Login lockout - 5 failed attempts locks the account for 15 minutes
+- All SQL queries use parameterized bindings (no string interpolation of user input)
+- bcrypt password hashing with salt, minimum 8-character password policy
+- Random admin password generated at seed time (no default credentials)
+- Over-pick and negative quantity prevention on all warehouse operations
+- Security response headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy)
+- Stack trace suppression in production (generic 500 error responses)
+- CORS restricted to explicit origin whitelist
+- Role-based access control (ADMIN/USER) with function-level visibility
+- Non-root container with gunicorn (4 workers) in production
+- Full audit trail on every warehouse action
+
 ### Testing
 
-277 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~4.5 seconds.
+288 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~5 seconds.
 
 ```bash
 docker compose exec api python -m pytest tests/ -v --tb=short
@@ -242,7 +255,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-🚧 **Active Development** - building toward v1.0.0
+**v1.0.0 - Production Release**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -255,16 +268,17 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.7.0 | Admin CRUD API | ✅ Complete |
 | v0.8.0 | React admin panel | ✅ Complete |
 | v0.8.1 | Wave picking with combined SO batches | ✅ Complete |
-| v0.9.0 | Mobile scanner app (10 screens, C6000 support) | ✅ Complete |
+| v0.9.0 | Mobile scanner app (12 screens, C6000 support) | ✅ Complete |
 | v0.9.1 | Apartment lab testing, preferred bins, bug fixes | ✅ Complete |
 | v0.9.2 | Test infrastructure, bin type simplification, short pick reporting | ✅ Complete |
-| v0.9.3 | UI revamp  -  tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
-| v0.9.4 | Structural refactor  -  service layer, admin split, shared styles/hooks | ✅ Complete |
+| v0.9.3 | UI revamp - tan cards, accent stripes, carrier picker, blind counts | ✅ Complete |
+| v0.9.4 | Structural refactor - service layer, admin split, shared styles/hooks | ✅ Complete |
 | v0.9.5 | Scan hardening, cycle count approval, admin UX overhaul, CSV templates | ✅ Complete |
 | v0.9.6 | Scan hardening, put-away reorder, manual picking, role simplification | ✅ Complete |
 | v0.9.7 | 27-bug hardware test fix (repeat offenders, styled modals, EAS build) | ✅ Complete |
 | v0.9.8 | Admin dark theme, warehouse picker, security hardening, status constants, SKIP_SEED | ✅ Complete |
-| v1.0.0 | Production release  -  hardware tested, full warehouse workflow | Planned |
+| v0.9.9 | SQL parameterization, warehouse auth, JWT hardening, FK indexes, scanner plugin fix | ✅ Complete |
+| **v1.0.0** | **Production release - full security audit, penetration test fixes, hardened infrastructure** | ✅ **Released** |
 | v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -277,4 +291,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.9.8
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.0.0

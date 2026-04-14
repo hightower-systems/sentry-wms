@@ -34,7 +34,6 @@ export default function useScanQueue(processFn, errorRef) {
       }
 
       const barcode = queue.current.shift();
-      console.log('[SCAN_DEBUG] useScanQueue processing:', JSON.stringify(barcode), 'remaining:', queue.current.length);
       try {
         await processFn(barcode);
       } catch {

@@ -9,7 +9,7 @@ from constants import (
     COUNT_PENDING, COUNT_IN_PROGRESS, COUNT_COMPLETED, COUNT_VARIANCE,
     ADJ_PENDING, ACTION_COUNT,
 )
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 
@@ -128,6 +128,10 @@ def get_cycle_count(count_id):
     if not cc:
         return jsonify({"error": "Cycle count not found"}), 404
 
+    ok, denied = check_warehouse_access(cc.warehouse_id)
+    if not ok:
+        return denied
+
     lines = g.db.execute(
         text(
             """
@@ -205,6 +209,11 @@ def submit_cycle_count():
 
     if not cc:
         return jsonify({"error": "Cycle count not found"}), 404
+
+    ok, denied = check_warehouse_access(cc.warehouse_id)
+    if not ok:
+        return denied
+
     if cc.status not in (COUNT_PENDING, COUNT_IN_PROGRESS):
         return jsonify({"error": f"Cycle count status is {cc.status}, cannot submit"}), 400
 

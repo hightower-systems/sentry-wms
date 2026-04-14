@@ -15,12 +15,22 @@ Thanks for your interest in contributing to Sentry WMS! Here's how to get starte
 
 ## Commit Message Format
 
-Use lowercase, present tense:
-- `add: receiving API endpoint`
-- `fix: barcode scan validation`
-- `update: pick path sorting logic`
-- `docs: API reference for receiving`
-- `test: cycle count variance detection`
+Use [Conventional Commits](https://www.conventionalcommits.org/) with lowercase, present tense:
+
+- `feat:` new feature or capability
+- `fix:` bug fix
+- `security:` security fix
+- `refactor:` code change that doesn't fix a bug or add a feature
+- `test:` adding or updating tests
+- `docs:` documentation only
+- `chore:` build, CI, deps, formatting
+- `perf:` performance improvement
+
+Examples:
+- `feat: add netsuite connector scaffold`
+- `fix: scan input losing focus on pack screen`
+- `security: add warehouse access check to shipping endpoint`
+- `docs: update API reference for receiving`
 
 ## Code Style
 

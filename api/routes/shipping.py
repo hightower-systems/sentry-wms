@@ -5,7 +5,7 @@ Shipping / fulfillment endpoint: records tracking info and creates fulfillment r
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 from constants import SO_PICKED, SO_PACKED, SO_SHIPPED, ACTION_SHIP, TASK_PICKED, TASK_SHORT
@@ -46,6 +46,10 @@ def get_order(barcode):
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
+
+    ok, denied = check_warehouse_access(so.warehouse_id)
+    if not ok:
+        return denied
 
     packing_required = _require_packing(g.db)
     allowed_statuses = [SO_PACKED] if packing_required else [SO_PICKED, SO_PACKED]
@@ -145,6 +149,10 @@ def fulfill():
     if not so:
         return jsonify({"error": "Order not found"}), 404
 
+    ok, denied = check_warehouse_access(so.warehouse_id)
+    if not ok:
+        return denied
+
     packing_required = _require_packing(g.db)
     allowed_statuses = [SO_PACKED] if packing_required else [SO_PICKED, SO_PACKED]
 
@@ -156,9 +164,9 @@ def fulfill():
     # 1. Create item_fulfillments record
     result = g.db.execute(
         text(
-            f"""
+            """
             INSERT INTO item_fulfillments (so_id, warehouse_id, tracking_number, carrier, ship_method, shipped_by, status)
-            VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, '{SO_SHIPPED}')
+            VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, :shipped_status)
             RETURNING fulfillment_id
             """
         ),
@@ -169,6 +177,7 @@ def fulfill():
             "carrier": carrier,
             "ship_method": ship_method,
             "shipped_by": username,
+            "shipped_status": SO_SHIPPED,
         },
     )
     fulfillment_id = result.fetchone()[0]
@@ -192,14 +201,14 @@ def fulfill():
         # Find bin_id from pick_tasks
         pick_task = g.db.execute(
             text(
-                f"""
+                """
                 SELECT bin_id FROM pick_tasks
-                WHERE so_id = :so_id AND item_id = :item_id AND status IN ('{TASK_PICKED}', '{TASK_SHORT}')
+                WHERE so_id = :so_id AND item_id = :item_id AND status IN (:task_picked, :task_short)
                 ORDER BY pick_task_id ASC
                 LIMIT 1
                 """
             ),
-            {"so_id": so_id, "item_id": line.item_id},
+            {"so_id": so_id, "item_id": line.item_id, "task_picked": TASK_PICKED, "task_short": TASK_SHORT},
         ).fetchone()
 
         bin_id = pick_task.bin_id if pick_task else 1  # fallback shouldn't happen
@@ -234,13 +243,13 @@ def fulfill():
     # 4. Update SO status with carrier and tracking
     g.db.execute(
         text(
-            f"""
+            """
             UPDATE sales_orders
-            SET status = '{SO_SHIPPED}', shipped_at = NOW(), carrier = :carrier, tracking_number = :tracking
+            SET status = :shipped_status, shipped_at = NOW(), carrier = :carrier, tracking_number = :tracking
             WHERE so_id = :so_id
             """
         ),
-        {"so_id": so_id, "carrier": carrier, "tracking": tracking_number},
+        {"so_id": so_id, "carrier": carrier, "tracking": tracking_number, "shipped_status": SO_SHIPPED},
     )
 
     # 5. Audit log

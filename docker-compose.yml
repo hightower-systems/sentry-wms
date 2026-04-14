@@ -9,7 +9,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-sentry}
       SKIP_SEED: ${SKIP_SEED:-false}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -27,7 +27,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry}@db:5432/${POSTGRES_DB:-sentry}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env -- see .env.example}
-      FLASK_ENV: development
+      FLASK_ENV: ${FLASK_ENV:-production}
       FLASK_PORT: 5000
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8081"
     ports:

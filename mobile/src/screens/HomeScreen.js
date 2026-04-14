@@ -103,10 +103,8 @@ export default function HomeScreen({ navigation }) {
   );
 
   const handleScan = async (barcode) => {
-    console.log('[SCAN_DEBUG] HomeScreen.handleScan received:', JSON.stringify(barcode));
     const cleaned = barcode.replace(/[\r\n\s]+/g, '').trim();
     if (!cleaned) return;
-    console.log('[SCAN_DEBUG] HomeScreen.handleScan cleaned:', JSON.stringify(cleaned));
     const encoded = encodeURIComponent(cleaned);
 
     // Try item lookup (UPC or SKU)
@@ -373,7 +371,7 @@ export default function HomeScreen({ navigation }) {
         <TouchableOpacity onPress={() => { getStoredApiUrl().then(setServerUrl); setShowScanConfig(true); }}>
           <Text style={styles.footerIp}>{serverUrl || 'Set Server URL'}</Text>
         </TouchableOpacity>
-        <Text style={styles.footerText}>v0.9.8 / {warehouseName}</Text>
+        <Text style={styles.footerText}>v1.0.0 / {warehouseName}</Text>
       </View>
 
       {/* Info modal (replaces Alert.alert for lookups) */}

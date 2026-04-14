@@ -14,10 +14,11 @@ from routes.admin import admin_bp
 
 @admin_bp.route("/items", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_items():
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
     category = request.args.get("category")
     active = request.args.get("active")
 
@@ -71,6 +72,7 @@ def list_items():
 
 @admin_bp.route("/items/<int:item_id>", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_item(item_id):
     item = g.db.execute(
@@ -266,10 +268,11 @@ def delete_item(item_id):
 
 @admin_bp.route("/inventory", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_inventory():
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
 
     where_clauses, params = [], {}
     warehouse_id = request.args.get("warehouse_id", type=int)
@@ -344,6 +347,9 @@ def csv_import(entity_type):
     if not data or not records:
         return jsonify({"error": "records array is required"}), 400
 
+    # Default warehouse_id for PO/SO import (can be overridden per record)
+    default_warehouse_id = data.get("warehouse_id")
+
     imported = 0
     errors = []
 
@@ -354,9 +360,9 @@ def csv_import(entity_type):
             elif entity_type == "bins":
                 _import_bin(g.db, rec, idx, errors)
             elif entity_type == "purchase-orders":
-                _import_purchase_order(g.db, rec, idx, errors)
+                _import_purchase_order(g.db, rec, idx, errors, default_warehouse_id)
             elif entity_type == "sales-orders":
-                _import_sales_order(g.db, rec, idx, errors)
+                _import_sales_order(g.db, rec, idx, errors, default_warehouse_id)
             imported += 1
         except _SkipRow as e:
             errors.append({"row": idx, "error": str(e)})
@@ -475,7 +481,7 @@ def _import_bin(db, rec, idx, errors):
     )
 
 
-def _import_purchase_order(db, rec, idx, errors):
+def _import_purchase_order(db, rec, idx, errors, default_warehouse_id=None):
     po_number = rec.get("po_number")
     sku = rec.get("sku")
     if not po_number:
@@ -486,6 +492,10 @@ def _import_purchase_order(db, rec, idx, errors):
     quantity = int(rec.get("quantity") or rec.get("quantity_expected") or 0)
     if quantity <= 0:
         raise _SkipRow("quantity must be > 0")
+
+    warehouse_id = rec.get("warehouse_id") or default_warehouse_id
+    if not warehouse_id:
+        raise _SkipRow("Missing required field: warehouse_id")
 
     # Find item by SKU
     item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
@@ -498,10 +508,10 @@ def _import_purchase_order(db, rec, idx, errors):
         result = db.execute(
             text("""
                 INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, expected_date, warehouse_id, status)
-                VALUES (:pn, :pn, :vendor, :exp_date, 1, 'OPEN')
+                VALUES (:pn, :pn, :vendor, :exp_date, :wid, 'OPEN')
                 RETURNING po_id
             """),
-            {"pn": po_number, "vendor": rec.get("vendor"), "exp_date": rec.get("expected_date") or None},
+            {"pn": po_number, "vendor": rec.get("vendor"), "exp_date": rec.get("expected_date") or None, "wid": warehouse_id},
         )
         po_id = result.fetchone()[0]
     else:
@@ -516,7 +526,7 @@ def _import_purchase_order(db, rec, idx, errors):
     )
 
 
-def _import_sales_order(db, rec, idx, errors):
+def _import_sales_order(db, rec, idx, errors, default_warehouse_id=None):
     so_number = rec.get("so_number")
     sku = rec.get("sku")
     if not so_number:
@@ -527,6 +537,10 @@ def _import_sales_order(db, rec, idx, errors):
     quantity = int(rec.get("quantity") or rec.get("quantity_ordered") or 0)
     if quantity <= 0:
         raise _SkipRow("quantity must be > 0")
+
+    warehouse_id = rec.get("warehouse_id") or default_warehouse_id
+    if not warehouse_id:
+        raise _SkipRow("Missing required field: warehouse_id")
 
     # Find item by SKU
     item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
@@ -539,10 +553,10 @@ def _import_sales_order(db, rec, idx, errors):
         result = db.execute(
             text("""
                 INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, order_date, status)
-                VALUES (:sn, :sn, :cust, :phone, :caddr, 1, NOW(), 'OPEN')
+                VALUES (:sn, :sn, :cust, :phone, :caddr, :wid, NOW(), 'OPEN')
                 RETURNING so_id
             """),
-            {"sn": so_number, "cust": rec.get("customer"), "phone": rec.get("customer_phone"), "caddr": rec.get("customer_address")},
+            {"sn": so_number, "cust": rec.get("customer"), "phone": rec.get("customer_phone"), "caddr": rec.get("customer_address"), "wid": warehouse_id},
         )
         so_id = result.fetchone()[0]
     else:
@@ -560,6 +574,7 @@ def _import_sales_order(db, rec, idx, errors):
 
 @admin_bp.route("/preferred-bins", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_preferred_bins():
     item_id = request.args.get("item_id", type=int)
@@ -617,6 +632,7 @@ def list_preferred_bins():
 
 @admin_bp.route("/preferred-bins", methods=["POST"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def create_preferred_bin():
     data = request.get_json()
@@ -646,6 +662,7 @@ def create_preferred_bin():
 
 @admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["PUT"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def update_preferred_bin(preferred_bin_id):
     data = request.get_json()
@@ -666,6 +683,7 @@ def update_preferred_bin(preferred_bin_id):
 
 @admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["DELETE"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def delete_preferred_bin(preferred_bin_id):
     g.db.execute(

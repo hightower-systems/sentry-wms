@@ -42,7 +42,6 @@ export default function PutAwayScreen({ navigation }) {
   // --- Load Phase ---
 
   const handleScanItem = async (barcode) => {
-    console.log('[SCAN_DEBUG] PutAwayScreen.handleScanItem received:', JSON.stringify(barcode));
     // Check for staging bin scan first
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
@@ -147,7 +146,6 @@ export default function PutAwayScreen({ navigation }) {
 
   // Handle scan during process phase  -  match to a queue item or a bin
   const handleProcessScan = async (barcode) => {
-    console.log('[SCAN_DEBUG] PutAwayScreen.handleProcessScan received:', JSON.stringify(barcode), 'activeItem:', !!activeItem);
     if (!activeItem) {
       // No item selected  -  try to match a queue item by barcode
       const match = queue.find((q) => q.upc === barcode || q.sku === barcode);
@@ -163,7 +161,6 @@ export default function PutAwayScreen({ navigation }) {
   };
 
   const handleScanBin = async (barcode) => {
-    console.log('[SCAN_DEBUG] PutAwayScreen.handleScanBin received:', JSON.stringify(barcode));
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (!binResp.data?.bin) {

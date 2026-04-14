@@ -19,10 +19,11 @@ from routes.admin import admin_bp
 
 @admin_bp.route("/purchase-orders", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_purchase_orders():
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
 
     where_clauses, params = [], {}
     status = request.args.get("status")
@@ -66,6 +67,7 @@ def list_purchase_orders():
 
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_purchase_order(po_id):
     po = g.db.execute(
@@ -116,8 +118,10 @@ def create_purchase_order():
     if dup:
         return jsonify({"error": f"Duplicate po_number: {data['po_number']}"}), 400
 
-    # Validate items
+    # Validate items and quantities
     for line in data["lines"]:
+        if not line.get("quantity_ordered") or line["quantity_ordered"] <= 0:
+            return jsonify({"error": "quantity_ordered must be greater than 0 for all lines"}), 400
         item = g.db.execute(text("SELECT 1 FROM items WHERE item_id = :iid"), {"iid": line["item_id"]}).fetchone()
         if not item:
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
@@ -212,10 +216,11 @@ def close_purchase_order(po_id):
 
 @admin_bp.route("/sales-orders", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_sales_orders():
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
 
     where_clauses, params = [], {}
     status = request.args.get("status")
@@ -263,6 +268,7 @@ def list_sales_orders():
 
 @admin_bp.route("/sales-orders/<int:so_id>", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_sales_order(so_id):
     so = g.db.execute(
@@ -317,6 +323,8 @@ def create_sales_order():
         return jsonify({"error": f"Duplicate so_number: {data['so_number']}"}), 400
 
     for line in data["lines"]:
+        if not line.get("quantity_ordered") or line["quantity_ordered"] <= 0:
+            return jsonify({"error": "quantity_ordered must be greater than 0 for all lines"}), 400
         item = g.db.execute(text("SELECT 1 FROM items WHERE item_id = :iid"), {"iid": line["item_id"]}).fetchone()
         if not item:
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400

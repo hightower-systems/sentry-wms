@@ -113,7 +113,6 @@ export default function ReceiveScreen({ navigation, route }) {
   // --- Phase 1: Scan POs to build queue ---
 
   const handleScanPO = async (barcode) => {
-    console.log('[SCAN_DEBUG] ReceiveScreen.handleScanPO received:', JSON.stringify(barcode));
     // Duplicate check
     if (poQueue.find((p) => p.po_barcode === barcode || p.po_number === barcode)) {
       showError('Already scanned');
@@ -206,7 +205,6 @@ export default function ReceiveScreen({ navigation, route }) {
 
   // Standard mode
   const handleScanItemStandard = (barcode) => {
-    console.log('[SCAN_DEBUG] ReceiveScreen.handleScanItemStandard received:', JSON.stringify(barcode));
     const match = lines.find(
       (l) => l.upc === barcode || l.sku === barcode || l.item_barcode === barcode
     );
@@ -293,7 +291,6 @@ export default function ReceiveScreen({ navigation, route }) {
 
   // Turbo mode
   const processTurboScan = useCallback(async (barcode) => {
-    console.log('[SCAN_DEBUG] ReceiveScreen.processTurboScan received:', JSON.stringify(barcode));
     const match = lines.find(
       (l) => l.upc === barcode || l.sku === barcode || l.item_barcode === barcode
     );
@@ -600,7 +597,6 @@ export default function ReceiveScreen({ navigation, route }) {
             <ScanInput
               placeholder="SCAN BIN"
               onScan={async (barcode) => {
-                console.log('[SCAN_DEBUG] ReceiveScreen.binPicker received:', JSON.stringify(barcode));
                 try {
                   const resp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
                   const bin = resp.data?.bin;

@@ -19,7 +19,6 @@ export default function PackShipScreen({ navigation }) {
   const { error, scanDisabled, showError, clearError } = useScreenError();
 
   const handleScanOrder = async (barcode) => {
-    console.log('[SCAN_DEBUG] PackShipScreen.handleScanOrder received:', JSON.stringify(barcode));
     try {
       const resp = await client.get(`/api/packing/order/${encodeURIComponent(barcode)}`);
       setOrder(resp.data.order || resp.data);
@@ -31,7 +30,6 @@ export default function PackShipScreen({ navigation }) {
   };
 
   const handleScanItem = async (barcode) => {
-    console.log('[SCAN_DEBUG] PackShipScreen.handleScanItem received:', JSON.stringify(barcode));
     // Client-side check: ensure item isn't already fully verified
     const matchedItem = items.find(
       (item) => item.sku === barcode || item.upc === barcode || item.item_barcode === barcode

@@ -34,7 +34,6 @@ export default function ShipScreen({ navigation, route }) {
   }, []);
 
   const handleScanOrder = async (barcode) => {
-    console.log('[SCAN_DEBUG] ShipScreen.handleScanOrder received:', JSON.stringify(barcode));
     try {
       const resp = await client.get(`/api/shipping/order/${encodeURIComponent(barcode)}`);
       const data = resp.data;

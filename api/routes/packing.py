@@ -5,7 +5,7 @@ Packing endpoints: order lookup for packing, scan-to-verify, and pack completion
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from services.audit_service import write_audit_log
 from constants import SO_PICKED, SO_PACKED, ACTION_PACK
@@ -32,6 +32,10 @@ def get_order(barcode):
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
+
+    ok, denied = check_warehouse_access(so.warehouse_id)
+    if not ok:
+        return denied
 
     if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
@@ -108,14 +112,22 @@ def verify_item():
     scanned_barcode = data["scanned_barcode"]
     quantity = data.get("quantity", 1)
 
+    if not isinstance(quantity, int) or quantity <= 0:
+        return jsonify({"error": "quantity must be a positive integer"}), 400
+
     # Validate SO
     so = g.db.execute(
-        text("SELECT so_id, status FROM sales_orders WHERE so_id = :so_id"),
+        text("SELECT so_id, status, warehouse_id FROM sales_orders WHERE so_id = :so_id"),
         {"so_id": so_id},
     ).fetchone()
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
+
+    ok, denied = check_warehouse_access(so.warehouse_id)
+    if not ok:
+        return denied
+
     if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 
@@ -158,13 +170,13 @@ def verify_item():
 
     g.db.execute(
         text(
-            f"""
+            """
             UPDATE sales_order_lines
-            SET quantity_packed = :qty, status = CASE WHEN :qty >= quantity_picked THEN '{SO_PACKED}' ELSE status END
+            SET quantity_packed = :qty, status = CASE WHEN :qty >= quantity_picked THEN :packed_status ELSE status END
             WHERE so_line_id = :sol_id
             """
         ),
-        {"qty": new_packed, "sol_id": matched_line.so_line_id},
+        {"qty": new_packed, "sol_id": matched_line.so_line_id, "packed_status": SO_PACKED},
     )
 
     g.db.commit()
@@ -213,6 +225,11 @@ def complete_packing():
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
+
+    ok, denied = check_warehouse_access(so.warehouse_id)
+    if not ok:
+        return denied
+
     if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
 

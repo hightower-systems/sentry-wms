@@ -12,8 +12,15 @@ from datetime import datetime, timezone, timedelta
 from db_test_context import get_raw_connection
 
 
+def _reset_lockout():
+    """Clear login attempt tracking between tests."""
+    from routes.auth import _login_attempts
+    _login_attempts.clear()
+
+
 class TestLogin:
     def test_login_success(self, client):
+        _reset_lockout()
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
         assert resp.status_code == 200
         data = resp.get_json()
@@ -23,6 +30,7 @@ class TestLogin:
         assert data["user"]["role"] == "ADMIN"
 
     def test_login_wrong_password(self, client):
+        _reset_lockout()
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
         assert resp.status_code == 401
         assert "error" in resp.get_json()
@@ -81,10 +89,60 @@ class TestProtectedEndpoints:
         assert resp.status_code == 401
 
 
+class TestLoginLockout:
+    """Verify account lockout after failed login attempts."""
+
+    def test_lockout_after_five_failures(self, client):
+        _reset_lockout()
+        for i in range(5):
+            resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+            if i < 4:
+                assert resp.status_code == 401
+        # 5th attempt triggers lockout
+        assert resp.status_code == 429
+        assert "locked" in resp.get_json()["error"].lower()
+
+    def test_locked_account_rejects_correct_password(self, client):
+        _reset_lockout()
+        for _ in range(5):
+            client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        # Even correct password is rejected during lockout
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        assert resp.status_code == 429
+
+    def test_successful_login_resets_attempts(self, client):
+        _reset_lockout()
+        # 4 failures (not locked yet)
+        for _ in range(4):
+            client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        # Successful login resets counter
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        assert resp.status_code == 200
+        # 4 more failures should still not lock (counter was reset)
+        for _ in range(4):
+            resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+            assert resp.status_code == 401
+
+    def test_attempts_remaining_shown(self, client):
+        _reset_lockout()
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        assert "4 attempts remaining" in resp.get_json()["error"]
+
+    def test_lockout_is_per_username(self, client):
+        _reset_lockout()
+        # Lock out "admin"
+        for _ in range(5):
+            client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        # Different user should still work
+        resp = client.post("/api/auth/login", json={"username": "admin2", "password": "wrong"})
+        assert resp.status_code == 401  # wrong password, but not 429
+
+
 class TestWarehouseAuthorization:
     """Verify non-admin users can only access their assigned warehouses."""
 
     def _create_user_and_login(self, client, username, warehouse_id, warehouse_ids):
+        _reset_lockout()
         conn = get_raw_connection()
         cur = conn.cursor()
         wids = "{" + ",".join(str(w) for w in warehouse_ids) + "}"
@@ -109,15 +167,25 @@ class TestWarehouseAuthorization:
         assert payload["warehouse_ids"] == [1, 2]
 
     def test_user_can_access_assigned_warehouse(self, client):
-        """Non-admin accessing their assigned warehouse should succeed."""
+        """Non-admin accessing their assigned warehouse should pass the auth check."""
         headers = self._create_user_and_login(client, "wh_ok_user", 1, [1])
-        resp = client.get("/api/admin/dashboard?warehouse_id=1", headers=headers)
-        assert resp.status_code == 200
+        # Use a non-admin POST endpoint that carries warehouse_id. Business logic may
+        # return 404 (bin not found) but should never return 403 for a valid warehouse.
+        resp = client.post(
+            "/api/inventory/cycle-count/create",
+            json={"warehouse_id": 1, "bin_ids": [99999]},
+            headers=headers,
+        )
+        assert resp.status_code != 403
 
     def test_user_blocked_from_other_warehouse(self, client):
         """Non-admin accessing an unassigned warehouse should get 403."""
         headers = self._create_user_and_login(client, "wh_blocked_user", 1, [1])
-        resp = client.get("/api/admin/dashboard?warehouse_id=999", headers=headers)
+        resp = client.post(
+            "/api/inventory/cycle-count/create",
+            json={"warehouse_id": 999, "bin_ids": [1]},
+            headers=headers,
+        )
         assert resp.status_code == 403
         assert "Access denied" in resp.get_json()["error"]
 

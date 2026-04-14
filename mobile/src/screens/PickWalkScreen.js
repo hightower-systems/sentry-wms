@@ -68,7 +68,6 @@ export default function PickWalkScreen({ navigation, route }) {
   };
 
   const handleScan = async (barcode) => {
-    console.log('[SCAN_DEBUG] PickWalkScreen.handleScan received:', JSON.stringify(barcode));
     if (!task) return;
 
     const expectedUpc = task.upc || '';

@@ -133,16 +133,15 @@ class TestReceiveItems:
         resp = client.post("/api/receiving/receive", json=payload, headers=auth_headers)
         assert resp.status_code == 400
 
-    def test_receive_over_receipt_warning(self, client, auth_headers, seed_data):
-        # PO line 1 has 100 ordered. Receive 110 - should succeed with warning
+    def test_receive_over_receipt_blocked_by_default(self, client, auth_headers, seed_data):
+        # PO line 1 has 100 ordered. Receiving 110 is blocked unless allow_over_receipt=true.
         payload = {
             "po_id": 1,
             "items": [{"item_id": 1, "quantity": 110, "bin_id": seed_data["staging_bin_id"]}],
         }
         resp = client.post("/api/receiving/receive", json=payload, headers=auth_headers)
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert len(data["warnings"]) > 0, "Over-receipt should produce a warning"
+        assert resp.status_code == 400
+        assert "Over-receipt" in resp.get_json()["error"]
 
     def test_receive_missing_body(self, client, auth_headers):
         resp = client.post("/api/receiving/receive", json={}, headers=auth_headers)

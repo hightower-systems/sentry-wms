@@ -54,6 +54,9 @@ def create_user():
     if data["role"] not in VALID_ROLES:
         return jsonify({"error": f"role must be one of: {', '.join(VALID_ROLES)}"}), 400
 
+    if len(data["password"]) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+
     dup = g.db.execute(text("SELECT 1 FROM users WHERE username = :u"), {"u": data["username"]}).fetchone()
     if dup:
         return jsonify({"error": f"Duplicate username: {data['username']}"}), 400
@@ -97,9 +100,30 @@ def update_user(user_id):
     if "role" in data and data["role"] not in VALID_ROLES:
         return jsonify({"error": f"role must be one of: {', '.join(VALID_ROLES)}"}), 400
 
-    existing = g.db.execute(text("SELECT user_id FROM users WHERE user_id = :uid"), {"uid": user_id}).fetchone()
+    existing = g.db.execute(
+        text("SELECT user_id, role, is_active FROM users WHERE user_id = :uid"), {"uid": user_id}
+    ).fetchone()
     if not existing:
         return jsonify({"error": "User not found"}), 404
+
+    # Prevent admin from deactivating themselves or downgrading their own role
+    is_self = g.current_user["user_id"] == user_id
+    if is_self:
+        if "is_active" in data and not data["is_active"]:
+            return jsonify({"error": "Cannot deactivate your own account"}), 400
+        if "role" in data and data["role"] != "ADMIN":
+            return jsonify({"error": "Cannot downgrade your own role"}), 400
+
+    # Prevent deactivating or demoting the last active admin
+    if existing.role == "ADMIN" and existing.is_active:
+        demoting = ("role" in data and data["role"] != "ADMIN")
+        deactivating = ("is_active" in data and not data["is_active"])
+        if demoting or deactivating:
+            admin_count = g.db.execute(
+                text("SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND is_active = TRUE")
+            ).scalar()
+            if admin_count <= 1:
+                return jsonify({"error": "Cannot remove the last active admin"}), 400
 
     ALLOWED_FIELDS = {"full_name", "role", "warehouse_id", "is_active"}
     fields, params = [], {"uid": user_id}
@@ -121,6 +145,8 @@ def update_user(user_id):
         params["allowed_functions"] = data["allowed_functions"]
 
     if "password" in data and data["password"]:
+        if len(data["password"]) < 8:
+            return jsonify({"error": "Password must be at least 8 characters"}), 400
         pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         fields.append("password_hash = :pw_hash")
         params["pw_hash"] = pw_hash
@@ -158,6 +184,17 @@ def delete_user(user_id):
     if g.current_user["user_id"] == user_id:
         return jsonify({"error": "Cannot delete yourself"}), 400
 
+    # Prevent deleting the last active admin
+    target = g.db.execute(
+        text("SELECT role, is_active FROM users WHERE user_id = :uid"), {"uid": user_id}
+    ).fetchone()
+    if target and target.role == "ADMIN" and target.is_active:
+        admin_count = g.db.execute(
+            text("SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND is_active = TRUE")
+        ).scalar()
+        if admin_count <= 1:
+            return jsonify({"error": "Cannot delete the last active admin"}), 400
+
     g.db.execute(text("DELETE FROM users WHERE user_id = :uid"), {"uid": user_id})
     g.db.commit()
     return jsonify({"message": "User deleted"})
@@ -167,10 +204,11 @@ def delete_user(user_id):
 
 @admin_bp.route("/audit-log", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_audit_log():
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
 
     where_clauses, params = [], {}
     action_type = request.args.get("action_type")
@@ -286,6 +324,7 @@ def list_audit_log():
 
 @admin_bp.route("/dashboard", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def dashboard():
     warehouse_id = request.args.get("warehouse_id", type=int)
@@ -391,6 +430,7 @@ def dashboard():
 
 @admin_bp.route("/settings", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_settings():
     rows = g.db.execute(text("SELECT id, key, value, updated_at FROM app_settings ORDER BY key")).fetchall()
@@ -405,6 +445,7 @@ def get_settings():
 
 @admin_bp.route("/settings/<setting_key>", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def get_setting(setting_key):
     row = g.db.execute(
@@ -455,6 +496,7 @@ def update_settings():
 
 @admin_bp.route("/cycle-counts", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_cycle_counts():
     rows = g.db.execute(
@@ -734,12 +776,13 @@ def direct_adjustment():
 
 @admin_bp.route("/adjustments/list", methods=["GET"])
 @require_auth
+@require_role("ADMIN")
 @with_db
 def list_adjustments():
     """Return recent inventory adjustments with item and bin details."""
     warehouse_id = request.args.get("warehouse_id", type=int)
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
 
     where_clauses, params = [], {}
     if warehouse_id:

@@ -58,7 +58,6 @@ export default function CountScreen({ navigation }) {
   };
 
   const handleScanBin = async (barcode) => {
-    console.log('[SCAN_DEBUG] CountScreen.handleScanBin received:', JSON.stringify(barcode));
     try {
       const binResp = await client.get(`/api/lookup/bin/${encodeURIComponent(barcode)}`);
       if (!binResp.data?.bin) {
@@ -96,7 +95,6 @@ export default function CountScreen({ navigation }) {
 
   // Turbo mode: each scan = +1 to that item's count (supports unexpected items)
   const processTurboScan = useCallback(async (barcode) => {
-    console.log('[SCAN_DEBUG] CountScreen.processTurboScan received:', JSON.stringify(barcode));
     const index = lines.findIndex(
       (l) => l.upc === barcode || l.sku === barcode
     );
@@ -151,7 +149,6 @@ export default function CountScreen({ navigation }) {
 
   // Standard mode: scan to add unexpected items
   const handleAddUnexpected = async (barcode) => {
-    console.log('[SCAN_DEBUG] CountScreen.handleAddUnexpected received:', JSON.stringify(barcode));
     // Check if item already in lines
     const existing = lines.findIndex((l) => l.upc === barcode || l.sku === barcode);
     if (existing !== -1) {

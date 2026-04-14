@@ -5,7 +5,7 @@ Lookup endpoints: item/bin barcode lookups and text search.
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth
+from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 
 lookup_bp = Blueprint("lookup", __name__)
@@ -16,7 +16,6 @@ lookup_bp = Blueprint("lookup", __name__)
 @with_db
 def lookup_item(barcode):
     barcode = barcode.strip()
-    print(f"[LOOKUP] Item lookup received: '{barcode}' (len={len(barcode)})")
 
     # Look up by UPC, SKU, or barcode_aliases
     item_row = g.db.execute(
@@ -52,7 +51,7 @@ def lookup_item(barcode):
             SELECT i.bin_id, b.bin_code, b.bin_type, z.zone_name,
                    i.quantity_on_hand, i.quantity_allocated,
                    (i.quantity_on_hand - i.quantity_allocated) AS quantity_available,
-                   i.lot_number
+                   i.lot_number, i.warehouse_id
             FROM inventory i
             JOIN bins b ON b.bin_id = i.bin_id
             LEFT JOIN zones z ON z.zone_id = b.zone_id
@@ -61,6 +60,11 @@ def lookup_item(barcode):
         ),
         {"item_id": item_row.item_id},
     ).fetchall()
+
+    # Filter locations to user's authorized warehouses
+    if g.current_user.get("role") != "ADMIN":
+        allowed_wids = set(g.current_user.get("warehouse_ids") or [])
+        location_rows = [r for r in location_rows if r.warehouse_id in allowed_wids]
 
     locations = [
         {
@@ -84,13 +88,12 @@ def lookup_item(barcode):
 @with_db
 def lookup_bin(barcode):
     barcode = barcode.strip()
-    print(f"[LOOKUP] Bin lookup received: '{barcode}' (len={len(barcode)})")
 
     bin_row = g.db.execute(
         text(
             """
             SELECT b.bin_id, b.bin_code, b.bin_barcode, b.bin_type,
-                   b.aisle, b.row_num, b.level_num, z.zone_name
+                   b.aisle, b.row_num, b.level_num, z.zone_name, b.warehouse_id
             FROM bins b
             LEFT JOIN zones z ON z.zone_id = b.zone_id
             WHERE b.bin_barcode = :barcode OR b.bin_code = :barcode
@@ -102,6 +105,10 @@ def lookup_bin(barcode):
 
     if not bin_row:
         return jsonify({"error": "Bin not found"}), 404
+
+    ok, denied = check_warehouse_access(bin_row.warehouse_id)
+    if not ok:
+        return denied
 
     bin_data = {
         "bin_id": bin_row.bin_id,
@@ -152,7 +159,6 @@ def lookup_bin(barcode):
 def lookup_so(barcode):
     """Generic SO lookup  -  returns SO data regardless of status."""
     barcode = barcode.strip()
-    print(f"[LOOKUP] SO lookup received: '{barcode}' (len={len(barcode)})")
 
     so_row = g.db.execute(
         text(
@@ -169,6 +175,10 @@ def lookup_so(barcode):
 
     if not so_row:
         return jsonify({"error": "Sales order not found"}), 404
+
+    ok, denied = check_warehouse_access(so_row.warehouse_id)
+    if not ok:
+        return denied
 
     # Fetch SO lines for detail display
     lines = g.db.execute(
@@ -257,7 +267,7 @@ def search_bins():
         text(
             """
             SELECT b.bin_id, b.bin_code, b.bin_barcode, b.bin_type,
-                   b.aisle, b.row_num, b.level_num, z.zone_name
+                   b.aisle, b.row_num, b.level_num, z.zone_name, b.warehouse_id
             FROM bins b
             LEFT JOIN zones z ON z.zone_id = b.zone_id
             WHERE b.bin_code ILIKE :q OR b.bin_barcode ILIKE :q
@@ -266,6 +276,11 @@ def search_bins():
         ),
         {"q": f"%{q}%"},
     ).fetchall()
+
+    # Filter to user's authorized warehouses
+    if g.current_user.get("role") != "ADMIN":
+        allowed_wids = set(g.current_user.get("warehouse_ids") or [])
+        rows = [r for r in rows if r.warehouse_id in allowed_wids]
 
     results = [
         {

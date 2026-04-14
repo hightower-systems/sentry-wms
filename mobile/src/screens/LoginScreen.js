@@ -85,7 +85,6 @@ export default function LoginScreen() {
       setNeedsSetup(false);
       loadWarehouses();
     } catch (err) {
-      console.log('[CONNECT] Health check failed:', err.message, err.name);
       setConnectError(`Could not connect: ${err.message}`);
     } finally {
       setConnecting(false);
@@ -248,7 +247,7 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <TouchableOpacity style={styles.serverInfo} onPress={openServerModal}>
-            <Text style={styles.version}>v0.9.8</Text>
+            <Text style={styles.version}>v1.0.0</Text>
             {serverDisplay ? (
               <Text style={styles.serverUrlText} numberOfLines={1}>{serverDisplay}</Text>
             ) : null}

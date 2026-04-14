@@ -2,6 +2,68 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.0.0] - 2026-04-14
+
+### Security - Full Code Audit
+- **Default admin password eliminated** - seed script generates random 16-char password at runtime via `/dev/urandom`, prints to docker logs. Set `ADMIN_PASSWORD` env var to override.
+- **Password minimum 8 characters** - enforced on user creation and password updates via admin panel
+- **Over-pick prevention** - `quantity_picked` capped at `quantity_to_pick` in pick confirmation; prevents inventory drain via API manipulation
+- **Inventory floor protection** - picking decrements use `GREATEST(0, ...)` to prevent negative inventory from race conditions
+- **Short pick quantity cap** - `quantity_available` validated against task requirement
+- **Packing quantity validation** - verify endpoint rejects zero and negative quantities
+- **PO/SO line quantity validation** - `quantity_ordered` must be greater than zero on order creation
+- **Receiving bin-warehouse validation** - bin must belong to PO's warehouse; prevents cross-warehouse inventory corruption
+- **Lookup endpoint warehouse isolation** - item locations, bin contents, SO details, and bin search filtered by user's assigned warehouses (IDOR fix)
+- **Security response headers** - X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy on all responses
+- **Stack trace suppression** - global 500 error handler returns generic error instead of leaking internals
+- **Debug mode disabled** - `debug=False` hardcoded; Werkzeug interactive debugger no longer activatable via env var
+- **Login lockout** - 5 failed attempts locks the account for 15 minutes (per-username tracking, resets on successful login)
+- **PostgreSQL port bound to localhost** - `127.0.0.1:5432:5432` prevents network exposure
+
+### Infrastructure
+- **Gunicorn in production** - Dockerfile CMD switched from `python app.py` (single-threaded Flask dev server) to `gunicorn -w 4` (4 workers)
+- **Non-root container** - Dockerfile creates and runs as `appuser` instead of root
+
+### Tests
+- 5 new login lockout tests
+- Test passwords updated to meet 8-character minimum
+- 288 tests passing, 0 regressions
+
+### Version
+- All version numbers bumped to 1.0.0 across API, admin, mobile, README
+
+## [v0.9.9] - 2026-04-13
+
+### Security
+- **SQL parameterization** - 30+ SQL queries converted from f-string constant interpolation to parameterized bindings across all route and service files (admin_orders, admin_users, packing, picking, receiving, shipping, picking_service)
+- **Warehouse authorization middleware** - non-admin users blocked at the request level from accessing unassigned warehouses (checks both query params and JSON body, returns 403)
+- **JWT_SECRET required** - app raises `RuntimeError` on startup if missing; `docker-compose.yml` uses `${JWT_SECRET:?}` syntax to error if not set
+- **JWT payload includes warehouse_ids** - enables middleware enforcement without DB lookup
+- **DB credentials configurable** - PostgreSQL user/password/database use env vars with defaults instead of hardcoded values
+- **Debug mode conditional** - Flask debug mode tied to `FLASK_ENV` instead of always-on
+- CORS origins now include port 5000 and are logged on startup
+
+### Performance
+- **17 FK indexes** added to `schema.sql` - PostgreSQL does not auto-index foreign key columns; these improve JOIN performance and cascading delete efficiency across zones, orders, PO/SO lines, pick tasks, fulfillments, transfers, cycle counts, and audit log
+
+### Mobile
+- **First-run setup screen** - detects if no server URL has been saved and shows a dedicated connect screen with health check validation before accepting the URL
+- **Chainway scanner plugin fix** - config plugin now detects Kotlin vs Java `MainApplication` and uses correct patterns for package registration (fixes "Native module not available" on standalone APK)
+- **Cleartext traffic plugin** - new `with-cleartext-traffic.js` Expo config plugin for Android 9+ HTTP support
+- **API client improvements** - `hasStoredApiUrl()` helper, full URL in debug logs, server URL modal validates connectivity before saving
+
+### Admin
+- **Auth reload loop fixed** - 401 handler now clears both token and user from localStorage
+- **Warehouse fetch gated behind auth** - `WarehouseProvider` waits for authenticated user before fetching warehouses
+- **Vitest config** added for frontend testing
+
+### Config
+- `.env.example` expanded with all variables, organized with comments, proper `JWT_SECRET` generation instructions
+
+### Tests
+- 6 new warehouse authorization tests
+- 283 tests passing (was 277)
+
 ## [v0.9.8] - 2026-04-11
 
 ### Security

@@ -2,6 +2,9 @@
 Auth endpoints: login and token refresh.
 """
 
+import time
+from collections import defaultdict
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
@@ -10,6 +13,12 @@ from middleware.db import with_db
 from services.auth_service import authenticate_user, generate_token
 
 ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
+
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_SECONDS = 15 * 60  # 15 minutes
+
+# Per-username tracking: {username: {"attempts": int, "locked_until": float}}
+_login_attempts = defaultdict(lambda: {"attempts": 0, "locked_until": 0})
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -21,11 +30,36 @@ def login():
     if not data or not data.get("username") or not data.get("password"):
         return jsonify({"error": "Username and password are required"}), 400
 
+    username = data["username"].lower().strip()
+    tracker = _login_attempts[username]
+    now = time.time()
+
+    # Check lockout
+    if tracker["locked_until"] > now:
+        remaining = int(tracker["locked_until"] - now)
+        minutes = remaining // 60
+        seconds = remaining % 60
+        return jsonify({
+            "error": f"Account locked. Try again in {minutes}m {seconds}s",
+        }), 429
+
     user = authenticate_user(g.db, data["username"], data["password"])
 
     if not user:
-        return jsonify({"error": "Invalid username or password"}), 401
+        tracker["attempts"] += 1
+        if tracker["attempts"] >= MAX_LOGIN_ATTEMPTS:
+            tracker["locked_until"] = now + LOCKOUT_SECONDS
+            tracker["attempts"] = 0
+            return jsonify({
+                "error": "Too many failed attempts. Account locked for 15 minutes",
+            }), 429
+        remaining = MAX_LOGIN_ATTEMPTS - tracker["attempts"]
+        return jsonify({
+            "error": f"Invalid username or password ({remaining} attempts remaining)",
+        }), 401
 
+    # Successful login - reset tracker
+    _login_attempts.pop(username, None)
     token = generate_token(user)
     return jsonify({"token": token, "user": user})
 
@@ -69,6 +103,24 @@ def me():
 
 @auth_bp.route("/refresh", methods=["POST"])
 @require_auth
+@with_db
 def refresh():
-    token = generate_token(g.current_user)
+    # Re-validate user exists and is active before issuing new token
+    row = g.db.execute(
+        text("""SELECT user_id, username, full_name, role, warehouse_id, warehouse_ids, is_active
+               FROM users WHERE user_id = :uid"""),
+        {"uid": g.current_user["user_id"]},
+    ).fetchone()
+    if not row or not row.is_active:
+        return jsonify({"error": "Account disabled or deleted"}), 401
+
+    user_dict = {
+        "user_id": row.user_id,
+        "username": row.username,
+        "full_name": row.full_name,
+        "role": row.role,
+        "warehouse_id": row.warehouse_id,
+        "warehouse_ids": list(row.warehouse_ids) if row.warehouse_ids else [],
+    }
+    token = generate_token(user_dict)
     return jsonify({"token": token})
