@@ -347,6 +347,9 @@ def csv_import(entity_type):
     if not data or not records:
         return jsonify({"error": "records array is required"}), 400
 
+    if len(records) > 5000:
+        return jsonify({"error": "Import limited to 5000 records per file"}), 400
+
     # Default warehouse_id for PO/SO import (can be overridden per record)
     default_warehouse_id = data.get("warehouse_id")
 

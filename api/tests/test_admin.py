@@ -529,6 +529,12 @@ class TestCsvImport:
         resp = client.post("/api/admin/import/invalid", json={"records": []}, headers=auth_headers)
         assert resp.status_code == 400
 
+    def test_import_rejects_over_5000_records(self, client, auth_headers):
+        records = [{"sku": f"BULK-{i}", "item_name": f"Item {i}"} for i in range(5001)]
+        resp = client.post("/api/admin/import/items", json={"records": records}, headers=auth_headers)
+        assert resp.status_code == 400
+        assert "5000" in resp.get_json()["error"]
+
 
 # ── Dashboard Stats ───────────────────────────────────────────────────────────
 
