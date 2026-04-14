@@ -14,8 +14,10 @@ from db_test_context import get_raw_connection
 
 def _reset_lockout():
     """Clear login attempt tracking between tests."""
-    from routes.auth import _login_attempts
-    _login_attempts.clear()
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM login_attempts")
+    cur.close()
 
 
 class TestLogin:
@@ -130,12 +132,21 @@ class TestLoginLockout:
 
     def test_lockout_is_per_username(self, client):
         _reset_lockout()
-        # Lock out "admin"
+        # 4 failures on "admin" (not locked yet)
+        for _ in range(4):
+            client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        # Different user from same IP is not locked by username key
+        resp = client.post("/api/auth/login", json={"username": "admin2", "password": "wrong"})
+        assert resp.status_code == 401  # wrong password, but not 429 (per-username)
+
+    def test_ip_lockout_blocks_all_usernames(self, client):
+        _reset_lockout()
+        # 5 failures from same IP locks the IP
         for _ in range(5):
             client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
-        # Different user should still work
+        # Different user from same IP is also locked (per-IP)
         resp = client.post("/api/auth/login", json={"username": "admin2", "password": "wrong"})
-        assert resp.status_code == 401  # wrong password, but not 429
+        assert resp.status_code == 429
 
 
 class TestWarehouseAuthorization:

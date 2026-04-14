@@ -2,8 +2,7 @@
 Auth endpoints: login and token refresh.
 """
 
-import time
-from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
@@ -15,12 +14,60 @@ from services.auth_service import authenticate_user, generate_token, validate_pa
 ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
 
 MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_SECONDS = 15 * 60  # 15 minutes
-
-# Per-username tracking: {username: {"attempts": int, "locked_until": float}}
-_login_attempts = defaultdict(lambda: {"attempts": 0, "locked_until": 0})
+LOCKOUT_MINUTES = 15
 
 auth_bp = Blueprint("auth", __name__)
+
+
+def _check_rate_limit(db, key):
+    """Check if a rate-limit key is locked out. Returns (locked, remaining_seconds)."""
+    row = db.execute(
+        text("SELECT attempts, locked_until FROM login_attempts WHERE key = :key"),
+        {"key": key},
+    ).fetchone()
+    if not row or not row.locked_until:
+        return False, 0
+    now = datetime.now(timezone.utc)
+    if row.locked_until > now:
+        remaining = int((row.locked_until - now).total_seconds())
+        return True, remaining
+    return False, 0
+
+
+def _record_failure(db, key):
+    """Record a failed login attempt. Returns (locked_out, attempts_remaining)."""
+    lockout_at = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
+    db.execute(
+        text("""
+            INSERT INTO login_attempts (key, attempts, last_attempt)
+            VALUES (:key, 1, NOW())
+            ON CONFLICT (key) DO UPDATE
+            SET attempts = login_attempts.attempts + 1, last_attempt = NOW()
+        """),
+        {"key": key},
+    )
+    row = db.execute(
+        text("SELECT attempts FROM login_attempts WHERE key = :key"),
+        {"key": key},
+    ).fetchone()
+    if row and row.attempts >= MAX_LOGIN_ATTEMPTS:
+        db.execute(
+            text("UPDATE login_attempts SET locked_until = :until, attempts = 0 WHERE key = :key"),
+            {"key": key, "until": lockout_at},
+        )
+        db.commit()
+        return True, 0
+    db.commit()
+    return False, MAX_LOGIN_ATTEMPTS - row.attempts
+
+
+def _reset_attempts(db, key):
+    """Clear attempts after successful login."""
+    db.execute(
+        text("DELETE FROM login_attempts WHERE key = :key"),
+        {"key": key},
+    )
+    db.commit()
 
 
 @auth_bp.route("/login", methods=["POST"])
@@ -31,35 +78,37 @@ def login():
         return jsonify({"error": "Username and password are required"}), 400
 
     username = data["username"].lower().strip()
-    tracker = _login_attempts[username]
-    now = time.time()
+    client_ip = request.remote_addr or "unknown"
+    user_key = f"user:{username}"
+    ip_key = f"ip:{client_ip}"
 
-    # Check lockout
-    if tracker["locked_until"] > now:
-        remaining = int(tracker["locked_until"] - now)
-        minutes = remaining // 60
-        seconds = remaining % 60
-        return jsonify({
-            "error": f"Account locked. Try again in {minutes}m {seconds}s",
-        }), 429
+    # Check lockouts (username and IP)
+    for key in (user_key, ip_key):
+        locked, remaining = _check_rate_limit(g.db, key)
+        if locked:
+            minutes = remaining // 60
+            seconds = remaining % 60
+            return jsonify({
+                "error": f"Account locked. Try again in {minutes}m {seconds}s",
+            }), 429
 
     user = authenticate_user(g.db, data["username"], data["password"])
 
     if not user:
-        tracker["attempts"] += 1
-        if tracker["attempts"] >= MAX_LOGIN_ATTEMPTS:
-            tracker["locked_until"] = now + LOCKOUT_SECONDS
-            tracker["attempts"] = 0
+        # Record failure against both username and IP
+        locked, remaining = _record_failure(g.db, user_key)
+        _record_failure(g.db, ip_key)
+        if locked:
             return jsonify({
                 "error": "Too many failed attempts. Account locked for 15 minutes",
             }), 429
-        remaining = MAX_LOGIN_ATTEMPTS - tracker["attempts"]
         return jsonify({
             "error": f"Invalid username or password ({remaining} attempts remaining)",
         }), 401
 
-    # Successful login - reset tracker
-    _login_attempts.pop(username, None)
+    # Successful login - reset both trackers
+    _reset_attempts(g.db, user_key)
+    _reset_attempts(g.db, ip_key)
     token = generate_token(user)
     return jsonify({"token": token, "user": user})
 

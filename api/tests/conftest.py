@@ -23,6 +23,7 @@ if not os.path.exists(SEED_PATH):
     SEED_PATH = "/db/seed-apartment-lab.sql"
 
 ALL_TABLES = [
+    "login_attempts",
     "preferred_bins",
     "app_settings",
     "audit_log",
