@@ -15,6 +15,7 @@ from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import VALID_ROLES, admin_bp
 from services.audit_service import write_audit_log
+from services.auth_service import validate_password
 from services.inventory_service import add_inventory
 
 
@@ -54,8 +55,9 @@ def create_user():
     if data["role"] not in VALID_ROLES:
         return jsonify({"error": f"role must be one of: {', '.join(VALID_ROLES)}"}), 400
 
-    if len(data["password"]) < 8:
-        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    pw_error = validate_password(data["password"])
+    if pw_error:
+        return jsonify({"error": pw_error}), 400
 
     dup = g.db.execute(text("SELECT 1 FROM users WHERE username = :u"), {"u": data["username"]}).fetchone()
     if dup:
@@ -145,8 +147,9 @@ def update_user(user_id):
         params["allowed_functions"] = data["allowed_functions"]
 
     if "password" in data and data["password"]:
-        if len(data["password"]) < 8:
-            return jsonify({"error": "Password must be at least 8 characters"}), 400
+        pw_error = validate_password(data["password"])
+        if pw_error:
+            return jsonify({"error": pw_error}), 400
         pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         fields.append("password_hash = :pw_hash")
         params["pw_hash"] = pw_hash

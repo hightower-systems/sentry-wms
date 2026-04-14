@@ -376,7 +376,7 @@ class TestUsers:
 
     def test_create_user(self, client, auth_headers):
         resp = client.post("/api/admin/users", json={
-            "username": "newpicker", "password": "testpass", "full_name": "New Picker", "role": "USER", "warehouse_id": 1
+            "username": "newpicker", "password": "testpass1", "full_name": "New Picker", "role": "USER", "warehouse_id": 1
         }, headers=auth_headers)
         assert resp.status_code == 201
         data = resp.get_json()
@@ -395,6 +395,27 @@ class TestUsers:
             "username": "bad", "password": "testpass1234", "full_name": "Bad", "role": "SUPERUSER"
         }, headers=auth_headers)
         assert resp.status_code == 400
+
+    def test_create_user_short_password(self, client, auth_headers):
+        resp = client.post("/api/admin/users", json={
+            "username": "short", "password": "abc1", "full_name": "Short", "role": "USER"
+        }, headers=auth_headers)
+        assert resp.status_code == 400
+        assert "8 characters" in resp.get_json()["error"]
+
+    def test_create_user_no_digit_password(self, client, auth_headers):
+        resp = client.post("/api/admin/users", json={
+            "username": "nodigit", "password": "abcdefgh", "full_name": "No Digit", "role": "USER"
+        }, headers=auth_headers)
+        assert resp.status_code == 400
+        assert "digit" in resp.get_json()["error"]
+
+    def test_create_user_no_letter_password(self, client, auth_headers):
+        resp = client.post("/api/admin/users", json={
+            "username": "noletter", "password": "12345678", "full_name": "No Letter", "role": "USER"
+        }, headers=auth_headers)
+        assert resp.status_code == 400
+        assert "letter" in resp.get_json()["error"]
 
     def test_update_user(self, client, auth_headers):
         resp = client.put("/api/admin/users/1", json={"full_name": "Updated Admin"}, headers=auth_headers)
