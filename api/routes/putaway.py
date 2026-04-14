@@ -4,7 +4,7 @@ and preferred bin management.
 """
 
 from flask import Blueprint, g, jsonify, request
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
@@ -70,22 +70,45 @@ def suggest_bin(item_id):
     if not item:
         return jsonify({"error": "Item not found"}), 404
 
-    # Query preferred_bins table for priority 1
-    preferred = g.db.execute(
-        text(
-            """
-            SELECT pb.preferred_bin_id, pb.bin_id, pb.priority, pb.notes,
-                   b.bin_code, b.bin_barcode, z.zone_name
-            FROM preferred_bins pb
-            JOIN bins b ON b.bin_id = pb.bin_id
-            LEFT JOIN zones z ON z.zone_id = b.zone_id
-            WHERE pb.item_id = :item_id
-            ORDER BY pb.priority ASC
-            LIMIT 1
-            """
-        ),
-        {"item_id": item_id},
-    ).fetchone()
+    is_admin = g.current_user.get("role") == "ADMIN"
+    allowed_wh = g.current_user.get("warehouse_ids", [])
+
+    # Query preferred_bins table for priority 1, scoped to user's warehouses
+    if is_admin:
+        preferred = g.db.execute(
+            text(
+                """
+                SELECT pb.preferred_bin_id, pb.bin_id, pb.priority, pb.notes,
+                       b.bin_code, b.bin_barcode, z.zone_name
+                FROM preferred_bins pb
+                JOIN bins b ON b.bin_id = pb.bin_id
+                LEFT JOIN zones z ON z.zone_id = b.zone_id
+                WHERE pb.item_id = :item_id
+                ORDER BY pb.priority ASC
+                LIMIT 1
+                """
+            ),
+            {"item_id": item_id},
+        ).fetchone()
+    elif allowed_wh:
+        preferred = g.db.execute(
+            text(
+                """
+                SELECT pb.preferred_bin_id, pb.bin_id, pb.priority, pb.notes,
+                       b.bin_code, b.bin_barcode, z.zone_name
+                FROM preferred_bins pb
+                JOIN bins b ON b.bin_id = pb.bin_id
+                LEFT JOIN zones z ON z.zone_id = b.zone_id
+                WHERE pb.item_id = :item_id
+                  AND b.warehouse_id IN :warehouse_ids
+                ORDER BY pb.priority ASC
+                LIMIT 1
+                """
+            ).bindparams(bindparam("warehouse_ids", expanding=True)),
+            {"item_id": item_id, "warehouse_ids": allowed_wh},
+        ).fetchone()
+    else:
+        preferred = None
 
     preferred_bin = None
     if preferred:
@@ -99,17 +122,33 @@ def suggest_bin(item_id):
 
     # Fallback: if no preferred bin, check default_bin_id on items table
     if not preferred_bin and item.default_bin_id:
-        default = g.db.execute(
-            text(
-                """
-                SELECT b.bin_id, b.bin_code, b.bin_barcode, z.zone_name
-                FROM bins b
-                LEFT JOIN zones z ON z.zone_id = b.zone_id
-                WHERE b.bin_id = :bin_id
-                """
-            ),
-            {"bin_id": item.default_bin_id},
-        ).fetchone()
+        if is_admin:
+            default = g.db.execute(
+                text(
+                    """
+                    SELECT b.bin_id, b.bin_code, b.bin_barcode, z.zone_name
+                    FROM bins b
+                    LEFT JOIN zones z ON z.zone_id = b.zone_id
+                    WHERE b.bin_id = :bin_id
+                    """
+                ),
+                {"bin_id": item.default_bin_id},
+            ).fetchone()
+        elif allowed_wh:
+            default = g.db.execute(
+                text(
+                    """
+                    SELECT b.bin_id, b.bin_code, b.bin_barcode, z.zone_name
+                    FROM bins b
+                    LEFT JOIN zones z ON z.zone_id = b.zone_id
+                    WHERE b.bin_id = :bin_id
+                      AND b.warehouse_id IN :warehouse_ids
+                    """
+                ).bindparams(bindparam("warehouse_ids", expanding=True)),
+                {"bin_id": item.default_bin_id, "warehouse_ids": allowed_wh},
+            ).fetchone()
+        else:
+            default = None
         if default:
             preferred_bin = {
                 "bin_id": default.bin_id,
