@@ -30,7 +30,7 @@ def require_auth(f):
         try:
             row = db.execute(
                 text(
-                    "SELECT role, is_active, warehouse_ids "
+                    "SELECT role, is_active, warehouse_ids, password_changed_at "
                     "FROM users WHERE user_id = :uid"
                 ),
                 {"uid": payload["user_id"]},
@@ -40,6 +40,12 @@ def require_auth(f):
 
         if not row or not row.is_active:
             return jsonify({"error": "Unauthorized"}), 401
+
+        # Reject tokens issued before the last password change
+        if row.password_changed_at and payload.get("iat"):
+            changed_ts = int(row.password_changed_at.timestamp())
+            if payload["iat"] < changed_ts:
+                return jsonify({"error": "Token invalidated by password change"}), 401
 
         # Overwrite JWT claims with live DB values so downstream role/warehouse
         # checks always reflect the current state.

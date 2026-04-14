@@ -150,6 +150,7 @@ def update_user(user_id):
         pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         fields.append("password_hash = :pw_hash")
         params["pw_hash"] = pw_hash
+        fields.append("password_changed_at = NOW()")
 
     if not fields:
         return jsonify({"error": "No fields to update"}), 400

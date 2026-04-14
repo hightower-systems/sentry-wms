@@ -210,3 +210,78 @@ class TestWarehouseAuthorization:
         headers = self._create_user_and_login(client, "wh_no_wid", 1, [1])
         resp = client.get("/api/picking/active-batch", headers=headers)
         assert resp.status_code == 200
+
+
+class TestJwtClaims:
+    """L10: verify iat and jti are present in tokens."""
+
+    def test_token_contains_iat_and_jti(self, client):
+        _reset_lockout()
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        token = resp.get_json()["token"]
+        payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=["HS256"])
+        assert "iat" in payload
+        assert "jti" in payload
+        assert isinstance(payload["iat"], int)
+        assert len(payload["jti"]) == 36  # UUID format
+
+    def test_each_token_has_unique_jti(self, client):
+        _reset_lockout()
+        resp1 = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        resp2 = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+        p1 = jwt.decode(resp1.get_json()["token"], os.environ["JWT_SECRET"], algorithms=["HS256"])
+        p2 = jwt.decode(resp2.get_json()["token"], os.environ["JWT_SECRET"], algorithms=["HS256"])
+        assert p1["jti"] != p2["jti"]
+
+
+class TestTokenInvalidation:
+    """M1: old tokens rejected after password change."""
+
+    def test_old_token_rejected_after_password_change(self, client, auth_headers):
+        """A token with iat before password_changed_at should be rejected."""
+        # Craft a token with iat 10 seconds in the past
+        old_payload = {
+            "user_id": 1,
+            "username": "admin",
+            "role": "ADMIN",
+            "warehouse_id": 1,
+            "warehouse_ids": [],
+            "iat": int(datetime.now(timezone.utc).timestamp()) - 10,
+            "jti": "old-token-id",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=8),
+        }
+        old_token = jwt.encode(old_payload, os.environ["JWT_SECRET"], algorithm="HS256")
+        old_headers = {"Authorization": f"Bearer {old_token}"}
+
+        # Verify token works before password change
+        resp = client.get("/api/auth/me", headers=old_headers)
+        assert resp.status_code == 200
+
+        # Change password via admin endpoint
+        client.put(
+            "/api/admin/users/1",
+            json={"password": "newpassword1"},
+            headers=auth_headers,
+        )
+
+        # Old token should now be rejected
+        resp = client.get("/api/auth/me", headers=old_headers)
+        assert resp.status_code == 401
+        assert "password change" in resp.get_json()["error"].lower()
+
+    def test_new_token_works_after_password_change(self, client, auth_headers):
+        _reset_lockout()
+        # Change password
+        client.put(
+            "/api/admin/users/1",
+            json={"password": "newpassword2"},
+            headers=auth_headers,
+        )
+
+        # Login with new password gets a working token
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "newpassword2"})
+        assert resp.status_code == 200
+        new_headers = {"Authorization": f"Bearer {resp.get_json()['token']}"}
+
+        resp = client.get("/api/auth/me", headers=new_headers)
+        assert resp.status_code == 200
