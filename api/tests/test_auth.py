@@ -243,7 +243,7 @@ class TestChangePassword:
             "current_password": "wrongpassword1",
             "new_password": "newadmin1",
         }, headers=auth_headers)
-        assert resp.status_code == 401
+        assert resp.status_code == 403
         assert "incorrect" in resp.get_json()["error"].lower()
 
     def test_change_password_weak_new(self, client, auth_headers):

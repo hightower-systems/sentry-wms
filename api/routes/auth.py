@@ -196,7 +196,7 @@ def change_password():
     ).fetchone()
 
     if not row or not bcrypt.checkpw(data["current_password"].encode("utf-8"), row.password_hash.encode("utf-8")):
-        return jsonify({"error": "Current password is incorrect"}), 401
+        return jsonify({"error": "Current password is incorrect"}), 403
 
     new_hash = bcrypt.hashpw(data["new_password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     g.db.execute(
