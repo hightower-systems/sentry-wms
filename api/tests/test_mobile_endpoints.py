@@ -15,21 +15,27 @@ def _db_conn():
     return get_raw_connection()
 
 
-# ── Warehouse list (public, no auth) ──────────────────────────
+# ── Warehouse list (authenticated) ───────────────────────────
 
 
-def test_warehouse_list_no_auth(client):
-    """GET /api/warehouses/list works without JWT."""
+def test_warehouse_list_requires_auth(client):
+    """GET /api/warehouses/list returns 401 without JWT."""
     resp = client.get("/api/warehouses/list")
+    assert resp.status_code == 401
+
+
+def test_warehouse_list_with_auth(client, auth_headers):
+    """GET /api/warehouses/list returns warehouses with valid JWT."""
+    resp = client.get("/api/warehouses/list", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.get_json()
     assert "warehouses" in data
     assert len(data["warehouses"]) >= 1
 
 
-def test_warehouse_list_fields(client):
+def test_warehouse_list_fields(client, auth_headers):
     """Response contains only id, name, code."""
-    resp = client.get("/api/warehouses/list")
+    resp = client.get("/api/warehouses/list", headers=auth_headers)
     data = resp.get_json()
     wh = data["warehouses"][0]
     assert set(wh.keys()) == {"id", "name", "code"}

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Modal, Pressable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../auth/AuthContext';
-import WarehouseSelector from '../components/WarehouseSelector';
 import client, { getStoredApiUrl, setApiUrl, hasStoredApiUrl } from '../api/client';
 import { colors, fonts, radii } from '../theme/styles';
 
@@ -12,9 +11,6 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [warehouses, setWarehouses] = useState([]);
-  const [selectedWarehouse, setSelectedWarehouse] = useState(null);
-  const [showWarehousePicker, setShowWarehousePicker] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showServerModal, setShowServerModal] = useState(false);
@@ -37,17 +33,6 @@ export default function LoginScreen() {
     return () => { global[SENTRY_LOGIN_RENDERED] = false; };
   }, []);
 
-  const loadWarehouses = () => {
-    setError('');
-    client.get('/api/warehouses/list')
-      .then((resp) => {
-        const list = resp.data.warehouses || [];
-        setWarehouses(list);
-        if (list.length === 1) setSelectedWarehouse(list[0].id);
-      })
-      .catch(() => setError('Could not load warehouses - check connection'));
-  };
-
   useEffect(() => {
     AsyncStorage.getItem('sentry_last_username').then((saved) => {
       if (saved) setUsername(saved);
@@ -57,14 +42,11 @@ export default function LoginScreen() {
       if (hasUrl) {
         setNeedsSetup(false);
         getStoredApiUrl().then((url) => setServerDisplay(url || ''));
-        loadWarehouses();
       } else {
         setNeedsSetup(true);
       }
     });
   }, []);
-
-  const selectedName = warehouses.find((w) => w.id === selectedWarehouse);
 
   const handleConnect = async () => {
     const trimmed = connectUrl.replace(/\/+$/, '').trim();
@@ -83,7 +65,6 @@ export default function LoginScreen() {
       await setApiUrl(trimmed);
       setServerDisplay(trimmed);
       setNeedsSetup(false);
-      loadWarehouses();
     } catch (err) {
       setConnectError(`Could not connect: ${err.message}`);
     } finally {
@@ -96,15 +77,11 @@ export default function LoginScreen() {
       setError('Username and password are required');
       return;
     }
-    if (!selectedWarehouse) {
-      setError('Select a warehouse');
-      return;
-    }
     setError('');
     setLoading(true);
     AsyncStorage.setItem('sentry_last_username', username).catch(() => {});
     try {
-      await login(username, password, selectedWarehouse);
+      await login(username, password);
     } catch (err) {
       if (err.response?.status === 401) {
         setError('Invalid credentials');
@@ -140,7 +117,6 @@ export default function LoginScreen() {
       await setApiUrl(trimmed);
       setServerDisplay(trimmed);
       setShowServerModal(false);
-      loadWarehouses();
     } catch {
       setModalError('Could not connect to server');
     } finally {
@@ -227,16 +203,6 @@ export default function LoginScreen() {
           />
 
           <TouchableOpacity
-            style={styles.warehouseButton}
-            onPress={() => setShowWarehousePicker(true)}
-          >
-            <Text style={styles.warehouseLabel}>WAREHOUSE</Text>
-            <Text style={styles.warehouseValue}>
-              {selectedName ? `${selectedName.code} - ${selectedName.name}` : 'Select warehouse...'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
             style={[styles.loginButton, loading && styles.loginButtonDisabled]}
             onPress={handleLogin}
             disabled={loading}
@@ -290,15 +256,6 @@ export default function LoginScreen() {
         </Pressable>
       </Modal>
 
-      <WarehouseSelector
-        visible={showWarehousePicker}
-        warehouses={warehouses}
-        selected={selectedWarehouse}
-        onSelect={(id) => {
-          setSelectedWarehouse(id);
-          setShowWarehousePicker(false);
-        }}
-      />
     </KeyboardAvoidingView>
   );
 }
@@ -344,29 +301,6 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.inputBg,
     minHeight: 48,
-  },
-  warehouseButton: {
-    borderWidth: 1,
-    borderColor: colors.inputBorder,
-    borderRadius: radii.input,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    minHeight: 48,
-    justifyContent: 'center',
-    backgroundColor: colors.inputBg,
-  },
-  warehouseLabel: {
-    fontFamily: fonts.mono,
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.textMuted,
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  warehouseValue: {
-    fontFamily: fonts.mono,
-    fontSize: 13,
-    color: colors.textPrimary,
   },
   loginButton: {
     backgroundColor: colors.accentRed,

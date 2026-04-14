@@ -67,15 +67,14 @@ export function AuthProvider({ children }) {
     return () => sub.remove();
   }, [checkSession]);
 
-  const login = async (username, password, selectedWarehouseId) => {
+  const login = async (username, password) => {
     const resp = await client.post('/api/auth/login', { username, password });
     const { token, user: userData } = resp.data;
     await AsyncStorage.setItem('jwt_token', token);
     await AsyncStorage.setItem('user_data', JSON.stringify(userData));
-    await AsyncStorage.setItem('warehouse_id', String(selectedWarehouseId));
     await AsyncStorage.setItem('login_timestamp', String(Date.now()));
     setUser(userData);
-    setWarehouseId(selectedWarehouseId);
+    // warehouseId stays null - HomeScreen will prompt for selection
   };
 
   const switchWarehouse = async (newWarehouseId) => {

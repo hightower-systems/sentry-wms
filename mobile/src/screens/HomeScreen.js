@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal, Pressable, ActivityIndicator, StyleSheet, TextInput } from 'react-native';
 import { useFocusEffect, useScrollToTop } from '@react-navigation/native';
 import { useAuth } from '../auth/AuthContext';
@@ -37,6 +37,8 @@ export default function HomeScreen({ navigation }) {
   const [warehouseCode, setWarehouseCode] = useState('');
   const [warehouseName, setWarehouseName] = useState('');
   const [showWarehousePicker, setShowWarehousePicker] = useState(false);
+  const [needsWarehouse, setNeedsWarehouse] = useState(false);
+  const warehouseResolved = useRef(false);
   const [requirePacking, setRequirePacking] = useState(true);
   const { error, scanDisabled, showError, clearError } = useScreenError();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -49,6 +51,28 @@ export default function HomeScreen({ navigation }) {
   // Modal state for replacing Alert.alert
   const [infoModal, setInfoModal] = useState({ visible: false, title: '', message: '' });
   const [confirmModal, setConfirmModal] = useState({ visible: false, title: '', message: '', onConfirm: null, confirmText: 'OK', confirmDestructive: false });
+
+  // On first load after login, if no warehouse is set, fetch the list and
+  // either auto-select (single warehouse) or show a blocking picker.
+  useEffect(() => {
+    if (warehouseId || warehouseResolved.current) return;
+    (async () => {
+      try {
+        const resp = await client.get('/api/warehouses/list');
+        const list = resp.data.warehouses || [];
+        setWarehouses(list);
+        if (list.length === 1) {
+          switchWarehouse(list[0].id);
+          warehouseResolved.current = true;
+        } else if (list.length > 1) {
+          setNeedsWarehouse(true);
+        }
+      } catch {
+        // If fetch fails, show picker with empty list - user can retry via header pill
+        setNeedsWarehouse(true);
+      }
+    })();
+  }, [warehouseId, switchWarehouse]);
 
   const loadData = useCallback(async () => {
     if (!warehouseId) return;
@@ -421,14 +445,16 @@ export default function HomeScreen({ navigation }) {
       />
 
       <WarehouseSelector
-        visible={showWarehousePicker}
+        visible={showWarehousePicker || needsWarehouse}
         warehouses={warehouses}
         selected={warehouseId}
         onSelect={(id) => {
           switchWarehouse(id);
           setShowWarehousePicker(false);
+          setNeedsWarehouse(false);
+          warehouseResolved.current = true;
         }}
-        onClose={() => setShowWarehousePicker(false)}
+        onClose={needsWarehouse ? undefined : () => setShowWarehousePicker(false)}
       />
     </View>
   );

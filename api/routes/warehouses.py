@@ -1,16 +1,18 @@
 """
-Public warehouse endpoints (no auth required).
+Warehouse endpoints (authenticated).
 """
 
 from flask import Blueprint, g, jsonify
 from sqlalchemy import text
 
+from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 
 warehouses_bp = Blueprint("warehouses", __name__)
 
 
 @warehouses_bp.route("/list")
+@require_auth
 @with_db
 def list_warehouses():
     rows = g.db.execute(
