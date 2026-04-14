@@ -1,5 +1,7 @@
 """Warehouse, Zone, and Bin endpoints."""
 
+import math
+
 from flask import g, jsonify, request
 from sqlalchemy import text
 
@@ -18,15 +20,23 @@ from services.inventory_service import add_inventory
 @require_role("ADMIN")
 @with_db
 def list_warehouses():
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
+
+    total = g.db.execute(text("SELECT COUNT(*) FROM warehouses")).scalar()
+    pages = max(1, math.ceil(total / per_page))
+
     rows = g.db.execute(
-        text("SELECT warehouse_id, warehouse_code, warehouse_name, address, is_active, created_at FROM warehouses ORDER BY warehouse_id")
+        text("SELECT warehouse_id, warehouse_code, warehouse_name, address, is_active, created_at FROM warehouses ORDER BY warehouse_id LIMIT :limit OFFSET :offset"),
+        {"limit": per_page, "offset": (page - 1) * per_page},
     ).fetchall()
     return jsonify({
         "warehouses": [
             {"warehouse_id": r.warehouse_id, "warehouse_code": r.warehouse_code, "warehouse_name": r.warehouse_name,
              "address": r.address, "is_active": r.is_active, "created_at": r.created_at.isoformat() if r.created_at else None}
             for r in rows
-        ]
+        ],
+        "total": total, "page": page, "per_page": per_page, "pages": pages,
     })
 
 
@@ -162,18 +172,31 @@ def delete_warehouse(warehouse_id):
 @require_role("ADMIN")
 @with_db
 def list_zones():
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
+
+    where_clauses, params = [], {}
     warehouse_id = request.args.get("warehouse_id", type=int)
     if warehouse_id:
-        rows = g.db.execute(
-            text("SELECT zone_id, warehouse_id, zone_code, zone_name, zone_type, is_active FROM zones WHERE warehouse_id = :wid ORDER BY zone_id"),
-            {"wid": warehouse_id},
-        ).fetchall()
-    else:
-        rows = g.db.execute(text("SELECT zone_id, warehouse_id, zone_code, zone_name, zone_type, is_active FROM zones ORDER BY zone_id")).fetchall()
+        where_clauses.append("warehouse_id = :wid")
+        params["wid"] = warehouse_id
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    total = g.db.execute(text(f"SELECT COUNT(*) FROM zones {where_sql}"), params).scalar()
+    pages = max(1, math.ceil(total / per_page))
+
+    params["limit"] = per_page
+    params["offset"] = (page - 1) * per_page
+    rows = g.db.execute(
+        text(f"SELECT zone_id, warehouse_id, zone_code, zone_name, zone_type, is_active FROM zones {where_sql} ORDER BY zone_id LIMIT :limit OFFSET :offset"),
+        params,
+    ).fetchall()
 
     return jsonify({
         "zones": [{"zone_id": z.zone_id, "warehouse_id": z.warehouse_id, "zone_code": z.zone_code,
-                    "zone_name": z.zone_name, "zone_type": z.zone_type, "is_active": z.is_active} for z in rows]
+                    "zone_name": z.zone_name, "zone_type": z.zone_type, "is_active": z.is_active} for z in rows],
+        "total": total, "page": page, "per_page": per_page, "pages": pages,
     })
 
 
@@ -250,6 +273,9 @@ def update_zone(zone_id):
 @require_role("ADMIN")
 @with_db
 def list_bins():
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
+
     where_clauses = []
     params = {}
     warehouse_id = request.args.get("warehouse_id", type=int)
@@ -266,6 +292,14 @@ def list_bins():
         params["bin_type"] = bin_type
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    total = g.db.execute(
+        text(f"SELECT COUNT(*) FROM bins b {where_sql}"), params
+    ).scalar()
+    pages = max(1, math.ceil(total / per_page))
+
+    params["limit"] = per_page
+    params["offset"] = (page - 1) * per_page
     rows = g.db.execute(
         text(f"""
             SELECT b.bin_id, b.zone_id, COALESCE(z.zone_name, '') AS zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
@@ -273,7 +307,7 @@ def list_bins():
             FROM bins b
             LEFT JOIN zones z ON z.zone_id = b.zone_id
             {where_sql}
-            ORDER BY b.bin_id
+            ORDER BY b.bin_id LIMIT :limit OFFSET :offset
         """),
         params,
     ).fetchall()
@@ -285,7 +319,8 @@ def list_bins():
              "aisle": r.aisle, "row_num": r.row_num, "level_num": r.level_num, "position_num": r.position_num,
              "pick_sequence": r.pick_sequence, "putaway_sequence": r.putaway_sequence, "is_active": r.is_active}
             for r in rows
-        ]
+        ],
+        "total": total, "page": page, "per_page": per_page, "pages": pages,
     })
 
 

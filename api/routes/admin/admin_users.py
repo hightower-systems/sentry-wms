@@ -26,8 +26,15 @@ from services.inventory_service import add_inventory
 @require_role("ADMIN")
 @with_db
 def list_users():
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 1000)
+
+    total = g.db.execute(text("SELECT COUNT(*) FROM users")).scalar()
+    pages = max(1, math.ceil(total / per_page))
+
     rows = g.db.execute(
-        text("SELECT user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at, last_login FROM users ORDER BY user_id")
+        text("SELECT user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at, last_login FROM users ORDER BY user_id LIMIT :limit OFFSET :offset"),
+        {"limit": per_page, "offset": (page - 1) * per_page},
     ).fetchall()
     return jsonify({
         "users": [
@@ -39,7 +46,8 @@ def list_users():
              "created_at": r.created_at.isoformat() if r.created_at else None,
              "last_login": r.last_login.isoformat() if r.last_login else None}
             for r in rows
-        ]
+        ],
+        "total": total, "page": page, "per_page": per_page, "pages": pages,
     })
 
 

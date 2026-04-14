@@ -41,6 +41,10 @@ class TestWarehouses:
         data = resp.get_json()
         assert len(data["warehouses"]) >= 1
         assert data["warehouses"][0]["warehouse_code"] == "APT-LAB"
+        assert "total" in data
+        assert "page" in data
+        assert "per_page" in data
+        assert "pages" in data
 
     def test_get_warehouse(self, client, auth_headers):
         resp = client.get("/api/admin/warehouses/1", headers=auth_headers)
@@ -81,7 +85,16 @@ class TestZones:
     def test_list_zones(self, client, auth_headers):
         resp = client.get("/api/admin/zones?warehouse_id=1", headers=auth_headers)
         assert resp.status_code == 200
-        assert len(resp.get_json()["zones"]) == 6
+        data = resp.get_json()
+        assert len(data["zones"]) == 6
+        assert "total" in data
+
+    def test_list_zones_pagination(self, client, auth_headers):
+        resp = client.get("/api/admin/zones?warehouse_id=1&per_page=2&page=1", headers=auth_headers)
+        data = resp.get_json()
+        assert len(data["zones"]) == 2
+        assert data["total"] == 6
+        assert data["pages"] == 3
 
     def test_create_zone(self, client, auth_headers):
         resp = client.post("/api/admin/zones", json={
@@ -117,6 +130,14 @@ class TestBins:
         data = resp.get_json()
         assert len(data["bins"]) == 16
         assert "zone_name" in data["bins"][0]
+        assert "total" in data
+
+    def test_list_bins_pagination(self, client, auth_headers):
+        resp = client.get("/api/admin/bins?warehouse_id=1&per_page=3&page=1", headers=auth_headers)
+        data = resp.get_json()
+        assert len(data["bins"]) == 3
+        assert data["total"] == 16
+        assert data["page"] == 1
 
     def test_list_bins_filter_zone(self, client, auth_headers):
         # Zone 2 is PICK with 9 bins
@@ -370,6 +391,8 @@ class TestUsers:
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["users"]) >= 1
+        assert "total" in data
+        assert "page" in data
         # password_hash should never be present
         for u in data["users"]:
             assert "password_hash" not in u
