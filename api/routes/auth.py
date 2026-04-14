@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
-from services.auth_service import authenticate_user, generate_token
+from services.auth_service import authenticate_user, generate_token, validate_password
 
 ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
 
@@ -124,3 +124,36 @@ def refresh():
     }
     token = generate_token(user_dict)
     return jsonify({"token": token})
+
+
+@auth_bp.route("/change-password", methods=["POST"])
+@require_auth
+@with_db
+def change_password():
+    import bcrypt
+
+    data = request.get_json()
+    if not data or not data.get("current_password") or not data.get("new_password"):
+        return jsonify({"error": "current_password and new_password are required"}), 400
+
+    pw_error = validate_password(data["new_password"])
+    if pw_error:
+        return jsonify({"error": pw_error}), 400
+
+    user_id = g.current_user["user_id"]
+    row = g.db.execute(
+        text("SELECT password_hash FROM users WHERE user_id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+
+    if not row or not bcrypt.checkpw(data["current_password"].encode("utf-8"), row.password_hash.encode("utf-8")):
+        return jsonify({"error": "Current password is incorrect"}), 401
+
+    new_hash = bcrypt.hashpw(data["new_password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    g.db.execute(
+        text("UPDATE users SET password_hash = :pw, password_changed_at = NOW() WHERE user_id = :uid"),
+        {"pw": new_hash, "uid": user_id},
+    )
+    g.db.commit()
+
+    return jsonify({"message": "Password changed"})

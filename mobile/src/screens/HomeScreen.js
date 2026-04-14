@@ -43,6 +43,11 @@ export default function HomeScreen({ navigation }) {
   const { error, scanDisabled, showError, clearError } = useScreenError();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showScanConfig, setShowScanConfig] = useState(false);
+  const [showChangePw, setShowChangePw] = useState(false);
+  const [pwForm, setPwForm] = useState({ current: '', newPw: '', confirm: '' });
+  const [pwError, setPwError] = useState('');
+  const [pwSuccess, setPwSuccess] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const scanSettings = useScanSettingsContext();
   const [serverUrl, setServerUrl] = useState('');
@@ -233,6 +238,15 @@ export default function HomeScreen({ navigation }) {
             }}>
               <Text style={styles.menuItemText}>SETTINGS</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={() => {
+              setShowUserMenu(false);
+              setPwForm({ current: '', newPw: '', confirm: '' });
+              setPwError('');
+              setPwSuccess('');
+              setShowChangePw(true);
+            }}>
+              <Text style={styles.menuItemText}>CHANGE PASSWORD</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={() => { setShowUserMenu(false); logout(); }}>
               <Text style={styles.menuItemTextDanger}>LOGOUT</Text>
             </TouchableOpacity>
@@ -315,6 +329,82 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.scanConfigDoneText}>DONE</Text>
             </TouchableOpacity>
             </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Change Password Modal */}
+      <Modal visible={showChangePw} transparent animationType="fade">
+        <Pressable style={styles.menuOverlay} onPress={() => setShowChangePw(false)}>
+          <Pressable style={styles.infoModalCard} onPress={() => {}}>
+            <Text style={styles.infoModalTitle}>CHANGE PASSWORD</Text>
+            <TextInput
+              style={[styles.scanConfigInput, { marginBottom: 10 }]}
+              placeholder="Current password"
+              placeholderTextColor={colors.textPlaceholder}
+              value={pwForm.current}
+              onChangeText={(t) => { setPwForm({ ...pwForm, current: t }); setPwError(''); setPwSuccess(''); }}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={[styles.scanConfigInput, { marginBottom: 10 }]}
+              placeholder="New password"
+              placeholderTextColor={colors.textPlaceholder}
+              value={pwForm.newPw}
+              onChangeText={(t) => { setPwForm({ ...pwForm, newPw: t }); setPwError(''); setPwSuccess(''); }}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={[styles.scanConfigInput, { marginBottom: 10 }]}
+              placeholder="Confirm new password"
+              placeholderTextColor={colors.textPlaceholder}
+              value={pwForm.confirm}
+              onChangeText={(t) => { setPwForm({ ...pwForm, confirm: t }); setPwError(''); setPwSuccess(''); }}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+            {pwError ? <Text style={{ color: colors.accentRed, fontSize: 12, marginBottom: 8 }}>{pwError}</Text> : null}
+            {pwSuccess ? <Text style={{ color: colors.copper, fontSize: 12, marginBottom: 8 }}>{pwSuccess}</Text> : null}
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+              <TouchableOpacity
+                style={[styles.infoModalButton, { flex: 1, marginTop: 0 }]}
+                disabled={pwSaving}
+                onPress={async () => {
+                  if (!pwForm.current || !pwForm.newPw || !pwForm.confirm) {
+                    setPwError('All fields are required');
+                    return;
+                  }
+                  if (pwForm.newPw !== pwForm.confirm) {
+                    setPwError('New passwords do not match');
+                    return;
+                  }
+                  setPwSaving(true);
+                  setPwError('');
+                  try {
+                    await client.post('/api/auth/change-password', {
+                      current_password: pwForm.current,
+                      new_password: pwForm.newPw,
+                    });
+                    setPwSuccess('Password changed - please log in again');
+                    setTimeout(() => { setShowChangePw(false); logout(); }, 1500);
+                  } catch (err) {
+                    setPwError(err.response?.data?.error || 'Failed to change password');
+                  } finally {
+                    setPwSaving(false);
+                  }
+                }}
+              >
+                <Text style={styles.infoModalButtonText}>{pwSaving ? 'SAVING...' : 'CHANGE'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.infoModalButton, { flex: 1, marginTop: 0, backgroundColor: colors.cardBorder }]}
+                onPress={() => setShowChangePw(false)}
+              >
+                <Text style={[styles.infoModalButtonText, { color: colors.textPrimary }]}>CANCEL</Text>
+              </TouchableOpacity>
+            </View>
           </Pressable>
         </Pressable>
       </Modal>

@@ -212,6 +212,44 @@ class TestWarehouseAuthorization:
         assert resp.status_code == 200
 
 
+class TestChangePassword:
+    """L2: self-service password change."""
+
+    def test_change_password_success(self, client, auth_headers):
+        _reset_lockout()
+        resp = client.post("/api/auth/change-password", json={
+            "current_password": "admin",
+            "new_password": "newadmin1",
+        }, headers=auth_headers)
+        assert resp.status_code == 200
+
+        # Verify login with new password
+        resp = client.post("/api/auth/login", json={"username": "admin", "password": "newadmin1"})
+        assert resp.status_code == 200
+
+    def test_change_password_wrong_current(self, client, auth_headers):
+        resp = client.post("/api/auth/change-password", json={
+            "current_password": "wrongpassword1",
+            "new_password": "newadmin1",
+        }, headers=auth_headers)
+        assert resp.status_code == 401
+        assert "incorrect" in resp.get_json()["error"].lower()
+
+    def test_change_password_weak_new(self, client, auth_headers):
+        resp = client.post("/api/auth/change-password", json={
+            "current_password": "admin",
+            "new_password": "short",
+        }, headers=auth_headers)
+        assert resp.status_code == 400
+
+    def test_change_password_requires_auth(self, client):
+        resp = client.post("/api/auth/change-password", json={
+            "current_password": "admin",
+            "new_password": "newadmin1",
+        })
+        assert resp.status_code == 401
+
+
 class TestJwtClaims:
     """L10: verify iat and jti are present in tokens."""
 
