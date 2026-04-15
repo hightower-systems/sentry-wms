@@ -386,8 +386,23 @@ CREATE TABLE users (
     allowed_functions TEXT[] DEFAULT '{}',      -- mobile module access: receive, putaway, pick, pack, ship, count, transfer
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    last_login TIMESTAMPTZ
+    last_login TIMESTAMPTZ,
+    password_changed_at TIMESTAMPTZ
 );
+
+-- ============================================================
+-- LOGIN ATTEMPTS (Persistent rate limiting)
+-- ============================================================
+
+CREATE TABLE login_attempts (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(255) NOT NULL UNIQUE,
+    attempts INT NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    last_attempt TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_login_attempts_key ON login_attempts (key);
 
 -- ============================================================
 -- APP SETTINGS (Configurable system settings)
