@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.0.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-288%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.1.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-307%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
 
   <img src="docs/assets/sentry-preview.png" alt="Sentry WMS Screenshots" width="100%">
@@ -97,6 +97,7 @@ Built with React 19, Vite, React Router, and plain CSS. Dark theme with copper a
 |--------|----------|-------------|
 | POST | `/api/auth/login` | Device login, returns JWT token |
 | POST | `/api/auth/refresh` | Refresh an existing token |
+| POST | `/api/auth/change-password` | Self-service password change (authenticated) |
 
 ### Lookups
 | Method | Endpoint | Description |
@@ -233,9 +234,11 @@ Set `SKIP_SEED=true` to start with a clean system (admin user + one empty wareho
 - Required `JWT_SECRET` environment variable (crashes on startup if missing)
 - Warehouse authorization middleware - non-admin users blocked from unassigned warehouses (403)
 - Lookup endpoints enforce warehouse isolation - users only see inventory, bins, and orders for their assigned warehouses
-- Login lockout - 5 failed attempts locks the account for 15 minutes
+- Login lockout - 5 failed attempts locks the account for 15 minutes (DB-backed, per-user and per-IP)
 - All SQL queries use parameterized bindings (no string interpolation of user input)
-- bcrypt password hashing with salt, minimum 8-character password policy
+- bcrypt password hashing with salt, password complexity policy (8+ chars, letters + digits)
+- JWT tokens include iat/jti claims; tokens invalidated on password change
+- Self-service password change for all users
 - Random admin password generated at seed time (no default credentials)
 - Over-pick and negative quantity prevention on all warehouse operations
 - Security response headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy)
@@ -247,7 +250,7 @@ Set `SKIP_SEED=true` to start with a clean system (admin user + one empty wareho
 
 ### Testing
 
-288 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~5 seconds.
+307 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~13 seconds.
 
 ```bash
 docker compose exec api python -m pytest tests/ -v --tb=short
@@ -255,7 +258,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.0.0 - Production Release**
+**v1.1.0 - Security Hardening Release**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -279,6 +282,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.9.8 | Admin dark theme, warehouse picker, security hardening, status constants, SKIP_SEED | ✅ Complete |
 | v0.9.9 | SQL parameterization, warehouse auth, JWT hardening, FK indexes, scanner plugin fix | ✅ Complete |
 | **v1.0.0** | **Production release - full security audit, penetration test fixes, hardened infrastructure** | ✅ **Released** |
+| **v1.1.0** | **Security hardening - JWT claims, token invalidation, rate limiting, pagination, password policy** | ✅ **Released** |
 | v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -291,4 +295,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.0.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.1.0

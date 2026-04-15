@@ -2,6 +2,51 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.1.0] - 2026-04-14
+
+### Security - Backlog Audit (12 fixes)
+- **Token invalidation on password change (M1)** - added `password_changed_at` column to users table; auth middleware rejects tokens issued before the last password change
+- **JWT iat/jti claims (L10)** - tokens now include `iat` (issued-at, unix seconds) and `jti` (UUID) for revocation and replay detection
+- **DB-backed rate limiting (M8)** - replaced in-memory `_login_attempts` dict with `login_attempts` table; persistent across restarts, per-username and per-IP tracking (5 attempts, 15 min lockout)
+- **Password complexity (L1)** - `validate_password()` enforces minimum 8 characters, at least one letter, at least one digit; applied on user creation, admin password update, and self-service password change
+- **Self-service password change (L2)** - `POST /api/auth/change-password` endpoint; mobile UI added as modal in user dropdown (current password, new password, confirm)
+- **Warehouse listing auth (L7)** - `GET /api/warehouses/list` now requires JWT; mobile warehouse selection moved from pre-login to a blocking post-login modal on HomeScreen
+- **suggest_bin warehouse scope (L8)** - preferred bin and default bin queries filtered to user's allowed warehouses; admins bypass the filter
+- **CSV import limit (M10)** - import endpoint rejects payloads with more than 5000 records
+- **Cycle count self-approval check (M3)** - configurable `require_count_approval_separation` app setting; when enabled, the counter cannot approve their own cycle count adjustments (403); when disabled, self-approvals are logged as `SELF_APPROVED_COUNT` in the audit log
+- **Pagination (M6)** - added `page`/`per_page` query params with `LIMIT`/`OFFSET` to warehouses, zones, bins, and users list endpoints (default 50, max 1000)
+- **Cleartext HTTP disabled for production (L5)** - `usesCleartextTraffic` set to false in app.json; `with-cleartext-traffic` plugin now checks `EAS_BUILD_PROFILE` and only enables cleartext for non-production builds
+- **Production docker-compose (L6)** - `docker-compose.prod.yml` omits source volume mounts and requires all credentials via env vars
+
+### Admin Panel
+- New "Inventory" settings section with "Require separate approver for cycle count adjustments" checkbox
+- Version updated to 1.1.0
+
+### Mobile
+- Warehouse selection moved from login screen to post-login blocking modal
+- "Change Password" option added to user dropdown on home screen
+- Auto-selects warehouse if only one is available
+- Version updated to 1.1.0
+
+### Infrastructure
+- Migration 014: `password_changed_at TIMESTAMPTZ` column on users table
+- Migration 015: `login_attempts` table with key, attempts, locked_until, last_attempt columns
+
+### Bug Fixes
+- Change-password endpoint returns 403 (not 401) for wrong current password, preventing the mobile client's auto-logout interceptor from firing
+
+### Tests
+- 19 new tests (307 total, 0 regressions)
+- Warehouse list auth test (401 without JWT, 200 with JWT)
+- CSV import limit test (5001 records returns 400)
+- Cycle count self-approval tests (both modes)
+- Password complexity tests (short, no digit, no letter)
+- Self-service password change tests (success, wrong current, weak new, requires auth)
+- JWT iat/jti claim tests (presence, uniqueness)
+- Token invalidation tests (old token rejected, new token works after password change)
+- Per-IP lockout test
+- Pagination tests (zones, bins)
+
 ## [v1.0.0] - 2026-04-14
 
 ### Security - Full Code Audit
