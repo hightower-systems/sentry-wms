@@ -1,0 +1,33 @@
+# Development overlay for docker-compose. Use with:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# This override runs the admin SPA in Vite dev-server mode (hot reload,
+# source-maps, dev port 3000) and bind-mounts source directories so that
+# local edits are picked up without rebuilding images. It must NEVER be
+# used for production: the Vite dev-server exposes HMR, virtual modules
+# under /@fs/, and is not hardened for internet exposure.
+
+services:
+  api:
+    volumes:
+      - ./api:/app
+      - ./db:/db
+
+  celery-worker:
+    volumes:
+      - ./api:/app
+      - ./db:/db
+
+  admin:
+    image: node:20-alpine
+    container_name: sentry-admin-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./admin:/app
+      - /app/node_modules
+    depends_on:
+      - api
