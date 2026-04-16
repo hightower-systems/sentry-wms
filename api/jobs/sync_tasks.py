@@ -95,6 +95,48 @@ def sync_inventory(self, connector_name: str, warehouse_id: int):
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
+def fulfillment_health_check(self, connector_name: str, warehouse_id: int):
+    """Verify fulfillment push capability.
+
+    Runs the connector's test_connection to confirm the endpoint is
+    reachable. Updates fulfillment sync state so operators can see
+    whether outbound pushes would succeed. Real fulfillment pushes
+    happen via push_fulfillment when orders ship.
+    """
+    try:
+        set_running_standalone(connector_name, warehouse_id, "fulfillment")
+    except DuplicateRunError as exc:
+        logger.info("fulfillment health check skipped: %s", exc)
+        raise Ignore()
+
+    try:
+        connector_cls = registry.get(connector_name)
+        config = get_all_credentials_standalone(connector_name, warehouse_id)
+        connector = connector_cls(config=config)
+
+        result = connector.test_connection()
+        if result.connected:
+            set_success_standalone(connector_name, warehouse_id, "fulfillment")
+            logger.info(
+                "fulfillment health check ok: connector=%s warehouse=%d",
+                connector_name, warehouse_id,
+            )
+        else:
+            set_error_standalone(connector_name, warehouse_id, "fulfillment", result.message)
+            logger.warning(
+                "fulfillment health check failed: connector=%s message=%s",
+                connector_name, result.message,
+            )
+
+        return {"success": result.connected, "message": result.message}
+
+    except Exception as exc:
+        set_error_standalone(connector_name, warehouse_id, "fulfillment", str(exc))
+        logger.error("fulfillment health check failed: connector=%s error=%s", connector_name, str(exc))
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def push_fulfillment(self, connector_name: str, warehouse_id: int, order_id: str, tracking: str, carrier: str):
     """Push shipment confirmation back to an external system.
 

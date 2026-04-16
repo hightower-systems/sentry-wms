@@ -300,14 +300,17 @@ class TestManualSyncTrigger:
         )
         assert resp.status_code == 400
 
-    def test_trigger_sync_fulfillment_rejected(self, client, auth_headers):
-        """Fulfillment sync can't be triggered manually."""
+    def test_trigger_fulfillment_health_check(self, client, auth_headers):
+        """Fulfillment sync triggers a health check (test_connection)."""
         resp = client.post(
             "/api/admin/connectors/example/sync/fulfillment",
             json={"warehouse_id": 1},
             headers=auth_headers,
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 202
+        data = resp.get_json()
+        assert data["sync_type"] == "fulfillment"
+        assert "task_id" in data
 
     def test_trigger_sync_unknown_connector(self, client, auth_headers):
         resp = client.post(

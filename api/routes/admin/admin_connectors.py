@@ -236,18 +236,16 @@ def trigger_sync(connector_name, sync_type):
             "sync_type": sync_type,
         }), 409
 
-    # Queue the task
-    from jobs.sync_tasks import sync_orders, sync_items, sync_inventory
+    # Queue the task. Fulfillment manual triggers run a health check
+    # (verifies connector is reachable) since actual pushes happen
+    # automatically when orders ship.
+    from jobs.sync_tasks import sync_orders, sync_items, sync_inventory, fulfillment_health_check
     task_map = {
         "orders": sync_orders,
         "items": sync_items,
         "inventory": sync_inventory,
+        "fulfillment": fulfillment_health_check,
     }
-    if sync_type == "fulfillment":
-        return jsonify({
-            "error": "fulfillment sync cannot be triggered manually - it happens automatically when orders ship",
-        }), 400
-
     task = task_map[sync_type]
     async_result = task.delay(connector_name, warehouse_id)
 
