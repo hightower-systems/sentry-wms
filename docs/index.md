@@ -57,6 +57,6 @@ docker compose logs api | grep "Admin password"
 
 ## Current Version
 
-v1.1.1 -- 307 tests passing, 88 API endpoints, 26-table PostgreSQL schema.
+v1.2.0 -- 392 tests passing, 88 API endpoints, 26-table PostgreSQL schema.
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).

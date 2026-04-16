@@ -2,6 +2,25 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.2.0] - 2026-04-16
+
+### Added
+- Pydantic v2 input validation schemas on every API endpoint that accepts a JSON body (17 schema files in `api/schemas/`)
+- `@validate_body` decorator for consistent request validation across all routes (`api/utils/validation.py`)
+- Standardized `validation_error` response format: `{error: "validation_error", details: [{type, loc, msg}]}`
+- React error boundaries on all 21 admin panel page routes - each section fails independently with retry button and brand-colored fallback UI
+- Mobile app handles `validation_error` responses - extracts first detail message for operator-friendly display
+
+### Changed
+- All API request payloads strictly validated before reaching the service layer
+- Admin panel sections fail independently rather than white-screening the entire app
+- 5 existing tests updated for new `validation_error` response format (putaway, transfers, shipping)
+
+### Tests
+- 75 new backend validation tests (unit tests for all schema files + integration tests for the decorator)
+- 4 new ErrorBoundary frontend tests (catch, fallback message, reset/retry)
+- Total: 382 backend + 10 frontend (was 307 backend + 6 frontend)
+
 ## [v1.1.1] - 2026-04-15
 
 ### Security

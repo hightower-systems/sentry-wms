@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.1.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-307%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.2.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-382%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -260,7 +260,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.1.0 - Security Hardening Release**
+**v1.2.0 - Validation & Error Boundary Hardening**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -285,6 +285,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | v0.9.9 | SQL parameterization, warehouse auth, JWT hardening, FK indexes, scanner plugin fix | ✅ Complete |
 | **v1.0.0** | **Production release - full security audit, penetration test fixes, hardened infrastructure** | ✅ **Released** |
 | **v1.1.0** | **Security hardening - JWT claims, token invalidation, rate limiting, pagination, password policy** | ✅ **Released** |
+| **v1.2.0** | **Pydantic validation schemas, React error boundaries, standardized error format** | ✅ **Released** |
 | v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -297,4 +298,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.1.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.2.0

@@ -8,6 +8,58 @@ Authorization: Bearer <token>
 
 ---
 
+## Error Responses
+
+### Standard errors
+
+Most endpoints return errors in a simple format:
+
+```json
+{
+  "error": "Human-readable error message"
+}
+```
+
+Common status codes: 400 (bad request), 401 (unauthorized), 403 (forbidden), 404 (not found), 409 (conflict), 429 (rate limited).
+
+### Validation errors (v1.2.0+)
+
+All endpoints that accept a JSON body validate the request against a pydantic schema before processing. Invalid requests return a `400` response with a structured `validation_error` format:
+
+```json
+{
+  "error": "validation_error",
+  "details": [
+    {
+      "type": "missing",
+      "loc": ["po_id"],
+      "msg": "Field required"
+    },
+    {
+      "type": "greater_than",
+      "loc": ["items", 0, "quantity"],
+      "msg": "Input should be greater than 0"
+    }
+  ]
+}
+```
+
+**Fields in each detail entry:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Pydantic error type identifier (e.g. `missing`, `string_too_short`, `greater_than`, `value_error`) |
+| `loc` | array | Path to the field that failed validation. Top-level fields are `["field_name"]`. Nested fields include the index or key, e.g. `["items", 0, "quantity"]` |
+| `msg` | string | Human-readable error message suitable for display to the user |
+
+**How to handle in client code:**
+
+- Check `response.error === "validation_error"` to distinguish from standard errors
+- Extract the first detail's `msg` for a user-friendly message: `response.details[0].msg`
+- Use `loc` to highlight the specific field in a form, if applicable
+
+---
+
 ## Auth
 
 ### POST /api/auth/login
