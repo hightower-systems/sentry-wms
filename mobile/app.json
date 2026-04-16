@@ -23,7 +23,7 @@
       },
       "package": "com.hightowersystems.sentrywms",
       "versionCode": 1,
-      "usesCleartextTraffic": false,
+      "usesCleartextTraffic": true,
       "permissions": [
         "INTERNET",
         "VIBRATE"
