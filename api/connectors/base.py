@@ -8,11 +8,24 @@ and pushing fulfillment data back to the source system.
 Result types use pydantic for validation and serialization.
 """
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
+import requests
 from pydantic import BaseModel, Field
+
+from connectors.rate_limiter import (
+    MAX_RETRIES_PER_CALL,
+    CircuitBreakerState,
+    CircuitOpenError,
+    RateLimitState,
+    exponential_backoff,
+)
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -69,10 +82,28 @@ class BaseConnector(ABC):
     Subclasses must implement every abstract method. The registry will
     refuse to register a class that does not fully implement this interface.
 
-    Connectors are stateless -- they receive configuration (API keys,
-    endpoints, etc.) at instantiation and use it for every call. No
-    mutable state should be stored between method calls.
+    Connectors are mostly stateless but do hold rate limit and circuit
+    breaker state between calls on the same instance. New instances
+    start fresh (e.g. between celery task runs).
+
+    Subclasses can override the rate limit header names if their API
+    uses non-standard headers. The circuit breaker threshold and
+    cooldown are tunable too.
     """
+
+    # Rate limit header names - override in subclasses if the API uses
+    # non-standard header names (e.g. Shopify uses X-Shopify-Shop-Api-Call-Limit)
+    rate_limit_remaining_header: str = "X-RateLimit-Remaining"
+    rate_limit_limit_header: str = "X-RateLimit-Limit"
+    retry_after_header: str = "Retry-After"
+
+    # Circuit breaker tuning
+    circuit_breaker_threshold: int = 5       # consecutive failures before opening
+    circuit_breaker_cooldown: int = 300      # 5 minutes
+
+    # Proactive slowdown threshold: when rate_limit_remaining drops below
+    # this fraction of the limit, add a small delay before the next call
+    rate_limit_slowdown_threshold: float = 0.1
 
     def __init__(self, config: dict):
         """Initialize the connector with its configuration.
@@ -83,6 +114,102 @@ class BaseConnector(ABC):
                     is defined by get_config_schema().
         """
         self.config = config
+        self._rate_limit = RateLimitState()
+        self._circuit_breaker = CircuitBreakerState(
+            threshold=self.circuit_breaker_threshold,
+            cooldown_seconds=self.circuit_breaker_cooldown,
+        )
+
+    def make_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """HTTP wrapper with retry, backoff, rate limit awareness, and circuit breaking.
+
+        Connectors should call this instead of requests.get/post directly.
+        Every connector automatically gets:
+        - 3 retries with exponential backoff on 429/503
+        - Proactive slowdown when X-RateLimit-Remaining drops below 10%
+        - Circuit breaker that opens after 5 consecutive failures
+        - Retry-After header compliance
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Full URL to request
+            **kwargs: Passed through to requests.request (headers, json, params, timeout, etc.)
+
+        Returns:
+            requests.Response on success (2xx or 4xx other than 429).
+
+        Raises:
+            CircuitOpenError: If the breaker is open and cooldown hasn't expired.
+            requests.HTTPError: For final 5xx responses after exhausting retries.
+            requests.RequestException: For network-level errors after exhausting retries.
+        """
+        # Fail fast if the circuit is open
+        self._circuit_breaker.check()
+
+        # Proactive slowdown based on last response's rate limit headers
+        slowdown = self._rate_limit.compute_slowdown(self.rate_limit_slowdown_threshold)
+        if slowdown > 0:
+            logger.info("Rate limit slowdown: waiting %.2fs", slowdown)
+            time.sleep(slowdown)
+
+        # Honor Retry-After from the previous response
+        if self._rate_limit.retry_after and self._rate_limit.retry_after > 0:
+            wait = self._rate_limit.retry_after
+            self._rate_limit.retry_after = None  # consume it
+            logger.info("Honoring Retry-After: waiting %.2fs", wait)
+            time.sleep(wait)
+
+        last_exception = None
+        for attempt in range(MAX_RETRIES_PER_CALL):
+            try:
+                response = requests.request(method, url, **kwargs)
+            except requests.RequestException as exc:
+                last_exception = exc
+                logger.warning(
+                    "Request error on attempt %d: %s", attempt + 1, exc,
+                )
+                self._circuit_breaker.record_failure()
+                if attempt + 1 < MAX_RETRIES_PER_CALL:
+                    time.sleep(exponential_backoff(attempt))
+                continue
+
+            # Update rate limit state from response headers
+            self._rate_limit.update_from_response(
+                response,
+                self.rate_limit_remaining_header,
+                self.rate_limit_limit_header,
+                self.retry_after_header,
+            )
+
+            # 429 (rate limited) and 503 (service unavailable) are retryable
+            if response.status_code in (429, 503) and attempt + 1 < MAX_RETRIES_PER_CALL:
+                # Respect Retry-After if the server set one, otherwise exponential backoff
+                if self._rate_limit.retry_after and self._rate_limit.retry_after > 0:
+                    delay = self._rate_limit.retry_after
+                    self._rate_limit.retry_after = None
+                else:
+                    delay = exponential_backoff(attempt)
+                logger.info(
+                    "Got %d, retrying in %.2fs (attempt %d/%d)",
+                    response.status_code, delay, attempt + 1, MAX_RETRIES_PER_CALL,
+                )
+                time.sleep(delay)
+                continue
+
+            # Success or non-retryable failure - update breaker and return
+            if response.status_code < 500:
+                self._circuit_breaker.record_success()
+            else:
+                self._circuit_breaker.record_failure()
+
+            return response
+
+        # Exhausted all retries with a connection error
+        self._circuit_breaker.record_failure()
+        if last_exception is not None:
+            raise last_exception
+        # Should not reach here, but return the last 429/503 response just in case
+        return response
 
     @abstractmethod
     def sync_orders(self, since: datetime) -> SyncResult:

@@ -35,17 +35,30 @@ class ExampleConnector(BaseConnector):
     def sync_orders(self, since: datetime) -> SyncResult:
         """Pull sales orders from the external system.
 
-        A real connector would:
-        1. Build an API request filtered by modified_date > since
-        2. Paginate through all results
-        3. Transform each external order into Sentry WMS format
-        4. Insert or update sales_orders and sales_order_lines in the DB
-        5. Return the count of records processed
+        A real connector would use ``self.make_request`` to call the external
+        API. The base class handles retry/backoff on 429 and 503, tracks rate
+        limit headers, and trips a circuit breaker after 5 consecutive
+        failures. Example of what real code would look like::
 
-        Common edge cases to handle:
+            response = self.make_request(
+                "GET",
+                f"{self.config['base_url']}/orders",
+                params={"modified_after": since.isoformat()},
+                headers={"Authorization": f"Bearer {self.config['api_key']}"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            for order in response.json()["orders"]:
+                # Transform external order into Sentry WMS format
+                # Upsert sales_orders and sales_order_lines by external ID
+                pass
+
+        Common edge cases a real connector must handle:
         - Duplicate order numbers (upsert by external ID)
         - Orders with items not yet in the item master (sync_items first)
-        - Rate limiting from the external API (backoff and retry)
+        - Cursor/page-based pagination
+
+        Retry, backoff, and rate limiting come for free via make_request.
         """
         return SyncResult(success=True, records_synced=0)
 
@@ -97,13 +110,30 @@ class ExampleConnector(BaseConnector):
     def test_connection(self) -> ConnectionResult:
         """Verify credentials and endpoint connectivity.
 
-        A real connector would:
-        1. Make a lightweight API call (e.g. GET /account or /ping)
-        2. Verify the response indicates valid authentication
-        3. Return a meaningful message ("Connected as account XYZ")
+        Called from the admin panel setup wizard. A real connector would
+        use ``self.make_request`` to hit a lightweight endpoint::
 
-        This is called from the admin panel setup wizard. Keep it fast --
-        don't pull large datasets, just confirm the credentials work.
+            try:
+                response = self.make_request(
+                    "GET",
+                    f"{self.config['base_url']}/account",
+                    headers={"Authorization": f"Bearer {self.config['api_key']}"},
+                    timeout=10,
+                )
+                if response.status_code == 200:
+                    account = response.json()
+                    return ConnectionResult(
+                        connected=True,
+                        message=f"Connected as {account['name']}",
+                    )
+                return ConnectionResult(
+                    connected=False,
+                    message=f"API returned {response.status_code}",
+                )
+            except CircuitOpenError as e:
+                return ConnectionResult(connected=False, message=str(e))
+
+        Keep it fast -- don't pull large datasets, just confirm auth works.
         """
         return ConnectionResult(connected=True, message="Example connector - no real connection")
 
