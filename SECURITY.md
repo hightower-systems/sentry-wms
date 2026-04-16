@@ -58,6 +58,33 @@ Deployments created after the fix commit are not affected: the compose file
 now requires `SENTRY_ENCRYPTION_KEY` to be set explicitly and fails fast at
 startup if it is missing.
 
+### SA-2026-002 -- Historical JWT_SECRET defaults in git history (fixed in commit fe49e87)
+
+Before commit `fe49e87` (2026-04-13), `docker-compose.yml` shipped default
+values for `JWT_SECRET` that are permanently preserved in git history:
+
+- `dev-secret-change-in-production` (commit `3136f57` -> `1e614f3`)
+- `dev-jwt-secret-do-not-use-in-production-b7e2f` (commit `1e614f3` -> `fe49e87`)
+
+Any deployment that ran with either default value signed JWTs with a publicly
+knowable secret. An attacker who knows a valid `user_id` for that deployment
+can forge tokens with arbitrary roles until the secret is rotated. Issued
+tokens expire after 8 hours, but fresh tokens can be forged at will while the
+compromised secret stands.
+
+**If your deployment was created before 2026-04-13 and did not override
+`JWT_SECRET` in its `.env` file, rotate immediately:**
+
+1. Generate a new secret: `openssl rand -hex 32`
+2. Set `JWT_SECRET` in `.env` to the new value.
+3. Restart all API and Celery containers. All outstanding tokens become
+   invalid on restart; users must log in again.
+
+Deployments with `JWT_SECRET` explicitly set from the start are not affected.
+Current `docker-compose.yml` requires `JWT_SECRET` to be set explicitly via
+the strict `:?` form and fails fast at startup if it is missing, so new
+deployments cannot reproduce the exposure.
+
 ## Security Practices
 
 - JWT authentication with live database validation on every request
