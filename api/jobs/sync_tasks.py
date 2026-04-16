@@ -1,167 +1,136 @@
 """Background sync tasks for connector operations.
 
-Each task loads a connector from the registry, calls the appropriate
-sync method, and handles retries on failure. Tasks are designed to be
-called from the API (e.g. admin panel triggers a sync) and run in the
-Celery worker process, never blocking the Flask request thread.
+Each task loads a connector from the registry, loads credentials from
+the vault, tracks state via sync_state_service, and handles retries.
+Tasks run in the Celery worker process, never blocking Flask requests.
 
-Vault integration (Phase 3) and sync state tracking (Phase 4) are
-stubbed out with TODO comments -- the task infrastructure and retry
-logic is what matters in this phase.
+State machine per task:
+    idle -> running -> idle (success, consecutive_errors reset to 0)
+    idle -> running -> idle (error, consecutive_errors incremented)
+    ... after 3 consecutive errors: status flips to 'error' (sticky)
+
+Duplicate run prevention: set_running raises DuplicateRunError if a
+sync is already running. The task skips the retry in that case.
 """
 
 import logging
+from datetime import datetime, timezone
 
+from celery.exceptions import Ignore
+
+from connectors import registry
 from jobs import celery_app
+from services.credential_vault import get_all_credentials_standalone
+from services.sync_state_service import (
+    DuplicateRunError,
+    get_last_success_standalone,
+    set_error_standalone,
+    set_running_standalone,
+    set_success_standalone,
+)
 
 logger = logging.getLogger(__name__)
+
+# Earliest reasonable 'since' when a connector has never been synced.
+# Connectors that treat the absence of 'since' specially should handle this.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _run_sync(self, connector_name: str, warehouse_id: int, sync_type: str, method_name: str):
+    """Shared implementation for sync_orders / sync_items / sync_inventory."""
+    try:
+        set_running_standalone(connector_name, warehouse_id, sync_type)
+    except DuplicateRunError as exc:
+        # Another worker is already running this sync. Don't retry.
+        logger.info("%s skipped: %s", sync_type, exc)
+        raise Ignore()
+
+    try:
+        connector_cls = registry.get(connector_name)
+        config = get_all_credentials_standalone(connector_name, warehouse_id)
+        connector = connector_cls(config=config)
+
+        since = get_last_success_standalone(connector_name, warehouse_id, sync_type) or _EPOCH
+        method = getattr(connector, method_name)
+        result = method(since=since)
+
+        if result.success:
+            set_success_standalone(connector_name, warehouse_id, sync_type)
+            logger.info(
+                "%s complete: connector=%s warehouse=%d records=%d",
+                sync_type, connector_name, warehouse_id, result.records_synced,
+            )
+        else:
+            error_msg = "; ".join(result.errors) if result.errors else "sync returned success=False"
+            set_error_standalone(connector_name, warehouse_id, sync_type, error_msg)
+            logger.warning(
+                "%s returned errors: connector=%s warehouse=%d errors=%s",
+                sync_type, connector_name, warehouse_id, error_msg,
+            )
+
+        return {"success": result.success, "records_synced": result.records_synced}
+
+    except Exception as exc:
+        set_error_standalone(connector_name, warehouse_id, sync_type, str(exc))
+        logger.error("%s failed: connector=%s error=%s", sync_type, connector_name, str(exc))
+        raise self.retry(exc=exc)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def sync_orders(self, connector_name: str, warehouse_id: int):
-    """Pull new/updated sales orders from an external system.
-
-    Args:
-        connector_name: Registry key for the connector (e.g. "netsuite").
-        warehouse_id: Target warehouse to associate synced orders with.
-    """
-    try:
-        # 1. Load connector class from registry
-        from connectors import registry
-        connector_cls = registry.get(connector_name)
-
-        # 2. Load credentials from vault
-        from services.credential_vault import get_all_credentials_standalone
-        config = get_all_credentials_standalone(connector_name, warehouse_id)
-
-        # 3. Instantiate connector
-        connector = connector_cls(config=config)
-
-        # 4. Update sync state to "running" (Phase 4 -- stub for now)
-        # TODO: sync_state.update(connector_name, warehouse_id, "orders", status="running")
-
-        # 5. Call connector.sync_orders()
-        from datetime import datetime, timezone
-        result = connector.sync_orders(since=datetime.now(timezone.utc))
-
-        # 6. Update sync state with result (Phase 4 -- stub for now)
-        # TODO: sync_state.update(connector_name, warehouse_id, "orders",
-        #                         status="complete", records=result.records_synced)
-
-        logger.info(
-            "sync_orders complete: connector=%s warehouse=%d records=%d",
-            connector_name, warehouse_id, result.records_synced,
-        )
-        return {"success": result.success, "records_synced": result.records_synced}
-
-    except Exception as exc:
-        logger.error("sync_orders failed: connector=%s error=%s", connector_name, str(exc))
-        raise self.retry(exc=exc)
+    """Pull new/updated sales orders from an external system."""
+    return _run_sync(self, connector_name, warehouse_id, "orders", "sync_orders")
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def sync_items(self, connector_name: str, warehouse_id: int):
-    """Pull item master data from an external system.
-
-    Args:
-        connector_name: Registry key for the connector.
-        warehouse_id: Target warehouse context.
-    """
-    try:
-        from connectors import registry
-        connector_cls = registry.get(connector_name)
-
-        # TODO: credentials = vault.get_credentials(connector_name, warehouse_id)
-        config = {}
-
-        connector = connector_cls(config=config)
-
-        # TODO: sync_state.update(connector_name, warehouse_id, "items", status="running")
-
-        from datetime import datetime, timezone
-        result = connector.sync_items(since=datetime.now(timezone.utc))
-
-        # TODO: sync_state.update(connector_name, warehouse_id, "items",
-        #                         status="complete", records=result.records_synced)
-
-        logger.info(
-            "sync_items complete: connector=%s warehouse=%d records=%d",
-            connector_name, warehouse_id, result.records_synced,
-        )
-        return {"success": result.success, "records_synced": result.records_synced}
-
-    except Exception as exc:
-        logger.error("sync_items failed: connector=%s error=%s", connector_name, str(exc))
-        raise self.retry(exc=exc)
+    """Pull item master data from an external system."""
+    return _run_sync(self, connector_name, warehouse_id, "items", "sync_items")
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def sync_inventory(self, connector_name: str, warehouse_id: int):
-    """Pull inventory levels from an external system.
-
-    Args:
-        connector_name: Registry key for the connector.
-        warehouse_id: Target warehouse context.
-    """
-    try:
-        from connectors import registry
-        connector_cls = registry.get(connector_name)
-
-        # TODO: credentials = vault.get_credentials(connector_name, warehouse_id)
-        config = {}
-
-        connector = connector_cls(config=config)
-
-        # TODO: sync_state.update(connector_name, warehouse_id, "inventory", status="running")
-
-        from datetime import datetime, timezone
-        result = connector.sync_inventory(since=datetime.now(timezone.utc))
-
-        # TODO: sync_state.update(connector_name, warehouse_id, "inventory",
-        #                         status="complete", records=result.records_synced)
-
-        logger.info(
-            "sync_inventory complete: connector=%s warehouse=%d records=%d",
-            connector_name, warehouse_id, result.records_synced,
-        )
-        return {"success": result.success, "records_synced": result.records_synced}
-
-    except Exception as exc:
-        logger.error("sync_inventory failed: connector=%s error=%s", connector_name, str(exc))
-        raise self.retry(exc=exc)
+    """Pull inventory levels from an external system."""
+    return _run_sync(self, connector_name, warehouse_id, "inventory", "sync_inventory")
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
-def push_fulfillment(self, connector_name: str, order_id: str, tracking: str, carrier: str):
+def push_fulfillment(self, connector_name: str, warehouse_id: int, order_id: str, tracking: str, carrier: str):
     """Push shipment confirmation back to an external system.
 
-    Args:
-        connector_name: Registry key for the connector.
-        order_id: External system's order identifier.
-        tracking: Tracking number for the shipment.
-        carrier: Carrier name (e.g. "UPS").
+    Uses the 'fulfillment' sync_type for state tracking so operators
+    can monitor whether outbound fulfillment pushes are succeeding.
     """
     try:
-        from connectors import registry
+        set_running_standalone(connector_name, warehouse_id, "fulfillment")
+    except DuplicateRunError as exc:
+        logger.info("fulfillment skipped: %s", exc)
+        raise Ignore()
+
+    try:
         connector_cls = registry.get(connector_name)
-
-        # TODO: credentials = vault.get_credentials(connector_name)
-        config = {}
-
+        config = get_all_credentials_standalone(connector_name, warehouse_id)
         connector = connector_cls(config=config)
 
-        result = connector.push_fulfillment(
-            order_id=order_id,
-            tracking=tracking,
-            carrier=carrier,
-        )
+        result = connector.push_fulfillment(order_id=order_id, tracking=tracking, carrier=carrier)
 
-        logger.info(
-            "push_fulfillment complete: connector=%s order=%s success=%s external_id=%s",
-            connector_name, order_id, result.success, result.external_id,
-        )
+        if result.success:
+            set_success_standalone(connector_name, warehouse_id, "fulfillment")
+            logger.info(
+                "push_fulfillment complete: connector=%s order=%s external_id=%s",
+                connector_name, order_id, result.external_id,
+            )
+        else:
+            error_msg = result.error or "push returned success=False"
+            set_error_standalone(connector_name, warehouse_id, "fulfillment", error_msg)
+            logger.warning(
+                "push_fulfillment returned error: connector=%s order=%s error=%s",
+                connector_name, order_id, error_msg,
+            )
+
         return {"success": result.success, "external_id": result.external_id}
 
     except Exception as exc:
+        set_error_standalone(connector_name, warehouse_id, "fulfillment", str(exc))
         logger.error("push_fulfillment failed: connector=%s order=%s error=%s", connector_name, order_id, str(exc))
         raise self.retry(exc=exc)

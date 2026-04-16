@@ -13,7 +13,10 @@ from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.connectors import DeleteCredentialsRequest, SaveCredentialsRequest, TestConnectionRequest
 from services import credential_vault
+from services import sync_state_service
 from utils.validation import validate_body
+
+VALID_SYNC_TYPES = ("orders", "items", "inventory", "fulfillment")
 
 
 @admin_bp.route("/connectors", methods=["GET"])
@@ -163,3 +166,95 @@ def remove_credentials(connector_name, validated):
         "connector": connector_name,
         "warehouse_id": validated.warehouse_id,
     })
+
+
+# ---------------------------------------------------------------------------
+# Sync state endpoints (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+@admin_bp.route("/connectors/<connector_name>/sync-status", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def get_sync_status(connector_name):
+    """Return sync state for all sync types for this connector+warehouse.
+
+    Query param: warehouse_id (required)
+    """
+    from flask import request
+    warehouse_id = request.args.get("warehouse_id", type=int)
+    if not warehouse_id:
+        return jsonify({"error": "warehouse_id query parameter is required"}), 400
+
+    try:
+        registry.get(connector_name)
+    except KeyError:
+        return jsonify({"error": f"Connector '{connector_name}' not found"}), 404
+
+    states = sync_state_service.get_all_sync_states(connector_name, warehouse_id)
+    return jsonify({
+        "connector": connector_name,
+        "warehouse_id": warehouse_id,
+        "sync_states": states,
+    })
+
+
+@admin_bp.route("/connectors/<connector_name>/sync/<sync_type>", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def trigger_sync(connector_name, sync_type):
+    """Queue a manual sync for the specified connector+warehouse+type.
+
+    Returns 202 Accepted with the Celery task ID on success, or 409 Conflict
+    if a sync of that type is already running.
+    """
+    from flask import request
+    data = request.get_json(silent=True) or {}
+    warehouse_id = data.get("warehouse_id") or request.args.get("warehouse_id", type=int)
+    if not warehouse_id:
+        return jsonify({"error": "warehouse_id is required"}), 400
+
+    if sync_type not in VALID_SYNC_TYPES:
+        return jsonify({
+            "error": f"Invalid sync_type '{sync_type}'. Must be one of: {', '.join(VALID_SYNC_TYPES)}",
+        }), 400
+
+    try:
+        registry.get(connector_name)
+    except KeyError:
+        return jsonify({"error": f"Connector '{connector_name}' not found"}), 404
+
+    # Check if already running before queuing - avoids a useless task that just raises Ignore
+    current = sync_state_service.get_sync_state(connector_name, warehouse_id, sync_type)
+    if current and current.get("sync_status") == "running":
+        return jsonify({
+            "error": "Sync already running",
+            "connector": connector_name,
+            "warehouse_id": warehouse_id,
+            "sync_type": sync_type,
+        }), 409
+
+    # Queue the task
+    from jobs.sync_tasks import sync_orders, sync_items, sync_inventory
+    task_map = {
+        "orders": sync_orders,
+        "items": sync_items,
+        "inventory": sync_inventory,
+    }
+    if sync_type == "fulfillment":
+        return jsonify({
+            "error": "fulfillment sync cannot be triggered manually - it happens automatically when orders ship",
+        }), 400
+
+    task = task_map[sync_type]
+    async_result = task.delay(connector_name, warehouse_id)
+
+    return jsonify({
+        "message": "Sync queued",
+        "task_id": async_result.id,
+        "connector": connector_name,
+        "warehouse_id": warehouse_id,
+        "sync_type": sync_type,
+    }), 202

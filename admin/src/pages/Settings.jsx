@@ -34,6 +34,8 @@ export default function Settings() {
   const [storedKeys, setStoredKeys] = useState([]);
   const [testResult, setTestResult] = useState(null);
   const [testing, setTesting] = useState(false);
+  const [syncStates, setSyncStates] = useState([]);
+  const [syncingTypes, setSyncingTypes] = useState({});
 
   const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
 
@@ -113,6 +115,7 @@ export default function Settings() {
     setCredMsg('');
     setCredError('');
     setTestResult(null);
+    setSyncStates([]);
     // Load stored credential keys
     if (warehouseId) {
       api.get(`/admin/connectors/${conn.name}/credentials?warehouse_id=${warehouseId}`).then(async (res) => {
@@ -121,7 +124,55 @@ export default function Settings() {
           setStoredKeys(data.credentials || []);
         }
       }).catch(() => setStoredKeys([]));
+
+      loadSyncStates(conn.name);
     }
+  }
+
+  async function loadSyncStates(connectorName) {
+    try {
+      const res = await api.get(`/admin/connectors/${connectorName}/sync-status?warehouse_id=${warehouseId}`);
+      if (res?.ok) {
+        const data = await res.json();
+        setSyncStates(data.sync_states || []);
+      }
+    } catch { /* ignore */ }
+  }
+
+  function syncStateColor(state) {
+    if (!state) return '#999';
+    if (state.sync_status === 'error') return 'var(--danger)';
+    if (state.consecutive_errors > 0) return '#d29922';
+    return 'var(--success)';
+  }
+
+  function syncStateLabel(state) {
+    if (!state) return 'Never synced';
+    if (state.sync_status === 'running') return 'Running...';
+    if (state.sync_status === 'error') return `Error (${state.consecutive_errors} failures)`;
+    if (state.consecutive_errors > 0) return `Last attempt failed (${state.consecutive_errors})`;
+    return 'Healthy';
+  }
+
+  async function triggerSync(syncType) {
+    if (!selectedConnector || !warehouseId) return;
+    setSyncingTypes((prev) => ({ ...prev, [syncType]: true }));
+    try {
+      const res = await api.post(`/admin/connectors/${selectedConnector.name}/sync/${syncType}`, {
+        warehouse_id: warehouseId,
+      });
+      if (res?.status === 409) {
+        setCredError('Sync already running');
+      } else if (res?.ok || res?.status === 202) {
+        setCredMsg(`${syncType} sync queued`);
+        // Refresh state after a brief delay to show updated status
+        setTimeout(() => loadSyncStates(selectedConnector.name), 1000);
+      } else {
+        const data = await res.json();
+        setCredError(data.error || 'Sync failed');
+      }
+    } catch { setCredError('Sync error'); }
+    setSyncingTypes((prev) => ({ ...prev, [syncType]: false }));
   }
 
   async function saveCredentials() {
@@ -430,6 +481,66 @@ export default function Settings() {
                 </div>
               </div>
             )}
+
+            {/* Sync health dashboard */}
+            <div style={{ marginBottom: 16 }}>
+              <strong style={{ fontSize: 13 }}>Sync Health</strong>
+              <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                {['orders', 'items', 'inventory'].map((syncType) => {
+                  const state = syncStates.find((s) => s.sync_type === syncType);
+                  const color = syncStateColor(state);
+                  const label = syncStateLabel(state);
+                  const isRunning = state?.sync_status === 'running' || syncingTypes[syncType];
+                  return (
+                    <div
+                      key={syncType}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        padding: 8,
+                        border: '1px solid var(--border)',
+                        borderRadius: 4,
+                        fontSize: 13,
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: 10,
+                          height: 10,
+                          borderRadius: '50%',
+                          background: color,
+                        }}
+                      />
+                      <strong style={{ minWidth: 90, textTransform: 'capitalize' }}>{syncType}</strong>
+                      <span style={{ color: '#666', flex: 1 }}>{label}</span>
+                      {state?.last_synced_at && (
+                        <span style={{ color: '#999', fontSize: 11 }}>
+                          Last: {new Date(state.last_synced_at).toLocaleString()}
+                        </span>
+                      )}
+                      <button
+                        className="btn"
+                        onClick={() => triggerSync(syncType)}
+                        disabled={isRunning}
+                      >
+                        {isRunning ? 'Syncing...' : 'Sync Now'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              {syncStates.some((s) => s.last_error_message) && (
+                <div style={{ marginTop: 8 }}>
+                  {syncStates.filter((s) => s.last_error_message).map((s) => (
+                    <div key={s.sync_type} style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>
+                      {s.sync_type}: {s.last_error_message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Credential form */}
             <div style={{ marginBottom: 12 }}>

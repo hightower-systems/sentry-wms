@@ -104,7 +104,7 @@ class TestSyncTasks:
         assert result["records_synced"] == 0
 
     def test_push_fulfillment_eager(self):
-        result = push_fulfillment.apply(args=["example", "ORD-1", "TRACK-1", "UPS"]).get()
+        result = push_fulfillment.apply(args=["example", 1, "ORD-1", "TRACK-1", "UPS"]).get()
         assert result["success"] is True
 
     def test_unknown_connector_raises(self):
@@ -122,5 +122,5 @@ class TestSyncTasks:
 
     def test_push_fulfillment_returns_external_id(self):
         """push_fulfillment result should include external_id field."""
-        result = push_fulfillment.apply(args=["example", "ORD-99", "TRK-99", "FedEx"]).get()
+        result = push_fulfillment.apply(args=["example", 1, "ORD-99", "TRK-99", "FedEx"]).get()
         assert "external_id" in result

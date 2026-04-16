@@ -484,3 +484,25 @@ CREATE TABLE connector_credentials (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(connector_name, warehouse_id, credential_key)
 );
+
+-- ============================================================
+-- SYNC STATE (Per-connector health and activity tracking)
+-- ============================================================
+
+CREATE TABLE sync_state (
+    id SERIAL PRIMARY KEY,
+    connector_name VARCHAR(64) NOT NULL,
+    warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
+    sync_type VARCHAR(32) NOT NULL,              -- 'orders', 'items', 'inventory', 'fulfillment'
+    sync_status VARCHAR(16) DEFAULT 'idle',      -- 'idle', 'running', 'error'
+    last_synced_at TIMESTAMPTZ,
+    last_success_at TIMESTAMPTZ,
+    last_error_at TIMESTAMPTZ,
+    last_error_message TEXT,
+    consecutive_errors INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(connector_name, warehouse_id, sync_type)
+);
+
+CREATE INDEX ix_sync_state_connector ON sync_state(connector_name, warehouse_id);
