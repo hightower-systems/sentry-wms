@@ -7,7 +7,7 @@ Covers:
 - Credential deletion
 - Admin role enforcement (non-admin gets 403)
 - Connection test endpoint with example connector
-- Encryption key auto-generation
+- Missing encryption key raises at startup
 """
 
 import os
@@ -15,6 +15,7 @@ import sys
 
 os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry")
 os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("SENTRY_ENCRYPTION_KEY", "t5hPIEVn_O41qfiMqAiPEnwzQh68o3Es46YfSOBvEK8=")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -73,10 +74,18 @@ class TestEncryption:
         assert a != b
         assert _decrypt(a) == _decrypt(b)
 
-    def test_auto_generates_key(self):
-        """Fernet instance is created even without SENTRY_ENCRYPTION_KEY."""
-        fernet = _get_fernet()
-        assert fernet is not None
+    def test_requires_key_env_var(self, monkeypatch):
+        """_get_fernet raises RuntimeError when SENTRY_ENCRYPTION_KEY is unset.
+
+        The vault deliberately refuses to auto-generate a key: doing so would
+        rotate the key on every process restart (silently orphaning existing
+        ciphertexts) and risk logging the key value. Operators must set it.
+        """
+        import services.credential_vault as vault
+        monkeypatch.setattr(vault, "_fernet", None)
+        monkeypatch.delenv("SENTRY_ENCRYPTION_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="SENTRY_ENCRYPTION_KEY"):
+            vault._get_fernet()
 
 
 # ---------------------------------------------------------------------------

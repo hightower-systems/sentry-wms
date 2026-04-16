@@ -2,9 +2,8 @@
 
 Credentials (API keys, OAuth tokens, consumer secrets) are encrypted at
 rest using Fernet symmetric encryption. The master key comes from the
-SENTRY_ENCRYPTION_KEY environment variable. In development, a key is
-auto-generated on first use and logged as a warning. In production,
-the env var must be set explicitly.
+SENTRY_ENCRYPTION_KEY environment variable and MUST be set explicitly;
+a missing key is a fatal startup error.
 
 Credentials are scoped per connector + warehouse so that multi-warehouse
 deployments can have separate API keys for each location.
@@ -14,14 +13,11 @@ written to application logs. Only the vault service has access to
 decrypted values.
 """
 
-import logging
 import os
 
 from cryptography.fernet import Fernet
 from flask import g
 from sqlalchemy import text
-
-logger = logging.getLogger(__name__)
 
 _fernet = None
 
@@ -29,8 +25,11 @@ _fernet = None
 def _get_fernet():
     """Get or create the Fernet cipher instance.
 
-    Uses SENTRY_ENCRYPTION_KEY from the environment. If not set,
-    auto-generates a key and logs a warning (dev/first-run only).
+    Reads SENTRY_ENCRYPTION_KEY from the environment. Raises RuntimeError
+    if the variable is unset or empty. We deliberately do NOT auto-generate
+    a key: a silently-generated key would rotate on every process restart,
+    silently making previously-stored credentials undecryptable, and would
+    risk being logged to stdout.
     """
     global _fernet
     if _fernet is not None:
@@ -38,12 +37,10 @@ def _get_fernet():
 
     key = os.environ.get("SENTRY_ENCRYPTION_KEY")
     if not key:
-        key = Fernet.generate_key().decode()
-        os.environ["SENTRY_ENCRYPTION_KEY"] = key
-        logger.warning(
-            "SENTRY_ENCRYPTION_KEY not set - auto-generated for this session. "
-            "Set this in your .env for persistence: SENTRY_ENCRYPTION_KEY=%s",
-            key,
+        raise RuntimeError(
+            "SENTRY_ENCRYPTION_KEY environment variable is required. "
+            "Generate with: python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
         )
 
     _fernet = Fernet(key.encode() if isinstance(key, str) else key)

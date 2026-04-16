@@ -30,7 +30,7 @@ services:
       FLASK_ENV: ${FLASK_ENV:-production}
       FLASK_PORT: 5000
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8081"
-      SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:-CrFAoVpcrJdjJoxrC4vv8RNL0r965VZ4TKkMcD2Zy4k=}
+      SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
     ports:
       - "5000:5000"
     depends_on:
@@ -66,7 +66,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry}@db:5432/${POSTGRES_DB:-sentry}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env -- see .env.example}
-      SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:-CrFAoVpcrJdjJoxrC4vv8RNL0r965VZ4TKkMcD2Zy4k=}
+      SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
     volumes:
       - ./api:/app
       - ./db:/db
