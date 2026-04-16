@@ -238,6 +238,19 @@ class TestMakeRequest:
             self.sleep_mock = sleep_mock
             yield
 
+    @pytest.fixture(autouse=True)
+    def _bypass_url_guard(self):
+        """Bypass the SSRF URL guard (V-009) for these tests.
+
+        The URL guard performs DNS resolution to check for private IPs,
+        which fails offline for the fabricated api.example.com hostname
+        used throughout these tests. The guard itself is tested in
+        tests/test_url_guard.py; here we skip it so these tests remain
+        focused on retry/backoff/circuit-breaker behavior.
+        """
+        with patch("connectors.base.assert_url_allowed", lambda url: None):
+            yield
+
     def test_success_returns_response(self):
         conn = ExampleConnector({})
         with patch("connectors.base.requests.request") as req:

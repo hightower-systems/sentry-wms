@@ -24,6 +24,7 @@ from connectors.rate_limiter import (
     RateLimitState,
     exponential_backoff,
 )
+from connectors.url_guard import BlockedDestinationError, assert_url_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,10 @@ class BaseConnector(ABC):
             requests.HTTPError: For final 5xx responses after exhausting retries.
             requests.RequestException: For network-level errors after exhausting retries.
         """
+        # Reject internal / private / loopback destinations before issuing
+        # the HTTP call. See connectors/url_guard.py for the blocklist.
+        assert_url_allowed(url)
+
         # Fail fast if the circuit is open
         self._circuit_breaker.check()
 

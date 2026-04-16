@@ -8,6 +8,7 @@ NEVER returned in plaintext -- only masked keys are shown.
 from flask import g, jsonify
 
 from connectors import registry
+from connectors.url_guard import BlockedDestinationError
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
@@ -136,7 +137,19 @@ def test_connection(connector_name, validated):
     credentials = credential_vault.get_all_credentials(connector_name, warehouse_id)
 
     connector = cls(config=credentials)
-    result = connector.test_connection()
+    try:
+        result = connector.test_connection()
+    except BlockedDestinationError as exc:
+        # Admin configured a base_url pointing at an internal or private
+        # address. Surface as 400, not 500, so the admin UI shows a
+        # friendly error instead of a generic failure.
+        return jsonify({
+            "connector": connector_name,
+            "warehouse_id": warehouse_id,
+            "connected": False,
+            "error": "blocked_destination",
+            "message": str(exc),
+        }), 400
 
     return jsonify({
         "connector": connector_name,
