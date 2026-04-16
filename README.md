@@ -6,6 +6,8 @@
   ![Version](https://img.shields.io/badge/version-1.1.0-8e2716)
   ![Tests](https://img.shields.io/badge/tests-307%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
+  
+  **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
 
   <img src="docs/assets/sentry-preview.png" alt="Sentry WMS Screenshots" width="100%">
 </div>
