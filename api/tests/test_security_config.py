@@ -111,6 +111,50 @@ class TestV003_AdminDockerfileProduction:
 
 
 # ---------------------------------------------------------------------------
+# V-004 -- Redis broker must require a password
+# ---------------------------------------------------------------------------
+
+
+class TestV004_RedisRequirePass:
+    def test_compose_requires_password(self):
+        compose = _read("docker-compose.yml")
+        assert "--requirepass" in compose, "redis must start with --requirepass"
+        assert "${REDIS_PASSWORD:?" in compose, "REDIS_PASSWORD must be required"
+
+    def test_compose_broker_url_has_auth(self):
+        compose = _read("docker-compose.yml")
+        # The URL form redis://:<pass>@redis:6379/0 must be used; bare
+        # redis://redis:6379/0 leaves the broker unauthenticated.
+        assert "redis://:${REDIS_PASSWORD" in compose
+        assert "CELERY_BROKER_URL: redis://redis:6379" not in compose
+        assert "CELERY_RESULT_BACKEND: redis://redis:6379" not in compose
+
+    def test_compose_healthcheck_uses_auth(self):
+        compose = _read("docker-compose.yml")
+        # The ping healthcheck must pass -a so it actually authenticates;
+        # otherwise Redis could reject pings but the healthcheck would
+        # still pass on the unauthenticated error response.
+        assert "redis-cli -a" in compose
+
+    def test_prod_compose_requires_password(self):
+        prod = _read("docker-compose.prod.yml")
+        assert "--requirepass" in prod
+        assert "redis://:${REDIS_PASSWORD" in prod
+
+    def test_env_example_documents_redis_password(self):
+        example = _read(".env.example")
+        assert "REDIS_PASSWORD=" in example
+
+    def test_redis_port_not_exposed_to_host(self):
+        # Defense in depth: even authenticated Redis should not be
+        # reachable from the host network.
+        compose = _read("docker-compose.yml")
+        # There should be no "6379:" line under the redis service block.
+        redis_block = compose[compose.find("  redis:"):compose.find("  celery-worker:")]
+        assert "6379:" not in redis_block
+
+
+# ---------------------------------------------------------------------------
 # V-005 -- No key material in application logs
 # ---------------------------------------------------------------------------
 
