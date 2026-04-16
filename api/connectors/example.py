@@ -146,8 +146,8 @@ class ExampleConnector(BaseConnector):
         return ["sync_orders", "sync_items", "sync_inventory", "push_fulfillment"]
 
 
-# NOTE: This example connector is NOT registered by default.
-# To register it for testing purposes, uncomment the lines below:
-#
-# from connectors import registry
-# registry.register("example", ExampleConnector)
+# Auto-register the example connector so the admin panel has something
+# to show out of the box. Real connectors (netsuite, shopify, etc.) would
+# follow the same pattern.
+from connectors import registry as _registry
+_registry.register("example", ExampleConnector)

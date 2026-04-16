@@ -32,3 +32,6 @@ celery_app.conf.update(
 
 # Auto-discover task modules in the jobs package
 celery_app.autodiscover_tasks(["jobs"], related_name="sync_tasks")
+
+# Import connector modules so they auto-register in worker processes
+import connectors.example  # noqa: E402, F401

@@ -74,6 +74,9 @@ def create_app():
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(warehouses_bp, url_prefix="/api/warehouses")
 
+    # Import connector modules so they auto-register with the registry
+    import connectors.example  # noqa: F401
+
     @app.route("/api/health")
     def health():
         return {"status": "ok", "service": "sentry-wms"}
