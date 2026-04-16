@@ -1,3 +1,10 @@
+function sanitizeCsvValue(val) {
+  if (typeof val !== 'string') return val ?? '';
+  const escaped = `"${val.replace(/"/g, '""')}"`;
+  if (/^[=+\-@\t\r]/.test(val)) return `"'${val.replace(/"/g, '""')}"`;
+  return escaped;
+}
+
 export default function DataTable({
   columns,
   data,
@@ -15,7 +22,7 @@ export default function DataTable({
     const rows = data.map((row) =>
       columns.map((c) => {
         const val = c.render ? c.render(row) : row[c.key];
-        return typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : val ?? '';
+        return sanitizeCsvValue(val);
       })
     );
     const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');

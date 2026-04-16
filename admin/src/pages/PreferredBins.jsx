@@ -73,10 +73,17 @@ export default function PreferredBins() {
     if (res?.ok) load();
   }
 
+  function sanitize(val) {
+    if (typeof val !== 'string') return val ?? '';
+    const escaped = `"${val.replace(/"/g, '""')}"`;
+    if (/^[=+\-@\t\r]/.test(val)) return `"'${val.replace(/"/g, '""')}"`;
+    return escaped;
+  }
+
   function exportCSV() {
     const header = 'SKU,Item Name,Bin Code,Zone,Priority,Last Updated';
     const csvRows = rows.map((r) =>
-      `"${r.sku}","${r.item_name}","${r.bin_code}","${r.zone_name || ''}",${r.priority},"${r.updated_at || ''}"`
+      `${sanitize(r.sku)},${sanitize(r.item_name)},${sanitize(r.bin_code)},${sanitize(r.zone_name || '')},${r.priority},${sanitize(r.updated_at || '')}`
     );
     const blob = new Blob([header + '\n' + csvRows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
