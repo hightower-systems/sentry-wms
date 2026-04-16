@@ -52,6 +52,35 @@ All endpoints that accept a JSON body validate the request against a pydantic sc
 | `loc` | array | Path to the field that failed validation. Top-level fields are `["field_name"]`. Nested fields include the index or key, e.g. `["items", 0, "quantity"]` |
 | `msg` | string | Human-readable error message suitable for display to the user |
 
+**Example - sending an invalid request:**
+
+```bash
+curl -s -X POST http://localhost:5000/api/receiving/receive \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"po_id": -1}'
+```
+
+**Response (400):**
+
+```json
+{
+  "error": "validation_error",
+  "details": [
+    {
+      "type": "greater_than",
+      "loc": ["po_id"],
+      "msg": "Input should be greater than 0"
+    },
+    {
+      "type": "missing",
+      "loc": ["items"],
+      "msg": "Field required"
+    }
+  ]
+}
+```
+
 **How to handle in client code:**
 
 - Check `response.error === "validation_error"` to distinguish from standard errors
