@@ -159,6 +159,35 @@ class TestV004_RedisRequirePass:
 # ---------------------------------------------------------------------------
 
 
+class TestV069_NoSeedAdminHash:
+    def test_seed_sql_has_no_bcrypt_hash(self):
+        # The specific published hash must be gone from every SQL file.
+        for sql_path in (REPO_ROOT / "db").glob("*.sql"):
+            body = sql_path.read_text()
+            assert "$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK" not in body, (
+                f"{sql_path.name} still contains the known bcrypt hash of 'admin'"
+            )
+            # No generic bcrypt hash literal (prefix $2a$/$2b$/$2y$) should
+            # appear in the public SQL. Hashes belong to runtime scripts only.
+            for prefix in ("$2a$", "$2b$", "$2y$"):
+                assert prefix not in body, (
+                    f"{sql_path.name} contains a bcrypt hash literal ({prefix})"
+                )
+
+    def test_seed_sql_uses_placeholder(self):
+        seed = _read("db/seed-apartment-lab.sql")
+        assert "SEED_SCRIPT_WILL_REPLACE_THIS" in seed, (
+            "seed-apartment-lab.sql must insert the placeholder the setup script overwrites"
+        )
+
+    def test_seed_script_rewrites_admin_password(self):
+        # seed.sh is responsible for replacing the placeholder with a real
+        # bcrypt hash at setup time. Verify the rewrite step is present.
+        script = _read("db/seed.sh")
+        assert "UPDATE users SET password_hash" in script
+        assert "crypt(" in script
+
+
 class TestV005_NoKeyMaterialInLogs:
     def test_credential_vault_does_not_log_key(self):
         vault = _read("api/services/credential_vault.py")

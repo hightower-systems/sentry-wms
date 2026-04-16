@@ -107,9 +107,14 @@ INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES
 -- ============================================================
 -- USERS
 -- ============================================================
--- Password hash is bcrypt of 'admin'
+-- Admin user is created with an unusable placeholder password_hash. The
+-- seed.sh wrapper MUST run immediately after this file and overwrite the
+-- hash with a random password (logged to stdout for the operator) before
+-- the API is reachable. Running this SQL directly (bypassing seed.sh)
+-- leaves the admin account unable to authenticate, which is the safe
+-- default. See V-069 in the Phase 6 security audit.
 INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions)
-VALUES ('admin', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK', 'Admin User', 'ADMIN', 1, '{}');
+VALUES ('admin', 'SEED_SCRIPT_WILL_REPLACE_THIS', 'Admin User', 'ADMIN', 1, '{}');
 
 -- ============================================================
 -- APP SETTINGS

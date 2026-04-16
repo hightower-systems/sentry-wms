@@ -64,6 +64,16 @@ def _seed_database():
     cur.execute("TRUNCATE " + ", ".join(ALL_TABLES) + " RESTART IDENTITY CASCADE")
     with open(SEED_PATH) as f:
         cur.execute(f.read())
+    # The seed SQL inserts the admin user with a placeholder password_hash
+    # (see V-069). In production, seed.sh overwrites it with a random
+    # password. Tests need a deterministic password, so we install a
+    # bcrypt hash of "admin" here. Keep this logic test-only.
+    import bcrypt as _bcrypt
+    _pw_hash = _bcrypt.hashpw(b"admin", _bcrypt.gensalt()).decode("utf-8")
+    cur.execute(
+        "UPDATE users SET password_hash = %s WHERE username = 'admin'",
+        (_pw_hash,),
+    )
     cur.close()
     conn.close()
 
