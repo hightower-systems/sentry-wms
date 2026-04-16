@@ -2,6 +2,13 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.1.1] - 2026-04-15
+
+### Security
+- **CSV formula injection on export (M9)** - cell values starting with `=`, `+`, `-`, `@`, `\t`, `\r` are now prefixed with a single quote in CSV exports (DataTable and PreferredBins)
+- **DATABASE_URL hardcoded fallback removed (M7)** - app raises RuntimeError on startup if DATABASE_URL is not set, same pattern as JWT_SECRET
+- **Login attempt count hidden** - failed login response no longer reveals remaining attempts before lockout
+
 ## [v1.1.0] - 2026-04-14
 
 ### Security - Backlog Audit (12 fixes)
