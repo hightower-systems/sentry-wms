@@ -30,9 +30,9 @@ def sync_orders(self, connector_name: str, warehouse_id: int):
         from connectors import registry
         connector_cls = registry.get(connector_name)
 
-        # 2. Load credentials from vault (Phase 3 -- stub for now)
-        # TODO: credentials = vault.get_credentials(connector_name, warehouse_id)
-        config = {}
+        # 2. Load credentials from vault
+        from services.credential_vault import get_all_credentials_standalone
+        config = get_all_credentials_standalone(connector_name, warehouse_id)
 
         # 3. Instantiate connector
         connector = connector_cls(config=config)

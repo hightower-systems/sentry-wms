@@ -469,3 +469,18 @@ CREATE INDEX ix_inventory_adjustments_warehouse ON inventory_adjustments(warehou
 
 -- Audit
 CREATE INDEX ix_audit_log_warehouse ON audit_log(warehouse_id);
+
+-- ============================================================
+-- CONNECTOR CREDENTIALS (Encrypted ERP/commerce API secrets)
+-- ============================================================
+
+CREATE TABLE connector_credentials (
+    id SERIAL PRIMARY KEY,
+    connector_name VARCHAR(64) NOT NULL,
+    warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
+    credential_key VARCHAR(128) NOT NULL,
+    encrypted_value TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(connector_name, warehouse_id, credential_key)
+);

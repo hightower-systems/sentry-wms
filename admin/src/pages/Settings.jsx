@@ -24,6 +24,17 @@ export default function Settings() {
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [receivingBins, setReceivingBins] = useState([]);
 
+  // Connector state
+  const [connectors, setConnectors] = useState([]);
+  const [selectedConnector, setSelectedConnector] = useState(null);
+  const [credForm, setCredForm] = useState({});
+  const [credSaving, setCredSaving] = useState(false);
+  const [credMsg, setCredMsg] = useState('');
+  const [credError, setCredError] = useState('');
+  const [storedKeys, setStoredKeys] = useState([]);
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+
   const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
 
   // Warn on browser navigation away with unsaved changes
@@ -86,7 +97,85 @@ export default function Settings() {
         }
       }).catch(() => {});
     });
+
+    // Load registered connectors
+    api.get('/admin/connectors').then(async (res) => {
+      if (res?.ok) {
+        const data = await res.json();
+        setConnectors(data.connectors || []);
+      }
+    }).catch(() => {});
   }, [warehouseId]);
+
+  function selectConnector(conn) {
+    setSelectedConnector(conn);
+    setCredForm({});
+    setCredMsg('');
+    setCredError('');
+    setTestResult(null);
+    // Load stored credential keys
+    if (warehouseId) {
+      api.get(`/admin/connectors/${conn.name}/credentials?warehouse_id=${warehouseId}`).then(async (res) => {
+        if (res?.ok) {
+          const data = await res.json();
+          setStoredKeys(data.credentials || []);
+        }
+      }).catch(() => setStoredKeys([]));
+    }
+  }
+
+  async function saveCredentials() {
+    if (!selectedConnector || !warehouseId) return;
+    setCredSaving(true);
+    setCredMsg('');
+    setCredError('');
+    try {
+      const res = await api.post(`/admin/connectors/${selectedConnector.name}/credentials`, {
+        warehouse_id: warehouseId,
+        credentials: credForm,
+      });
+      if (res?.ok) {
+        setCredMsg('Credentials saved');
+        setCredForm({});
+        selectConnector(selectedConnector);
+      } else {
+        const data = await res.json();
+        setCredError(data.error || 'Failed to save');
+      }
+    } catch { setCredError('Connection error'); }
+    setCredSaving(false);
+  }
+
+  async function testConnectorConnection() {
+    if (!selectedConnector || !warehouseId) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await api.post(`/admin/connectors/${selectedConnector.name}/test`, {
+        warehouse_id: warehouseId,
+      });
+      if (res?.ok) {
+        const data = await res.json();
+        setTestResult(data);
+      } else {
+        const data = await res.json();
+        setTestResult({ connected: false, message: data.error || 'Test failed' });
+      }
+    } catch { setTestResult({ connected: false, message: 'Connection error' }); }
+    setTesting(false);
+  }
+
+  async function deleteConnectorCredentials() {
+    if (!selectedConnector || !warehouseId) return;
+    if (!confirm('Delete all credentials for this connector?')) return;
+    try {
+      const res = await api.delete(`/admin/connectors/${selectedConnector.name}/credentials`);
+      if (res?.ok) {
+        setCredMsg('Credentials deleted');
+        setStoredKeys([]);
+      }
+    } catch { setCredError('Failed to delete'); }
+  }
 
   function updateDraft(key, value) {
     setDraftSettings((prev) => ({ ...prev, [key]: value }));
@@ -302,12 +391,85 @@ export default function Settings() {
         {settingsError && <span style={{ fontSize: 12, color: 'var(--danger)' }}>{settingsError}</span>}
       </div>
 
-      {/* Connector config placeholder */}
+      {/* ERP Connectors */}
       <div className="settings-section">
         <h3>ERP Connectors</h3>
-        <div className="placeholder-section">
-          ERP connector settings coming in a future release.
-        </div>
+        {connectors.length === 0 ? (
+          <p style={{ color: '#666', fontSize: 14 }}>No connectors registered. Connectors will appear here once installed.</p>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+            {connectors.map((c) => (
+              <button
+                key={c.name}
+                className={`btn ${selectedConnector?.name === c.name ? 'btn-primary' : ''}`}
+                onClick={() => selectConnector(c)}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedConnector && (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, background: 'var(--card-bg)' }}>
+            <h4 style={{ marginTop: 0 }}>{selectedConnector.name}</h4>
+            <p style={{ fontSize: 12, color: '#666' }}>
+              Capabilities: {selectedConnector.capabilities.join(', ')}
+            </p>
+
+            {/* Stored credentials */}
+            {storedKeys.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <strong style={{ fontSize: 13 }}>Stored credentials:</strong>
+                <div style={{ marginTop: 4 }}>
+                  {storedKeys.map((k) => (
+                    <div key={k.key} style={{ fontSize: 13, fontFamily: 'monospace' }}>
+                      {k.key}: {k.value}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Credential form */}
+            <div style={{ marginBottom: 12 }}>
+              {Object.entries(selectedConnector.config_schema).map(([key, schema]) => (
+                <div key={key} className="form-group" style={{ marginBottom: 8 }}>
+                  <label style={{ fontSize: 13 }}>
+                    {schema.label || key} {schema.required && <span style={{ color: 'var(--danger)' }}>*</span>}
+                  </label>
+                  <input
+                    className="form-input"
+                    type="password"
+                    placeholder={schema.description || key}
+                    value={credForm[key] || ''}
+                    onChange={(e) => setCredForm({ ...credForm, [key]: e.target.value })}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" onClick={saveCredentials} disabled={credSaving || Object.keys(credForm).length === 0}>
+                {credSaving ? 'Saving...' : 'Save Credentials'}
+              </button>
+              <button className="btn" onClick={testConnectorConnection} disabled={testing}>
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+              {storedKeys.length > 0 && (
+                <button className="btn btn-danger" onClick={deleteConnectorCredentials}>Delete Credentials</button>
+              )}
+            </div>
+
+            {credMsg && <p style={{ color: 'var(--success)', fontSize: 13, marginTop: 8 }}>{credMsg}</p>}
+            {credError && <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>{credError}</p>}
+            {testResult && (
+              <p style={{ color: testResult.connected ? 'var(--success)' : 'var(--danger)', fontSize: 13, marginTop: 8 }}>
+                {testResult.connected ? 'Connected' : 'Failed'}: {testResult.message}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* About */}

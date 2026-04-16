@@ -8,6 +8,7 @@ python-dotenv==1.0.1
 gunicorn==23.0.0
 celery[redis]==5.4.0
 redis==5.2.1
+cryptography==44.0.3
 pydantic==2.11.3
 pytest==8.3.4
 pytest-cov==6.0.0
