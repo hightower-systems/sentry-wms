@@ -16,9 +16,10 @@ def create_app():
 
     # Config
     app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB request body limit
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-        "DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry"
-    )
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL environment variable is required")
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 
     jwt_secret = os.getenv("JWT_SECRET")
     if not jwt_secret:
