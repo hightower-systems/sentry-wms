@@ -1,0 +1,58 @@
+site_name: Sentry WMS
+site_description: Open-source warehouse management system for e-commerce
+site_url: https://hightower-systems.github.io/sentry-wms
+repo_url: https://github.com/hightower-systems/sentry-wms
+repo_name: hightower-systems/sentry-wms
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Instrument Sans
+    code: JetBrains Mono
+  logo: assets/logo.png
+  favicon: assets/logo.png
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - API Reference: api-reference.md
+  - Deployment: deployment.md
+  - Admin Panel: admin-panel.md
+  - Test Lab: test-lab.md
+  - Contributing: contributing.md
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
