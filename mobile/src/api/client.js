@@ -102,7 +102,11 @@ async function request(method, path, body) {
   }
 
   if (!response.ok) {
-    const error = new Error(data?.error || `HTTP ${response.status}`);
+    let message = data?.error || `HTTP ${response.status}`;
+    if (data?.error === 'validation_error' && Array.isArray(data?.details) && data.details.length > 0) {
+      message = data.details[0].msg || message;
+    }
+    const error = new Error(message);
     error.response = { status: response.status, data };
     throw error;
   }

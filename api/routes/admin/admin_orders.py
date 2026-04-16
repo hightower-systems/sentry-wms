@@ -13,6 +13,9 @@ from constants import (
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
+from schemas.purchase_orders import CreatePurchaseOrderRequest, UpdatePurchaseOrderRequest
+from schemas.sales_orders import CreateSalesOrderRequest, UpdateSalesOrderRequest
+from utils.validation import validate_body
 
 
 # ── Purchase Orders ───────────────────────────────────────────────────────────
@@ -108,20 +111,17 @@ def get_purchase_order(po_id):
 @admin_bp.route("/purchase-orders", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(CreatePurchaseOrderRequest)
 @with_db
-def create_purchase_order():
-    data = request.get_json()
-    if not data or not data.get("po_number") or not data.get("warehouse_id") or not data.get("lines"):
-        return jsonify({"error": "po_number, warehouse_id, and lines are required"}), 400
+def create_purchase_order(validated):
+    data = validated.model_dump()
 
     dup = g.db.execute(text("SELECT 1 FROM purchase_orders WHERE po_number = :pn"), {"pn": data["po_number"]}).fetchone()
     if dup:
         return jsonify({"error": f"Duplicate po_number: {data['po_number']}"}), 400
 
-    # Validate items and quantities
+    # Validate items exist in DB
     for line in data["lines"]:
-        if not line.get("quantity_ordered") or line["quantity_ordered"] <= 0:
-            return jsonify({"error": "quantity_ordered must be greater than 0 for all lines"}), 400
         item = g.db.execute(text("SELECT 1 FROM items WHERE item_id = :iid"), {"iid": line["item_id"]}).fetchone()
         if not item:
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
@@ -145,7 +145,8 @@ def create_purchase_order():
         g.db.execute(
             text("INSERT INTO purchase_order_lines (po_id, item_id, quantity_ordered, unit_cost, line_number) VALUES (:pid, :iid, :qty, :cost, :ln)"),
             {"pid": po_id, "iid": line["item_id"], "qty": line["quantity_ordered"],
-             "cost": line.get("unit_cost"), "ln": line.get("line_number", 1)},
+             "cost": float(line["unit_cost"]) if line.get("unit_cost") is not None else None,
+             "ln": line.get("line_number") or 1},
         )
 
     g.db.commit()
@@ -160,11 +161,10 @@ def create_purchase_order():
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdatePurchaseOrderRequest)
 @with_db
-def update_purchase_order(po_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
+def update_purchase_order(po_id, validated):
+    data = validated.model_dump(exclude_unset=True)
 
     po = g.db.execute(text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"), {"pid": po_id}).fetchone()
     if not po:
@@ -312,19 +312,17 @@ def get_sales_order(so_id):
 @admin_bp.route("/sales-orders", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(CreateSalesOrderRequest)
 @with_db
-def create_sales_order():
-    data = request.get_json()
-    if not data or not data.get("so_number") or not data.get("warehouse_id") or not data.get("lines"):
-        return jsonify({"error": "so_number, warehouse_id, and lines are required"}), 400
+def create_sales_order(validated):
+    data = validated.model_dump()
 
     dup = g.db.execute(text("SELECT 1 FROM sales_orders WHERE so_number = :sn"), {"sn": data["so_number"]}).fetchone()
     if dup:
         return jsonify({"error": f"Duplicate so_number: {data['so_number']}"}), 400
 
+    # Validate items exist in DB
     for line in data["lines"]:
-        if not line.get("quantity_ordered") or line["quantity_ordered"] <= 0:
-            return jsonify({"error": "quantity_ordered must be greater than 0 for all lines"}), 400
         item = g.db.execute(text("SELECT 1 FROM items WHERE item_id = :iid"), {"iid": line["item_id"]}).fetchone()
         if not item:
             return jsonify({"error": f"Item {line['item_id']} not found"}), 400
@@ -350,7 +348,7 @@ def create_sales_order():
     for line in data["lines"]:
         g.db.execute(
             text("INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES (:sid, :iid, :qty, :ln)"),
-            {"sid": so_id, "iid": line["item_id"], "qty": line["quantity_ordered"], "ln": line.get("line_number", 1)},
+            {"sid": so_id, "iid": line["item_id"], "qty": line["quantity_ordered"], "ln": line.get("line_number") or 1},
         )
 
     g.db.commit()
@@ -365,11 +363,10 @@ def create_sales_order():
 @admin_bp.route("/sales-orders/<int:so_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdateSalesOrderRequest)
 @with_db
-def update_sales_order(so_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
+def update_sales_order(so_id, validated):
+    data = validated.model_dump(exclude_unset=True)
 
     so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
     if not so:

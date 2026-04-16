@@ -9,7 +9,9 @@ from sqlalchemy import text
 
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
+from schemas.auth import ChangePasswordRequest, LoginRequest
 from services.auth_service import authenticate_user, generate_token, validate_password
+from utils.validation import validate_body
 
 ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
 
@@ -71,13 +73,10 @@ def _reset_attempts(db, key):
 
 
 @auth_bp.route("/login", methods=["POST"])
+@validate_body(LoginRequest)
 @with_db
-def login():
-    data = request.get_json()
-    if not data or not data.get("username") or not data.get("password"):
-        return jsonify({"error": "Username and password are required"}), 400
-
-    username = data["username"].lower().strip()
+def login(validated):
+    username = validated.username.lower().strip()
     client_ip = request.remote_addr or "unknown"
     user_key = f"user:{username}"
     ip_key = f"ip:{client_ip}"
@@ -92,7 +91,7 @@ def login():
                 "error": f"Account locked. Try again in {minutes}m {seconds}s",
             }), 429
 
-    user = authenticate_user(g.db, data["username"], data["password"])
+    user = authenticate_user(g.db, validated.username, validated.password)
 
     if not user:
         # Record failure against both username and IP
@@ -177,15 +176,12 @@ def refresh():
 
 @auth_bp.route("/change-password", methods=["POST"])
 @require_auth
+@validate_body(ChangePasswordRequest)
 @with_db
-def change_password():
+def change_password(validated):
     import bcrypt
 
-    data = request.get_json()
-    if not data or not data.get("current_password") or not data.get("new_password"):
-        return jsonify({"error": "current_password and new_password are required"}), 400
-
-    pw_error = validate_password(data["new_password"])
+    pw_error = validate_password(validated.new_password)
     if pw_error:
         return jsonify({"error": pw_error}), 400
 
@@ -195,10 +191,10 @@ def change_password():
         {"uid": user_id},
     ).fetchone()
 
-    if not row or not bcrypt.checkpw(data["current_password"].encode("utf-8"), row.password_hash.encode("utf-8")):
+    if not row or not bcrypt.checkpw(validated.current_password.encode("utf-8"), row.password_hash.encode("utf-8")):
         return jsonify({"error": "Current password is incorrect"}), 403
 
-    new_hash = bcrypt.hashpw(data["new_password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    new_hash = bcrypt.hashpw(validated.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     g.db.execute(
         text("UPDATE users SET password_hash = :pw, password_changed_at = NOW() WHERE user_id = :uid"),
         {"pw": new_hash, "uid": user_id},

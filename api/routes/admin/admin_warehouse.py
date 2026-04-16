@@ -9,8 +9,12 @@ from constants import ACTION_TRANSFER
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import VALID_BIN_TYPES, VALID_ZONE_TYPES, admin_bp
+from schemas.bins import CreateBinRequest, UpdateBinRequest
+from schemas.warehouses import CreateWarehouseRequest, InterWarehouseTransferRequest, UpdateWarehouseRequest
+from schemas.zones import CreateZoneRequest, UpdateZoneRequest
 from services.audit_service import write_audit_log
 from services.inventory_service import add_inventory
+from utils.validation import validate_body
 
 
 # ── Warehouses ────────────────────────────────────────────────────────────────
@@ -68,11 +72,10 @@ def get_warehouse(warehouse_id):
 @admin_bp.route("/warehouses", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(CreateWarehouseRequest)
 @with_db
-def create_warehouse():
-    data = request.get_json()
-    if not data or not data.get("warehouse_code") or not data.get("warehouse_name"):
-        return jsonify({"error": "warehouse_code and warehouse_name are required"}), 400
+def create_warehouse(validated):
+    data = validated.model_dump()
 
     dup = g.db.execute(text("SELECT 1 FROM warehouses WHERE warehouse_code = :c"), {"c": data["warehouse_code"]}).fetchone()
     if dup:
@@ -93,11 +96,10 @@ def create_warehouse():
 @admin_bp.route("/warehouses/<int:warehouse_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdateWarehouseRequest)
 @with_db
-def update_warehouse(warehouse_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
+def update_warehouse(warehouse_id, validated):
+    data = validated.model_dump(exclude_unset=True)
 
     wh = g.db.execute(text("SELECT warehouse_id FROM warehouses WHERE warehouse_id = :wid"), {"wid": warehouse_id}).fetchone()
     if not wh:
@@ -203,14 +205,10 @@ def list_zones():
 @admin_bp.route("/zones", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(CreateZoneRequest)
 @with_db
-def create_zone():
-    data = request.get_json()
-    if not data or not data.get("warehouse_id") or not data.get("zone_code") or not data.get("zone_name") or not data.get("zone_type"):
-        return jsonify({"error": "warehouse_id, zone_code, zone_name, and zone_type are required"}), 400
-
-    if data["zone_type"] not in VALID_ZONE_TYPES:
-        return jsonify({"error": f"zone_type must be one of: {', '.join(VALID_ZONE_TYPES)}"}), 400
+def create_zone(validated):
+    data = validated.model_dump()
 
     dup = g.db.execute(
         text("SELECT 1 FROM zones WHERE warehouse_id = :wid AND zone_code = :code"),
@@ -232,14 +230,10 @@ def create_zone():
 @admin_bp.route("/zones/<int:zone_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdateZoneRequest)
 @with_db
-def update_zone(zone_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    if "zone_type" in data and data["zone_type"] not in VALID_ZONE_TYPES:
-        return jsonify({"error": f"zone_type must be one of: {', '.join(VALID_ZONE_TYPES)}"}), 400
+def update_zone(zone_id, validated):
+    data = validated.model_dump(exclude_unset=True)
 
     existing = g.db.execute(text("SELECT zone_id FROM zones WHERE zone_id = :zid"), {"zid": zone_id}).fetchone()
     if not existing:
@@ -363,14 +357,10 @@ def get_bin(bin_id):
 @admin_bp.route("/bins", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(CreateBinRequest)
 @with_db
-def create_bin():
-    data = request.get_json()
-    if not data or not data.get("zone_id") or not data.get("warehouse_id") or not data.get("bin_code") or not data.get("bin_barcode") or not data.get("bin_type"):
-        return jsonify({"error": "zone_id, warehouse_id, bin_code, bin_barcode, and bin_type are required"}), 400
-
-    if data["bin_type"] not in VALID_BIN_TYPES:
-        return jsonify({"error": f"bin_type must be one of: {', '.join(VALID_BIN_TYPES)}"}), 400
+def create_bin(validated):
+    data = validated.model_dump()
 
     dup = g.db.execute(
         text("SELECT 1 FROM bins WHERE warehouse_id = :wid AND bin_code = :code"),
@@ -406,14 +396,10 @@ def create_bin():
 @admin_bp.route("/bins/<int:bin_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdateBinRequest)
 @with_db
-def update_bin(bin_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    if "bin_type" in data and data["bin_type"] not in VALID_BIN_TYPES:
-        return jsonify({"error": f"bin_type must be one of: {', '.join(VALID_BIN_TYPES)}"}), 400
+def update_bin(bin_id, validated):
+    data = validated.model_dump(exclude_unset=True)
 
     existing = g.db.execute(text("SELECT bin_id FROM bins WHERE bin_id = :bid"), {"bid": bin_id}).fetchone()
     if not existing:
@@ -454,28 +440,17 @@ def update_bin(bin_id):
 @admin_bp.route("/inter-warehouse-transfer", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(InterWarehouseTransferRequest)
 @with_db
-def create_inter_warehouse_transfer():
+def create_inter_warehouse_transfer(validated):
     """Move inventory from one warehouse/bin to another warehouse/bin."""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    required = ("item_id", "from_bin_id", "from_warehouse_id", "to_bin_id", "to_warehouse_id", "quantity")
-    missing = [f for f in required if data.get(f) is None]
-    if missing:
-        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
-
-    item_id = data["item_id"]
-    from_bin_id = data["from_bin_id"]
-    from_warehouse_id = data["from_warehouse_id"]
-    to_bin_id = data["to_bin_id"]
-    to_warehouse_id = data["to_warehouse_id"]
-    quantity = int(data["quantity"])
-    reason = data.get("reason", "")
-
-    if quantity <= 0:
-        return jsonify({"error": "quantity must be greater than 0"}), 400
+    item_id = validated.item_id
+    from_bin_id = validated.from_bin_id
+    from_warehouse_id = validated.from_warehouse_id
+    to_bin_id = validated.to_bin_id
+    to_warehouse_id = validated.to_warehouse_id
+    quantity = validated.quantity
+    reason = validated.reason or ""
 
     # Validate item exists
     item = g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()

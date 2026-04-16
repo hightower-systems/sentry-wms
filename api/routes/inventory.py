@@ -11,24 +11,20 @@ from constants import (
 )
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.cycle_count import CreateCycleCountRequest, SubmitCycleCountRequest
 from services.audit_service import write_audit_log
+from utils.validation import validate_body
 
 inventory_bp = Blueprint("inventory", __name__)
 
 
 @inventory_bp.route("/cycle-count/create", methods=["POST"])
 @require_auth
+@validate_body(CreateCycleCountRequest)
 @with_db
-def create_cycle_count():
-    data = request.get_json()
-    if not data or not data.get("warehouse_id") or not data.get("bin_ids"):
-        return jsonify({"error": "warehouse_id and bin_ids are required"}), 400
-
-    warehouse_id = data["warehouse_id"]
-    bin_ids = data["bin_ids"]
-
-    if not bin_ids:
-        return jsonify({"error": "bin_ids must not be empty"}), 400
+def create_cycle_count(validated):
+    warehouse_id = validated.warehouse_id
+    bin_ids = validated.bin_ids
 
     # Validate warehouse
     wh = g.db.execute(
@@ -185,14 +181,11 @@ def get_cycle_count(count_id):
 
 @inventory_bp.route("/cycle-count/submit", methods=["POST"])
 @require_auth
+@validate_body(SubmitCycleCountRequest)
 @with_db
-def submit_cycle_count():
-    data = request.get_json()
-    if not data or not data.get("count_id") or not data.get("lines"):
-        return jsonify({"error": "count_id and lines are required"}), 400
-
-    count_id = data["count_id"]
-    submitted_lines = data["lines"]
+def submit_cycle_count(validated):
+    count_id = validated.count_id
+    submitted_lines = validated.lines
 
     # Validate cycle count
     cc = g.db.execute(
@@ -223,17 +216,14 @@ def submit_cycle_count():
     lines_matched = 0
 
     for sub in submitted_lines:
-        cl_id = sub.get("count_line_id")
-        counted_qty = sub.get("counted_quantity")
-        is_unexpected = sub.get("unexpected", False)
-
-        if counted_qty is None or counted_qty < 0:
-            return jsonify({"error": f"counted_quantity must be >= 0 for line {cl_id}"}), 400
+        cl_id = sub.count_line_id
+        counted_qty = sub.counted_quantity
+        is_unexpected = sub.unexpected
 
         if is_unexpected:
             # Unexpected item  -  not in original snapshot. Create a new count line.
-            item_id = sub.get("item_id")
-            sku = sub.get("sku", "UNKNOWN")
+            item_id = sub.item_id
+            sku = sub.sku or "UNKNOWN"
             if not item_id:
                 return jsonify({"error": "item_id required for unexpected lines"}), 400
 

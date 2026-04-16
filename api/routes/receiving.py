@@ -14,8 +14,10 @@ from constants import (
 )
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.receiving import CancelReceivingRequest, ReceiveItemsRequest
 from services.audit_service import write_audit_log
 from services.inventory_service import add_inventory
+from utils.validation import validate_body
 
 receiving_bp = Blueprint("receiving", __name__)
 
@@ -97,14 +99,11 @@ def lookup_po(barcode):
 
 @receiving_bp.route("/receive", methods=["POST"])
 @require_auth
+@validate_body(ReceiveItemsRequest)
 @with_db
-def receive_items():
-    data = request.get_json()
-    if not data or not data.get("po_id") or not data.get("items"):
-        return jsonify({"error": "po_id and items are required"}), 400
-
-    po_id = data["po_id"]
-    items = data["items"]
+def receive_items(validated):
+    po_id = validated.po_id
+    items = validated.items
 
     # Validate PO
     po = g.db.execute(
@@ -127,15 +126,12 @@ def receive_items():
     warnings = []
 
     for item_entry in items:
-        item_id = item_entry.get("item_id")
-        quantity = item_entry.get("quantity", 0)
-        bin_id = item_entry.get("bin_id")
-        lot_number = item_entry.get("lot_number")
-        serial_number = item_entry.get("serial_number")
-        notes = item_entry.get("notes")
-
-        if not item_id or quantity <= 0:
-            return jsonify({"error": "Each item must have item_id and quantity > 0"}), 400
+        item_id = item_entry.item_id
+        quantity = item_entry.quantity
+        bin_id = item_entry.bin_id
+        lot_number = item_entry.lot_number
+        serial_number = item_entry.serial_number
+        notes = item_entry.notes
 
         # Validate bin exists and belongs to PO warehouse
         bin_row = g.db.execute(
@@ -265,15 +261,15 @@ def receive_items():
 
 @receiving_bp.route("/cancel", methods=["POST"])
 @require_auth
+@validate_body(CancelReceivingRequest)
 @with_db
-def cancel_receiving():
+def cancel_receiving(validated):
     """Undo all receipts from a session by receipt_ids.
 
     Reverses inventory additions, PO line quantities, and deletes receipt records.
     Used when user cancels a receiving session.
     """
-    data = request.get_json()
-    receipt_ids = data.get("receipt_ids", [])
+    receipt_ids = validated.receipt_ids
     if not receipt_ids:
         return jsonify({"message": "Nothing to cancel"}), 200
 
@@ -282,8 +278,8 @@ def cancel_receiving():
 
     # Collect PO IDs before deleting receipts
     po_ids = set()
-    if data.get("po_id"):
-        po_ids.add(data["po_id"])
+    if validated.po_id:
+        po_ids.add(validated.po_id)
 
     for rid in receipt_ids:
         receipt = g.db.execute(
@@ -348,9 +344,9 @@ def cancel_receiving():
         g.db,
         action_type=ACTION_RECEIVE_CANCEL,
         entity_type="PO",
-        entity_id=data.get("po_id", 0),
+        entity_id=validated.po_id or 0,
         user_id=username,
-        warehouse_id=data.get("warehouse_id"),
+        warehouse_id=validated.warehouse_id,
         details={"reversed_receipts": reversed_count, "receipt_ids": receipt_ids},
     )
 

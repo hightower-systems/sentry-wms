@@ -199,7 +199,7 @@ class TestFulfill:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "tracking" in resp.get_json()["error"].lower()
+        assert resp.get_json()["error"] == "validation_error"
 
     def test_fulfill_missing_carrier(self, client, auth_headers):
         resp = client.post(
@@ -208,7 +208,7 @@ class TestFulfill:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "carrier" in resp.get_json()["error"].lower()
+        assert resp.get_json()["error"] == "validation_error"
 
     def test_fulfill_creates_audit_log(self, client, auth_headers):
         so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
@@ -258,8 +258,7 @@ class TestFulfill:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "carrier" in resp.get_json()["error"].lower()
-        assert "100" in resp.get_json()["error"]
+        assert resp.get_json()["error"] == "validation_error"
 
     def test_fulfill_tracking_too_long(self, client, auth_headers):
         resp = client.post(
@@ -268,8 +267,7 @@ class TestFulfill:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "tracking" in resp.get_json()["error"].lower()
-        assert "255" in resp.get_json()["error"]
+        assert resp.get_json()["error"] == "validation_error"
 
     def test_fulfill_whitespace_only_carrier(self, client, auth_headers):
         resp = client.post(
@@ -278,7 +276,7 @@ class TestFulfill:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "carrier" in resp.get_json()["error"].lower()
+        assert resp.get_json()["error"] == "validation_error"
 
     def test_fulfill_non_string_carrier(self, client, auth_headers):
         resp = client.post(
@@ -287,7 +285,7 @@ class TestFulfill:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "string" in resp.get_json()["error"].lower()
+        assert resp.get_json()["error"] == "validation_error"
 
 
 # ── Order Lookup Validation ──────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './auth.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -36,27 +37,27 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/inventory" element={<Inventory />} />
-        <Route path="/cycle-counts" element={<CycleCounts />} />
-        <Route path="/count-approvals" element={<CycleCountApproval />} />
-        <Route path="/receiving" element={<Receiving />} />
-        <Route path="/purchase-orders" element={<PurchaseOrders />} />
-        <Route path="/putaway" element={<PutAway />} />
-        <Route path="/picking" element={<Picking />} />
-        <Route path="/packing" element={<Packing />} />
-        <Route path="/shipping" element={<Shipping />} />
-        <Route path="/bins" element={<Bins />} />
-        <Route path="/zones" element={<Zones />} />
-        <Route path="/items" element={<Items />} />
-        <Route path="/warehouses" element={<Warehouses />} />
-        <Route path="/preferred-bins" element={<PreferredBins />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/audit-log" element={<AuditLog />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/imports" element={<Imports />} />
-        <Route path="/adjustments" element={<Adjustments />} />
-        <Route path="/inter-warehouse-transfers" element={<InterWarehouseTransfers />} />
+        <Route path="/" element={<ErrorBoundary fallbackMessage="Could not load dashboard."><Dashboard /></ErrorBoundary>} />
+        <Route path="/inventory" element={<ErrorBoundary fallbackMessage="Could not load inventory."><Inventory /></ErrorBoundary>} />
+        <Route path="/cycle-counts" element={<ErrorBoundary fallbackMessage="Could not load cycle counts."><CycleCounts /></ErrorBoundary>} />
+        <Route path="/count-approvals" element={<ErrorBoundary fallbackMessage="Could not load count approvals."><CycleCountApproval /></ErrorBoundary>} />
+        <Route path="/receiving" element={<ErrorBoundary fallbackMessage="Could not load receiving."><Receiving /></ErrorBoundary>} />
+        <Route path="/purchase-orders" element={<ErrorBoundary fallbackMessage="Could not load purchase orders."><PurchaseOrders /></ErrorBoundary>} />
+        <Route path="/putaway" element={<ErrorBoundary fallbackMessage="Could not load put-away."><PutAway /></ErrorBoundary>} />
+        <Route path="/picking" element={<ErrorBoundary fallbackMessage="Could not load picking."><Picking /></ErrorBoundary>} />
+        <Route path="/packing" element={<ErrorBoundary fallbackMessage="Could not load packing."><Packing /></ErrorBoundary>} />
+        <Route path="/shipping" element={<ErrorBoundary fallbackMessage="Could not load shipping."><Shipping /></ErrorBoundary>} />
+        <Route path="/bins" element={<ErrorBoundary fallbackMessage="Could not load bins."><Bins /></ErrorBoundary>} />
+        <Route path="/zones" element={<ErrorBoundary fallbackMessage="Could not load zones."><Zones /></ErrorBoundary>} />
+        <Route path="/items" element={<ErrorBoundary fallbackMessage="Could not load items."><Items /></ErrorBoundary>} />
+        <Route path="/warehouses" element={<ErrorBoundary fallbackMessage="Could not load warehouses."><Warehouses /></ErrorBoundary>} />
+        <Route path="/preferred-bins" element={<ErrorBoundary fallbackMessage="Could not load preferred bins."><PreferredBins /></ErrorBoundary>} />
+        <Route path="/users" element={<ErrorBoundary fallbackMessage="Could not load users."><Users /></ErrorBoundary>} />
+        <Route path="/audit-log" element={<ErrorBoundary fallbackMessage="Could not load audit log."><AuditLog /></ErrorBoundary>} />
+        <Route path="/settings" element={<ErrorBoundary fallbackMessage="Could not load settings."><Settings /></ErrorBoundary>} />
+        <Route path="/imports" element={<ErrorBoundary fallbackMessage="Could not load imports."><Imports /></ErrorBoundary>} />
+        <Route path="/adjustments" element={<ErrorBoundary fallbackMessage="Could not load adjustments."><Adjustments /></ErrorBoundary>} />
+        <Route path="/inter-warehouse-transfers" element={<ErrorBoundary fallbackMessage="Could not load transfers."><InterWarehouseTransfers /></ErrorBoundary>} />
       </Route>
     </Routes>
   );

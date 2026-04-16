@@ -8,33 +8,25 @@ from sqlalchemy import text
 from constants import ACTION_TRANSFER
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.bin_transfer import MoveRequest
 from services.audit_service import write_audit_log
 from services.inventory_service import move_inventory
+from utils.validation import validate_body
 
 transfers_bp = Blueprint("transfers", __name__)
 
 
 @transfers_bp.route("/move", methods=["POST"])
 @require_auth
+@validate_body(MoveRequest)
 @with_db
-def move():
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    item_id = data.get("item_id")
-    from_bin_id = data.get("from_bin_id")
-    to_bin_id = data.get("to_bin_id")
-    quantity = data.get("quantity", 0)
-    reason = data.get("reason")
-    lot_number = data.get("lot_number")
-
-    if not item_id or not from_bin_id or not to_bin_id:
-        return jsonify({"error": "item_id, from_bin_id, and to_bin_id are required"}), 400
-    if quantity <= 0:
-        return jsonify({"error": "Quantity must be greater than 0"}), 400
-    if from_bin_id == to_bin_id:
-        return jsonify({"error": "from_bin_id and to_bin_id must be different"}), 400
+def move(validated):
+    item_id = validated.item_id
+    from_bin_id = validated.from_bin_id
+    to_bin_id = validated.to_bin_id
+    quantity = validated.quantity
+    reason = validated.reason
+    lot_number = validated.lot_number
 
     # Validate item
     item = g.db.execute(

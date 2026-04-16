@@ -14,9 +14,13 @@ from constants import (
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import VALID_ROLES, admin_bp
+from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustmentsRequest
+from schemas.settings import UpdateSettingsRequest
+from schemas.users import CreateUserRequest, UpdateUserRequest
 from services.audit_service import write_audit_log
 from services.auth_service import validate_password
 from services.inventory_service import add_inventory
+from utils.validation import validate_body
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -54,14 +58,10 @@ def list_users():
 @admin_bp.route("/users", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(CreateUserRequest)
 @with_db
-def create_user():
-    data = request.get_json()
-    if not data or not data.get("username") or not data.get("password") or not data.get("full_name") or not data.get("role"):
-        return jsonify({"error": "username, password, full_name, and role are required"}), 400
-
-    if data["role"] not in VALID_ROLES:
-        return jsonify({"error": f"role must be one of: {', '.join(VALID_ROLES)}"}), 400
+def create_user(validated):
+    data = validated.model_dump()
 
     pw_error = validate_password(data["password"])
     if pw_error:
@@ -101,14 +101,10 @@ def create_user():
 @admin_bp.route("/users/<int:user_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdateUserRequest)
 @with_db
-def update_user(user_id):
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    if "role" in data and data["role"] not in VALID_ROLES:
-        return jsonify({"error": f"role must be one of: {', '.join(VALID_ROLES)}"}), 400
+def update_user(user_id, validated):
+    data = validated.model_dump(exclude_unset=True)
 
     existing = g.db.execute(
         text("SELECT user_id, role, is_active FROM users WHERE user_id = :uid"), {"uid": user_id}
@@ -472,11 +468,10 @@ def get_setting(setting_key):
 @admin_bp.route("/settings", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(UpdateSettingsRequest)
 @with_db
-def update_settings():
-    data = request.get_json()
-    if not data or not data.get("settings"):
-        return jsonify({"error": "settings object is required"}), 400
+def update_settings(validated):
+    data = {"settings": validated.settings}
 
     # Toggle protection: reject disabling packing when PACKED orders exist
     if data["settings"].get("require_packing_before_shipping") == "false":
@@ -614,12 +609,11 @@ def list_pending_adjustments():
 @admin_bp.route("/adjustments/review", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(ReviewAdjustmentsRequest)
 @with_db
-def review_adjustments():
+def review_adjustments(validated):
     """Approve or reject individual adjustments. Approved adjustments update inventory."""
-    data = request.get_json()
-    if not data or not data.get("decisions"):
-        return jsonify({"error": "decisions array is required"}), 400
+    data = {"decisions": [d.model_dump() for d in validated.decisions]}
 
     approved = 0
     rejected = 0
@@ -701,30 +695,16 @@ def review_adjustments():
 @admin_bp.route("/adjustments/direct", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@validate_body(DirectAdjustmentRequest)
 @with_db
-def direct_adjustment():
+def direct_adjustment(validated):
     """Create and auto-approve an inventory adjustment (ADD or REMOVE)."""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    required = ("item_id", "bin_id", "warehouse_id", "adjustment_type", "quantity", "reason")
-    missing = [f for f in required if not data.get(f)]
-    if missing:
-        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
-
-    adjustment_type = data["adjustment_type"].upper()
-    if adjustment_type not in ("ADD", "REMOVE"):
-        return jsonify({"error": "adjustment_type must be ADD or REMOVE"}), 400
-
-    item_id = data["item_id"]
-    bin_id = data["bin_id"]
-    warehouse_id = data["warehouse_id"]
-    quantity = int(data["quantity"])
-    reason = data["reason"]
-
-    if quantity <= 0:
-        return jsonify({"error": "quantity must be greater than 0"}), 400
+    item_id = validated.item_id
+    bin_id = validated.bin_id
+    warehouse_id = validated.warehouse_id
+    adjustment_type = validated.adjustment_type
+    quantity = validated.quantity
+    reason = validated.reason
 
     # Validate item exists
     item = g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()

@@ -138,7 +138,7 @@ class TestConfirmPutaway:
             headers=auth_headers,
         )
         assert resp.status_code == 400
-        assert "different" in resp.get_json()["error"]
+        assert resp.get_json()["error"] == "validation_error"
 
     def test_confirm_invalid_item(self, client, auth_headers):
         resp = client.post(

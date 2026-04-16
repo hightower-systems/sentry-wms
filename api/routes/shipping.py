@@ -7,8 +7,10 @@ from sqlalchemy import text
 
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.shipping import FulfillRequest
 from services.audit_service import write_audit_log
 from constants import SO_PICKED, SO_PACKED, SO_SHIPPED, ACTION_SHIP, TASK_PICKED, TASK_SHORT
+from utils.validation import validate_body
 
 shipping_bp = Blueprint("shipping", __name__)
 
@@ -107,35 +109,13 @@ def get_order(barcode):
 
 @shipping_bp.route("/fulfill", methods=["POST"])
 @require_auth
+@validate_body(FulfillRequest)
 @with_db
-def fulfill():
-    data = request.get_json()
-    if not data or not data.get("so_id"):
-        return jsonify({"error": "so_id is required"}), 400
-    if not data.get("tracking_number"):
-        return jsonify({"error": "tracking_number is required"}), 400
-    if not data.get("carrier"):
-        return jsonify({"error": "carrier is required"}), 400
-
-    if not isinstance(data["carrier"], str):
-        return jsonify({"error": "carrier must be a string"}), 400
-    if not isinstance(data["tracking_number"], str):
-        return jsonify({"error": "tracking_number must be a string"}), 400
-
-    carrier = data["carrier"].strip()
-    tracking_number = data["tracking_number"].strip()
-
-    if not carrier:
-        return jsonify({"error": "carrier is required"}), 400
-    if not tracking_number:
-        return jsonify({"error": "tracking_number is required"}), 400
-    if len(carrier) > 100:
-        return jsonify({"error": "carrier too long (max 100 characters)"}), 400
-    if len(tracking_number) > 255:
-        return jsonify({"error": "tracking_number too long (max 255 characters)"}), 400
-
-    so_id = data["so_id"]
-    ship_method = data.get("ship_method")
+def fulfill(validated):
+    so_id = validated.so_id
+    carrier = validated.carrier
+    tracking_number = validated.tracking_number
+    ship_method = validated.ship_method
     username = g.current_user["username"]
 
     # Validate SO

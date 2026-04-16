@@ -8,9 +8,11 @@ from sqlalchemy import bindparam, text
 
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.putaway import ConfirmPutawayRequest, UpdatePreferredRequest
 from services.audit_service import write_audit_log
 from services.inventory_service import move_inventory
 from constants import ACTION_PUTAWAY, BIN_STAGING
+from utils.validation import validate_body
 
 putaway_bp = Blueprint("putaway", __name__)
 
@@ -170,26 +172,14 @@ def suggest_bin(item_id):
 
 @putaway_bp.route("/confirm", methods=["POST"])
 @require_auth
+@validate_body(ConfirmPutawayRequest)
 @with_db
-def confirm_putaway():
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    item_id = data.get("item_id")
-    from_bin_id = data.get("from_bin_id")
-    to_bin_id = data.get("to_bin_id")
-    quantity = data.get("quantity", 0)
-    lot_number = data.get("lot_number")
-
-    if not item_id or not from_bin_id or not to_bin_id:
-        return jsonify({"error": "item_id, from_bin_id, and to_bin_id are required"}), 400
-
-    if quantity <= 0:
-        return jsonify({"error": "Quantity must be greater than 0"}), 400
-
-    if from_bin_id == to_bin_id:
-        return jsonify({"error": "from_bin_id and to_bin_id must be different"}), 400
+def confirm_putaway(validated):
+    item_id = validated.item_id
+    from_bin_id = validated.from_bin_id
+    to_bin_id = validated.to_bin_id
+    quantity = validated.quantity
+    lot_number = validated.lot_number
 
     item = g.db.execute(
         text("SELECT item_id, sku FROM items WHERE item_id = :item_id"),
@@ -280,19 +270,13 @@ def confirm_putaway():
 
 @putaway_bp.route("/update-preferred", methods=["POST"])
 @require_auth
+@validate_body(UpdatePreferredRequest)
 @with_db
-def update_preferred():
+def update_preferred(validated):
     """Create or update a preferred bin for an item."""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
-
-    item_id = data.get("item_id")
-    bin_id = data.get("bin_id")
-    set_as_primary = data.get("set_as_primary", True)
-
-    if not item_id or not bin_id:
-        return jsonify({"error": "item_id and bin_id are required"}), 400
+    item_id = validated.item_id
+    bin_id = validated.bin_id
+    set_as_primary = validated.set_as_primary
 
     item = g.db.execute(
         text("SELECT item_id, sku FROM items WHERE item_id = :item_id"),

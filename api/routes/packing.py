@@ -7,8 +7,10 @@ from sqlalchemy import text
 
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.pack_verification import CompletePackingRequest, VerifyPackItemRequest
 from services.audit_service import write_audit_log
 from constants import SO_PICKED, SO_PACKED, ACTION_PACK
+from utils.validation import validate_body
 
 packing_bp = Blueprint("packing", __name__)
 
@@ -102,18 +104,12 @@ def get_order(barcode):
 
 @packing_bp.route("/verify", methods=["POST"])
 @require_auth
+@validate_body(VerifyPackItemRequest)
 @with_db
-def verify_item():
-    data = request.get_json()
-    if not data or not data.get("so_id") or not data.get("scanned_barcode"):
-        return jsonify({"error": "so_id and scanned_barcode are required"}), 400
-
-    so_id = data["so_id"]
-    scanned_barcode = data["scanned_barcode"]
-    quantity = data.get("quantity", 1)
-
-    if not isinstance(quantity, int) or quantity <= 0:
-        return jsonify({"error": "quantity must be a positive integer"}), 400
+def verify_item(validated):
+    so_id = validated.so_id
+    scanned_barcode = validated.scanned_barcode
+    quantity = validated.quantity
 
     # Validate SO
     so = g.db.execute(
@@ -211,13 +207,10 @@ def verify_item():
 
 @packing_bp.route("/complete", methods=["POST"])
 @require_auth
+@validate_body(CompletePackingRequest)
 @with_db
-def complete_packing():
-    data = request.get_json()
-    if not data or not data.get("so_id"):
-        return jsonify({"error": "so_id is required"}), 400
-
-    so_id = data["so_id"]
+def complete_packing(validated):
+    so_id = validated.so_id
     so = g.db.execute(
         text("SELECT so_id, so_number, status, warehouse_id FROM sales_orders WHERE so_id = :so_id"),
         {"so_id": so_id},

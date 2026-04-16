@@ -12,6 +12,15 @@ from constants import (
 )
 from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
+from schemas.pick_walks import (
+    CancelBatchRequest,
+    CompleteBatchRequest,
+    ConfirmPickRequest,
+    CreateBatchRequest,
+    ShortPickRequest,
+    WaveCreateRequest,
+    WaveValidateRequest,
+)
 from services.picking_service import (
     AlreadyInBatchError,
     BarcodeError,
@@ -24,6 +33,7 @@ from services.picking_service import (
     wave_create,
     wave_validate,
 )
+from utils.validation import validate_body
 
 picking_bp = Blueprint("picking", __name__)
 
@@ -71,17 +81,14 @@ def active_batch():
 
 @picking_bp.route("/create-batch", methods=["POST"])
 @require_auth
+@validate_body(CreateBatchRequest)
 @with_db
-def create_batch():
-    data = request.get_json()
-    if not data or not data.get("so_identifiers") or not data.get("warehouse_id"):
-        return jsonify({"error": "so_identifiers and warehouse_id are required"}), 400
-
+def create_batch(validated):
     try:
         result = create_pick_batch(
             g.db,
-            so_identifiers=data["so_identifiers"],
-            warehouse_id=data["warehouse_id"],
+            so_identifiers=validated.so_identifiers,
+            warehouse_id=validated.warehouse_id,
             username=g.current_user["username"],
         )
         return jsonify(result)
@@ -92,13 +99,10 @@ def create_batch():
 
 @picking_bp.route("/wave-validate", methods=["POST"])
 @require_auth
+@validate_body(WaveValidateRequest)
 @with_db
-def validate_so():
-    data = request.get_json()
-    if not data or not data.get("so_barcode") or not data.get("warehouse_id"):
-        return jsonify({"error": "so_barcode and warehouse_id are required"}), 400
-
-    result = wave_validate(g.db, data["so_barcode"], data["warehouse_id"])
+def validate_so(validated):
+    result = wave_validate(g.db, validated.so_barcode, validated.warehouse_id)
     if result.get("valid"):
         return jsonify(result)
     # Determine status code based on error type
@@ -111,17 +115,14 @@ def validate_so():
 
 @picking_bp.route("/wave-create", methods=["POST"])
 @require_auth
+@validate_body(WaveCreateRequest)
 @with_db
-def create_wave():
-    data = request.get_json()
-    if not data or not data.get("so_ids") or not data.get("warehouse_id"):
-        return jsonify({"error": "so_ids and warehouse_id are required"}), 400
-
+def create_wave(validated):
     try:
         result = wave_create(
             g.db,
-            so_ids=data["so_ids"],
-            warehouse_id=data["warehouse_id"],
+            so_ids=validated.so_ids,
+            warehouse_id=validated.warehouse_id,
             username=g.current_user["username"],
         )
         return jsonify(result)
@@ -172,20 +173,13 @@ def next_task(batch_id):
 
 @picking_bp.route("/confirm", methods=["POST"])
 @require_auth
+@validate_body(ConfirmPickRequest)
 @with_db
-def confirm():
-    data = request.get_json()
-    if not data or not data.get("pick_task_id") or not data.get("scanned_barcode"):
-        return jsonify({"error": "pick_task_id and scanned_barcode are required"}), 400
-
-    quantity_picked = data.get("quantity_picked", 0)
-    if quantity_picked <= 0:
-        return jsonify({"error": "quantity_picked must be greater than 0"}), 400
-
+def confirm(validated):
     # Warehouse access check via pick task's batch
     task_wh = g.db.execute(
         text("SELECT pb.warehouse_id FROM pick_tasks pt JOIN pick_batches pb ON pb.batch_id = pt.batch_id WHERE pt.pick_task_id = :tid"),
-        {"tid": data["pick_task_id"]},
+        {"tid": validated.pick_task_id},
     ).fetchone()
     if task_wh:
         ok, denied = check_warehouse_access(task_wh.warehouse_id)
@@ -195,9 +189,9 @@ def confirm():
     try:
         result = confirm_pick(
             g.db,
-            pick_task_id=data["pick_task_id"],
-            scanned_barcode=data["scanned_barcode"],
-            quantity_picked=quantity_picked,
+            pick_task_id=validated.pick_task_id,
+            scanned_barcode=validated.scanned_barcode,
+            quantity_picked=validated.quantity_picked,
             username=g.current_user["username"],
         )
         return jsonify({"message": "Pick confirmed", **result})
@@ -211,19 +205,12 @@ def confirm():
 
 @picking_bp.route("/short", methods=["POST"])
 @require_auth
+@validate_body(ShortPickRequest)
 @with_db
-def short():
-    data = request.get_json()
-    if not data or not data.get("pick_task_id"):
-        return jsonify({"error": "pick_task_id is required"}), 400
-
-    quantity_available = data.get("quantity_available", 0)
-    if quantity_available < 0:
-        return jsonify({"error": "quantity_available cannot be negative"}), 400
-
+def short(validated):
     task_wh = g.db.execute(
         text("SELECT pb.warehouse_id FROM pick_tasks pt JOIN pick_batches pb ON pb.batch_id = pt.batch_id WHERE pt.pick_task_id = :tid"),
-        {"tid": data["pick_task_id"]},
+        {"tid": validated.pick_task_id},
     ).fetchone()
     if task_wh:
         ok, denied = check_warehouse_access(task_wh.warehouse_id)
@@ -233,8 +220,8 @@ def short():
     try:
         result = short_pick(
             g.db,
-            pick_task_id=data["pick_task_id"],
-            quantity_available=quantity_available,
+            pick_task_id=validated.pick_task_id,
+            quantity_available=validated.quantity_available,
             username=g.current_user["username"],
         )
         return jsonify({"message": "Short pick recorded", **result})
@@ -245,15 +232,12 @@ def short():
 
 @picking_bp.route("/complete-batch", methods=["POST"])
 @require_auth
+@validate_body(CompleteBatchRequest)
 @with_db
-def complete():
-    data = request.get_json()
-    if not data or not data.get("batch_id"):
-        return jsonify({"error": "batch_id is required"}), 400
-
+def complete(validated):
     batch_wh = g.db.execute(
         text("SELECT warehouse_id FROM pick_batches WHERE batch_id = :bid"),
-        {"bid": data["batch_id"]},
+        {"bid": validated.batch_id},
     ).fetchone()
     if batch_wh:
         ok, denied = check_warehouse_access(batch_wh.warehouse_id)
@@ -263,7 +247,7 @@ def complete():
     try:
         result = complete_batch(
             g.db,
-            batch_id=data["batch_id"],
+            batch_id=validated.batch_id,
             username=g.current_user["username"],
         )
         return jsonify({"message": "Batch completed", **result})
@@ -274,14 +258,11 @@ def complete():
 
 @picking_bp.route("/cancel-batch", methods=["POST"])
 @require_auth
+@validate_body(CancelBatchRequest)
 @with_db
-def cancel_batch():
+def cancel_batch(validated):
     """Cancel/delete a batch  -  releases allocated inventory and resets SO statuses."""
-    data = request.get_json()
-    if not data or not data.get("batch_id"):
-        return jsonify({"error": "batch_id is required"}), 400
-
-    batch_id = data["batch_id"]
+    batch_id = validated.batch_id
     batch = g.db.execute(
         text("SELECT batch_id, status, warehouse_id FROM pick_batches WHERE batch_id = :bid"),
         {"bid": batch_id},
