@@ -103,7 +103,7 @@ def login():
                 "error": "Too many failed attempts. Account locked for 15 minutes",
             }), 429
         return jsonify({
-            "error": f"Invalid username or password ({remaining} attempts remaining)",
+            "error": "Invalid username or password",
         }), 401
 
     # Successful login - reset both trackers

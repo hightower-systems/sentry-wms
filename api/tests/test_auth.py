@@ -125,10 +125,12 @@ class TestLoginLockout:
             resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
             assert resp.status_code == 401
 
-    def test_attempts_remaining_shown(self, client):
+    def test_attempts_remaining_not_shown(self, client):
         _reset_lockout()
         resp = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
-        assert "4 attempts remaining" in resp.get_json()["error"]
+        error_msg = resp.get_json()["error"]
+        assert "Invalid username or password" in error_msg
+        assert "remaining" not in error_msg
 
     def test_lockout_is_per_username(self, client):
         _reset_lockout()
