@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 
 os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry")
-os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("JWT_SECRET", "NEVER_USE_THIS_IN_PRODUCTION_32!")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

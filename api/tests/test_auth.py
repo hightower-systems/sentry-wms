@@ -2,7 +2,7 @@ import os
 import sys
 
 os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry")
-os.environ.setdefault("JWT_SECRET", "test-secret")
+os.environ.setdefault("JWT_SECRET", "NEVER_USE_THIS_IN_PRODUCTION_32!")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -73,7 +73,7 @@ class TestRefresh:
             "warehouse_id": 1,
             "exp": datetime.now(timezone.utc) - timedelta(hours=1),
         }
-        expired_token = jwt.encode(expired_payload, "test-secret", algorithm="HS256")
+        expired_token = jwt.encode(expired_payload, "NEVER_USE_THIS_IN_PRODUCTION_32!", algorithm="HS256")
         resp = client.post("/api/auth/refresh", headers={"Authorization": f"Bearer {expired_token}"})
         assert resp.status_code == 401
 
