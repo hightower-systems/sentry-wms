@@ -76,3 +76,29 @@ def test_existing_security_headers_still_set(client):
     assert resp.headers.get("X-Frame-Options") == "DENY"
     assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
     assert "Permissions-Policy" in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# V-051 -- HSTS header, gated on HTTPS
+# ---------------------------------------------------------------------------
+
+
+def test_hsts_absent_on_plain_http(client):
+    # Flask test client defaults to http://; HSTS must not be emitted so
+    # warehouse-LAN HTTP deployments are not forced into HTTPS-only mode.
+    resp = client.get("/api/health")
+    assert "Strict-Transport-Security" not in resp.headers
+
+
+def test_hsts_set_when_x_forwarded_proto_is_https(client):
+    resp = client.get("/api/health", headers={"X-Forwarded-Proto": "https"})
+    assert resp.headers.get("Strict-Transport-Security") == (
+        "max-age=31536000; includeSubDomains"
+    )
+
+
+def test_hsts_value_format(client):
+    resp = client.get("/api/health", headers={"X-Forwarded-Proto": "https"})
+    hsts = resp.headers.get("Strict-Transport-Security", "")
+    assert "max-age=" in hsts
+    assert "includeSubDomains" in hsts

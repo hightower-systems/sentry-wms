@@ -57,12 +57,22 @@ def create_app():
 
     @app.after_request
     def set_security_headers(response):
+        from flask import request as _request
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "0"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = csp_policy
+        # V-051: HSTS only when the request was HTTPS-terminated. Setting it
+        # on plain HTTP would force browsers to refuse future HTTP connections
+        # to this host, which breaks warehouse-LAN deployments that run over
+        # HTTP (see V-048 accepted risk).
+        is_https = _request.is_secure or _request.headers.get("X-Forwarded-Proto") == "https"
+        if is_https:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         return response
 
     # Prevent stack trace leakage in production
