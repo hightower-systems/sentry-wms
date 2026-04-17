@@ -15,6 +15,7 @@ from routes.admin import admin_bp
 from schemas.connectors import DeleteCredentialsRequest, SaveCredentialsRequest, TestConnectionRequest
 from services import credential_vault
 from services import sync_state_service
+from services.audit_service import write_audit_log
 from services.rate_limit import limiter
 from utils.validation import validate_body
 
@@ -219,6 +220,7 @@ def get_sync_status(connector_name):
 @admin_bp.route("/connectors/<connector_name>/sync-reset", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("10 per minute")
 @with_db
 def reset_sync_state(connector_name):
     """V-012: clear stuck 'running' rows for this connector+warehouse.
@@ -226,6 +228,10 @@ def reset_sync_state(connector_name):
     Body: {"warehouse_id": int, "sync_type": "orders" | ... | null}
     If sync_type is omitted or null, all sync types are reset.
     Returns the count of rows moved from 'running' to 'idle'.
+
+    V-101: writes an audit_log row on every call so an admin cannot mask a
+    persistent connector failure. Rate-limited to 10/min per key to prevent
+    rapid-fire use as a masking tool.
     """
     from flask import request
     data = request.get_json(silent=True) or {}
@@ -243,13 +249,33 @@ def reset_sync_state(connector_name):
     except KeyError:
         return jsonify({"error": f"Connector '{connector_name}' not found"}), 404
 
-    count = sync_state_service.reset_running(connector_name, int(warehouse_id), sync_type)
+    wid_int = int(warehouse_id)
+    count = sync_state_service.reset_running(connector_name, wid_int, sync_type)
+
+    # audit_log.entity_id is NOT NULL INT, so we record the warehouse the
+    # connector is scoped to as the entity identifier. The connector name is
+    # a string and lives in details; combined with entity_type='CONNECTOR'
+    # and action_type='SYNC_RESET' this is unambiguous.
+    write_audit_log(
+        g.db,
+        action_type="SYNC_RESET",
+        entity_type="CONNECTOR",
+        entity_id=wid_int,
+        user_id=g.current_user["username"],
+        warehouse_id=wid_int,
+        details={
+            "connector": connector_name,
+            "sync_type": sync_type,
+            "rows_reset": count,
+        },
+    )
+
     g.db.commit()
 
     return jsonify({
         "message": "Reset",
         "connector": connector_name,
-        "warehouse_id": int(warehouse_id),
+        "warehouse_id": wid_int,
         "sync_type": sync_type,
         "rows_reset": count,
     })

@@ -64,6 +64,19 @@ class TestPerRouteLimits:
             last_status = resp.status_code
         assert last_status == 429
 
+    def test_sync_reset_has_limit(self, client, auth_headers):
+        # V-101: sync-reset is rate-limited so it cannot be hammered to
+        # mask a persistent failure. 10/min budget; the 11th call is 429.
+        last_status = None
+        for _ in range(11):
+            resp = client.post(
+                "/api/admin/connectors/nonexistent_xyz/sync-reset",
+                json={"warehouse_id": 1},
+                headers=auth_headers,
+            )
+            last_status = resp.status_code
+        assert last_status == 429
+
 
 class TestRateLimitKeyIsolation:
     def test_authenticated_user_isolated_from_ip_bucket(self, client, auth_headers):

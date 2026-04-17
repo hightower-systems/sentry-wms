@@ -150,3 +150,64 @@ class TestAdminSyncResetEndpoint:
             headers=auth_headers,
         )
         assert resp.status_code == 400
+
+
+class TestV101SyncResetAudit:
+    """V-101: sync-reset must write an audit_log row so an admin cannot
+    silently mask a persistent connector failure."""
+
+    def test_reset_writes_audit_log_with_expected_fields(
+        self, client, auth_headers, _db_transaction
+    ):
+        db = _db_transaction
+        _seed_sync_row(db, "example", 1, "orders", "running",
+                       datetime.now(timezone.utc))
+        db.commit()
+
+        resp = client.post(
+            "/api/admin/connectors/example/sync-reset",
+            json={"warehouse_id": 1, "sync_type": "orders"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        row = db.execute(
+            text("""
+                SELECT action_type, entity_type, entity_id, user_id,
+                       warehouse_id, details
+                FROM audit_log
+                WHERE action_type = 'SYNC_RESET'
+                ORDER BY log_id DESC LIMIT 1
+            """)
+        ).fetchone()
+        assert row is not None
+        assert row.action_type == "SYNC_RESET"
+        assert row.entity_type == "CONNECTOR"
+        assert row.entity_id == 1
+        assert row.user_id == "admin"
+        assert row.warehouse_id == 1
+        assert row.details["connector"] == "example"
+        assert row.details["sync_type"] == "orders"
+        assert row.details["rows_reset"] >= 1
+
+    def test_reset_all_types_audit_has_null_sync_type(
+        self, client, auth_headers, _db_transaction
+    ):
+        db = _db_transaction
+        _seed_sync_row(db, "example", 1, "items", "running",
+                       datetime.now(timezone.utc))
+        db.commit()
+
+        resp = client.post(
+            "/api/admin/connectors/example/sync-reset",
+            json={"warehouse_id": 1},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        row = db.execute(
+            text("SELECT details FROM audit_log WHERE action_type='SYNC_RESET' "
+                 "ORDER BY log_id DESC LIMIT 1")
+        ).fetchone()
+        assert row is not None
+        assert row.details["sync_type"] is None
