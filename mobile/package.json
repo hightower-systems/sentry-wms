@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "build:apk": "npx eas-cli build --platform android --profile preview",
     "build:dev": "npx eas-cli build --platform android --profile development",
-    "build:prod": "npx eas-cli build --platform android --profile production"
+    "build:prod": "npx eas-cli build --platform android --profile production",
+    "test": "vitest run"
   },
   "dependencies": {
     "@0no-co/graphql.web": "^1.2.0",
@@ -33,7 +34,8 @@
   "devDependencies": {
     "@babel/core": "^7.25.0",
     "babel-preset-expo": "^55.0.16",
-    "eas-cli": "^18.5.0"
+    "eas-cli": "^18.5.0",
+    "vitest": "^4.1.4"
   },
   "private": true
 }
