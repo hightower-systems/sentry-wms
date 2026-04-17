@@ -18,10 +18,11 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 # Ensure nginx can write runtime state to /var/run and /var/cache/nginx
 # as the unprivileged user.
-RUN chown -R nginx:nginx /var/cache/nginx /var/run /usr/share/nginx/html \
+RUN chown -R nginx:nginx /var/cache/nginx /usr/share/nginx/html \
     && chmod -R 755 /usr/share/nginx/html \
-    && sed -i 's|pid /var/run/nginx.pid;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
-    && sed -i '/user  nginx;/d' /etc/nginx/nginx.conf
+    && sed -i -E -e 's|^pid[[:space:]]+/[^;]+;|pid /tmp/nginx.pid;|' \
+                 -e '/^user /d' \
+                 /etc/nginx/nginx.conf
 
 USER nginx
 EXPOSE 8080
