@@ -112,3 +112,40 @@ class TestLimiterConfig:
         for _ in range(20):
             resp = client.get("/api/health")
             assert resp.status_code == 200
+
+
+class TestResolveStorageUri:
+    """V-107: storage URI resolution must accept both plain and TLS Redis
+    URLs and rewrite the Celery DB 0 path to DB 1. A previous version
+    only matched ``redis://`` and silently dropped TLS configs back to
+    in-memory, multiplying the effective limit by worker count."""
+
+    def test_plain_redis_uri_rewrites_to_db_1(self, monkeypatch):
+        from services.rate_limit import _resolve_storage_uri
+
+        monkeypatch.setenv("CELERY_BROKER_URL", "redis://:pw@redis:6379/0")
+        assert _resolve_storage_uri() == "redis://:pw@redis:6379/1"
+
+    def test_tls_redis_uri_rewrites_to_db_1(self, monkeypatch):
+        from services.rate_limit import _resolve_storage_uri
+
+        monkeypatch.setenv("CELERY_BROKER_URL", "rediss://:pw@redis:6379/0")
+        assert _resolve_storage_uri() == "rediss://:pw@redis:6379/1"
+
+    def test_empty_broker_falls_back_to_memory(self, monkeypatch):
+        from services.rate_limit import _resolve_storage_uri
+
+        monkeypatch.setenv("CELERY_BROKER_URL", "")
+        assert _resolve_storage_uri() == "memory://"
+
+    def test_non_redis_scheme_falls_back_to_memory(self, monkeypatch):
+        from services.rate_limit import _resolve_storage_uri
+
+        monkeypatch.setenv("CELERY_BROKER_URL", "amqp://guest@rabbit:5672/")
+        assert _resolve_storage_uri() == "memory://"
+
+    def test_redis_uri_without_db_gets_db_1(self, monkeypatch):
+        from services.rate_limit import _resolve_storage_uri
+
+        monkeypatch.setenv("CELERY_BROKER_URL", "redis://:pw@redis:6379")
+        assert _resolve_storage_uri() == "redis://:pw@redis:6379/1"
