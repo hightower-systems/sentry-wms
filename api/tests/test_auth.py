@@ -132,22 +132,51 @@ class TestLoginLockout:
         assert "Invalid username or password" in error_msg
         assert "remaining" not in error_msg
 
-    def test_lockout_is_per_username(self, client):
+    def test_ip_lockout_accumulates_across_usernames(self, client):
+        """V-023: lockout is IP-scoped. 5 failures from one IP triggers
+        the IP's lockout regardless of which username was targeted
+        (attacker cannot spread the attempts across usernames to evade
+        throttling)."""
         _reset_lockout()
-        # 4 failures on "admin" (not locked yet)
-        for _ in range(4):
-            client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
-        # Different user from same IP is not locked by username key
-        resp = client.post("/api/auth/login", json={"username": "admin2", "password": "wrong"})
-        assert resp.status_code == 401  # wrong password, but not 429 (per-username)
+        # Mix usernames from a single IP -- total across them hits the
+        # IP-level threshold.
+        for uname in ["admin", "nobody", "x", "y", "z"]:
+            resp = client.post(
+                "/api/auth/login", json={"username": uname, "password": "wrong"}
+            )
+        assert resp.status_code == 429
+        # Correct admin password from the same IP is still blocked.
+        resp = client.post(
+            "/api/auth/login", json={"username": "admin", "password": "admin"}
+        )
+        assert resp.status_code == 429
 
-    def test_ip_lockout_blocks_all_usernames(self, client):
+    def test_ip_lockout_does_not_block_other_ips(self, client):
+        """V-023: attacker locking themselves out from IP A must NOT
+        prevent the real user from logging in at IP B. This is the
+        core V-023 fix: pre-fix the lockout was per-username, so an
+        attacker could DoS any account by knowing its name."""
         _reset_lockout()
-        # 5 failures from same IP locks the IP
+        # Attacker from IP A exhausts the lockout.
         for _ in range(5):
-            client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
-        # Different user from same IP is also locked (per-IP)
-        resp = client.post("/api/auth/login", json={"username": "admin2", "password": "wrong"})
+            client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "wrong"},
+                environ_base={"REMOTE_ADDR": "203.0.113.99"},
+            )
+        # Real admin at a different IP: correct password still works.
+        resp = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin"},
+            environ_base={"REMOTE_ADDR": "203.0.113.42"},
+        )
+        assert resp.status_code == 200
+        # Meanwhile the attacker IP is still locked.
+        resp = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin"},
+            environ_base={"REMOTE_ADDR": "203.0.113.99"},
+        )
         assert resp.status_code == 429
 
 

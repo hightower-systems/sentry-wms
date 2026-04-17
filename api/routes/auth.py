@@ -36,8 +36,19 @@ def _check_rate_limit(db, key):
     return False, 0
 
 
-def _record_failure(db, key):
-    """Record a failed login attempt. Returns (locked_out, attempts_remaining)."""
+def _record_failure(db, key, allow_lockout):
+    """Record a failed login attempt against ``key``.
+
+    V-023: only keys that are allowed to cause lockout (IP keys) ever
+    set ``locked_until``. User-scoped keys (``user:<name>``) still
+    increment the attempts counter for observability but never lock
+    the account -- an attacker from one IP cannot lock out the real
+    user, who may be logging in from a different IP.
+
+    Returns (locked_out, attempts_remaining). ``locked_out`` is only
+    True when ``allow_lockout`` is also True and the key has crossed
+    the threshold.
+    """
     lockout_at = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
     db.execute(
         text("""
@@ -52,7 +63,7 @@ def _record_failure(db, key):
         text("SELECT attempts FROM login_attempts WHERE key = :key"),
         {"key": key},
     ).fetchone()
-    if row and row.attempts >= MAX_LOGIN_ATTEMPTS:
+    if allow_lockout and row and row.attempts >= MAX_LOGIN_ATTEMPTS:
         db.execute(
             text("UPDATE login_attempts SET locked_until = :until, attempts = 0 WHERE key = :key"),
             {"key": key, "until": lockout_at},
@@ -60,7 +71,7 @@ def _record_failure(db, key):
         db.commit()
         return True, 0
     db.commit()
-    return False, MAX_LOGIN_ATTEMPTS - row.attempts
+    return False, MAX_LOGIN_ATTEMPTS - (row.attempts if row else 0)
 
 
 def _reset_attempts(db, key):
@@ -81,25 +92,28 @@ def login(validated):
     user_key = f"user:{username}"
     ip_key = f"ip:{client_ip}"
 
-    # Check lockouts (username and IP)
-    for key in (user_key, ip_key):
-        locked, remaining = _check_rate_limit(g.db, key)
-        if locked:
-            minutes = remaining // 60
-            seconds = remaining % 60
-            return jsonify({
-                "error": f"Account locked. Try again in {minutes}m {seconds}s",
-            }), 429
+    # V-023: only the IP is allowed to cause a lockout. An attacker from
+    # one IP spamming wrong passwords for a known username no longer
+    # locks the real user out of other IPs. User-scoped attempts are
+    # still counted for observability but do not set locked_until.
+    locked, remaining = _check_rate_limit(g.db, ip_key)
+    if locked:
+        minutes = remaining // 60
+        seconds = remaining % 60
+        return jsonify({
+            "error": f"Too many failed attempts from your IP. Try again in {minutes}m {seconds}s",
+        }), 429
 
     user = authenticate_user(g.db, validated.username, validated.password)
 
     if not user:
-        # Record failure against both username and IP
-        locked, remaining = _record_failure(g.db, user_key)
-        _record_failure(g.db, ip_key)
+        # Record failure against both keys, but only the IP key is
+        # allowed to trip the lockout threshold.
+        _record_failure(g.db, user_key, allow_lockout=False)
+        locked, _ = _record_failure(g.db, ip_key, allow_lockout=True)
         if locked:
             return jsonify({
-                "error": "Too many failed attempts. Account locked for 15 minutes",
+                "error": "Too many failed attempts from your IP. Locked for 15 minutes",
             }), 429
         return jsonify({
             "error": "Invalid username or password",
