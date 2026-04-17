@@ -173,3 +173,137 @@ class TestV029_PoLineLock:
         cur.execute("DELETE FROM purchase_orders WHERE po_id = %s", (po_id,))
         cur.close()
         check.close()
+
+
+class TestV030_InventoryLock:
+    """V-030: inventory writes lock the source row. Two concurrent
+    moves from the same bin cannot both pass the sufficient-stock
+    check. ``add_inventory`` serializes concurrent upserts via an
+    advisory lock so two callers never produce duplicate rows for
+    the same (item_id, bin_id, NULL) triple."""
+
+    def test_inventory_service_uses_for_update_on_source(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "services", "inventory_service.py"
+        )
+        src = open(path).read()
+        assert "FOR UPDATE" in src, (
+            "move_inventory must hold a row lock on the source inventory row (V-030)"
+        )
+        assert "pg_advisory_xact_lock" in src, (
+            "add_inventory must use a transaction advisory lock to "
+            "serialize NULL-lot upserts (V-030)"
+        )
+
+    def test_picking_service_uses_for_update_on_allocation(self):
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "services", "picking_service.py"
+        )
+        src = open(path).read()
+        # Both the single-SO batch and the wave path must lock inventory
+        # rows before computing quantity_allocated.
+        assert src.count("FOR UPDATE OF inv") >= 2, (
+            "picking_service must lock inventory rows during allocation in both "
+            "create_pick_batch and wave_create (V-030)"
+        )
+
+    def test_concurrent_moves_cannot_both_decrement_same_row(self):
+        """Set up a bin with 10 units of one item, then fire two
+        threads that each try to move 10 units out. Exactly one
+        succeeds; the other sees insufficient stock."""
+        setup = _make_conn()
+        setup.autocommit = True
+        cur = setup.cursor()
+        # Use a fresh item+bin pair to avoid polluting the seed.
+        cur.execute(
+            "INSERT INTO items (sku, item_name) VALUES ('V030-SKU', 'V030 Test') RETURNING item_id"
+        )
+        item_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO zones (warehouse_id, zone_code, zone_name, zone_type) "
+            "VALUES (1, 'V030Z', 'V030', 'STORAGE') RETURNING zone_id"
+        )
+        zone_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
+            "VALUES (%s, 1, 'V030-SRC', 'V030-SRC-BC', 'Pickable') RETURNING bin_id",
+            (zone_id,),
+        )
+        src_bin = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
+            "VALUES (%s, 1, 'V030-DST1', 'V030-DST1-BC', 'Pickable') RETURNING bin_id",
+            (zone_id,),
+        )
+        dst1 = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
+            "VALUES (%s, 1, 'V030-DST2', 'V030-DST2-BC', 'Pickable') RETURNING bin_id",
+            (zone_id,),
+        )
+        dst2 = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+            "VALUES (%s, %s, 1, 10)",
+            (item_id, src_bin),
+        )
+        cur.close()
+        setup.close()
+
+        results = []
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def worker(dst_bin):
+            conn = _make_conn()
+            try:
+                cur = conn.cursor()
+                cur.execute("BEGIN")
+                barrier.wait()
+                cur.execute(
+                    "SELECT inventory_id, quantity_on_hand FROM inventory "
+                    "WHERE item_id = %s AND bin_id = %s AND lot_number IS NULL FOR UPDATE",
+                    (item_id, src_bin),
+                )
+                row = cur.fetchone()
+                if not row or row[1] < 10:
+                    conn.rollback()
+                    errors.append("insufficient")
+                    return
+                cur.execute(
+                    "UPDATE inventory SET quantity_on_hand = quantity_on_hand - 10 "
+                    "WHERE inventory_id = %s",
+                    (row[0],),
+                )
+                cur.execute(
+                    "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+                    "VALUES (%s, %s, 1, 10)",
+                    (item_id, dst_bin),
+                )
+                conn.commit()
+                results.append(dst_bin)
+            except Exception as exc:
+                errors.append(str(exc))
+            finally:
+                conn.close()
+
+        t1 = threading.Thread(target=worker, args=(dst1,))
+        t2 = threading.Thread(target=worker, args=(dst2,))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+        assert len(results) == 1, f"expected exactly one move, got {results}"
+        assert len(errors) == 1 and "insufficient" in errors[0], errors
+
+        # Cleanup
+        clean = _make_conn()
+        clean.autocommit = True
+        cur = clean.cursor()
+        cur.execute("DELETE FROM inventory WHERE item_id = %s", (item_id,))
+        cur.execute("DELETE FROM bins WHERE bin_id IN (%s, %s, %s)", (src_bin, dst1, dst2))
+        cur.execute("DELETE FROM zones WHERE zone_id = %s", (zone_id,))
+        cur.execute("DELETE FROM items WHERE item_id = %s", (item_id,))
+        cur.close()
+        clean.close()

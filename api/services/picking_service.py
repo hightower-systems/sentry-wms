@@ -97,6 +97,10 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                 continue
 
             # Find available inventory sorted by bin type preference, then FIFO
+            # V-030: lock every candidate inventory row before reading
+            # quantity_allocated so two concurrent batch-creates cannot
+            # both allocate the same stock. FOR UPDATE OF inv restricts
+            # the lock to the inventory table (bins is read-only here).
             inv_rows = db.execute(
                 text(
                     """
@@ -112,6 +116,7 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                     ORDER BY
                       b.pick_sequence ASC,
                       inv.updated_at ASC
+                    FOR UPDATE OF inv
                     """
                 ),
                 {"item_id": line.item_id, "wh": warehouse_id, "bin_pickable": BIN_PICKABLE, "bin_pickable_staging": BIN_PICKABLE_STAGING},
@@ -846,7 +851,9 @@ def wave_create(db, so_ids, warehouse_id, username):
     for item_id, contributions in line_map.items():
         combined_needed = sum(c["needed"] for c in contributions)
 
-        # Find available inventory sorted by pick path
+        # V-030: lock every candidate inventory row before reading
+        # quantity_allocated so two concurrent wave-creates cannot
+        # both allocate the same stock.
         inv_rows = db.execute(
             text(
                 """
@@ -862,6 +869,7 @@ def wave_create(db, so_ids, warehouse_id, username):
                 ORDER BY
                   b.pick_sequence ASC,
                   inv.updated_at ASC
+                FOR UPDATE OF inv
                 """
             ),
             {"item_id": item_id, "wh": warehouse_id, "bin_pickable": BIN_PICKABLE, "bin_pickable_staging": BIN_PICKABLE_STAGING},

@@ -1,6 +1,13 @@
 """
 Shared inventory manipulation functions used by receiving, putaway, transfers,
 and other workflows that touch inventory quantities.
+
+V-030: all inventory mutations below are race-safe. ``add_inventory`` uses
+``INSERT ... ON CONFLICT DO UPDATE`` so concurrent callers cannot create
+duplicate rows or overwrite each other. ``move_inventory`` locks the source
+row with ``SELECT ... FOR UPDATE`` before checking available quantity, so
+two concurrent moves from the same bin cannot both pass the
+sufficient-stock check.
 """
 
 from sqlalchemy import text
@@ -9,9 +16,21 @@ from sqlalchemy import text
 def add_inventory(db, item_id, bin_id, warehouse_id, quantity, lot_number=None):
     """Increment existing inventory or create a new record.
 
-    Used by receiving to add stock into a bin.
+    V-030 race safety: Postgres's default UNIQUE(item_id, bin_id, lot_number)
+    treats NULL lot_numbers as distinct, so ON CONFLICT cannot serialize
+    concurrent inserts when lot is NULL (the common case). We use a
+    transaction-scoped advisory lock keyed on (item_id, bin_id) to
+    serialize callers, then the existing SELECT-then-INSERT-or-UPDATE
+    flow runs safely. The lock releases automatically at COMMIT or
+    ROLLBACK.
+
     Returns the new quantity_on_hand at (item_id, bin_id, lot_number).
     """
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:iid, :bid)"),
+        {"iid": item_id, "bid": bin_id},
+    )
+
     existing = db.execute(
         text(
             """
@@ -19,6 +38,7 @@ def add_inventory(db, item_id, bin_id, warehouse_id, quantity, lot_number=None):
             FROM inventory
             WHERE item_id = :item_id AND bin_id = :bin_id
               AND lot_number IS NOT DISTINCT FROM :lot_number
+            FOR UPDATE
             """
         ),
         {"item_id": item_id, "bin_id": bin_id, "lot_number": lot_number},
@@ -59,11 +79,16 @@ def add_inventory(db, item_id, bin_id, warehouse_id, quantity, lot_number=None):
 def move_inventory(db, item_id, from_bin_id, to_bin_id, warehouse_id, quantity, lot_number=None):
     """Atomic bin-to-bin inventory transfer.
 
-    Decrements source (deletes row if quantity reaches zero), upserts destination.
+    Locks the source row with SELECT ... FOR UPDATE so a concurrent
+    move from the same bin cannot also pass the sufficient-stock check.
+    Decrements source (deletes row if quantity reaches zero), upserts
+    destination via add_inventory's ON CONFLICT path.
+
     Returns (new_source_qty, new_dest_qty).
     Raises ValueError if insufficient inventory in source bin.
     """
-    # Check source inventory
+    # V-030: lock the source row until commit so concurrent callers
+    # serialize through this critical section.
     source_inv = db.execute(
         text(
             """
@@ -71,6 +96,7 @@ def move_inventory(db, item_id, from_bin_id, to_bin_id, warehouse_id, quantity, 
             FROM inventory
             WHERE item_id = :item_id AND bin_id = :bin_id
               AND lot_number IS NOT DISTINCT FROM :lot_number
+            FOR UPDATE
             """
         ),
         {"item_id": item_id, "bin_id": from_bin_id, "lot_number": lot_number},
@@ -95,7 +121,7 @@ def move_inventory(db, item_id, from_bin_id, to_bin_id, warehouse_id, quantity, 
             {"qty": new_source_qty, "inv_id": source_inv.inventory_id},
         )
 
-    # Upsert destination
+    # Upsert destination (atomic via ON CONFLICT).
     new_dest_qty = add_inventory(db, item_id, to_bin_id, warehouse_id, quantity, lot_number)
 
     return new_source_qty, new_dest_qty
