@@ -5,11 +5,23 @@ docker-compose.yml, .env.example, SECURITY.md, seed SQL) so that fixes to
 CRITICAL security findings cannot silently regress.
 
 Each test references the V-id from the Phase 6 audit report.
+
+Run these from a host checkout. The api container only mounts ``./api``
+(or nothing at all in production), so the repo-root files these tests
+inspect are not reachable from inside the container. The module-level
+``pytestmark`` below skips the whole file when that is the case.
 """
 
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+pytestmark = pytest.mark.skipif(
+    not (REPO_ROOT / "docker-compose.yml").exists(),
+    reason="repo-root config files not available (running inside container?)",
+)
 
 
 def _read(path: str) -> str:
