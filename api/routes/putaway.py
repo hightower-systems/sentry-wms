@@ -286,11 +286,18 @@ def update_preferred(validated):
         return jsonify({"error": "Item not found"}), 404
 
     bin_row = g.db.execute(
-        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bin_id"),
+        text("SELECT bin_id, bin_code, warehouse_id FROM bins WHERE bin_id = :bin_id"),
         {"bin_id": bin_id},
     ).fetchone()
     if not bin_row:
         return jsonify({"error": "Bin not found"}), 404
+
+    # V-028: a preferred bin write updates global state (items.default_bin_id
+    # and preferred_bins rows used by every warehouse). Refuse to point an
+    # item at a bin outside the caller's assigned warehouses.
+    ok, denied = check_warehouse_access(bin_row.warehouse_id)
+    if not ok:
+        return denied
 
     username = g.current_user["username"]
 

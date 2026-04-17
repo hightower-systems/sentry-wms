@@ -204,3 +204,55 @@ class TestItemSearchWarehouseScope:
         assert resp.status_code == 200
         skus = [r["sku"] for r in resp.get_json()]
         assert "W2-ADMIN-VIEW" in skus
+
+
+class TestPreferredBinCrossWarehouse:
+    """V-028: POST /api/putaway/update-preferred must refuse to point an
+    item at a bin outside the caller's assigned warehouses. Preferred
+    bins and items.default_bin_id are global state; writing to them
+    with a cross-warehouse bin corrupts other tenants' putaway
+    suggestions."""
+
+    def test_non_admin_cannot_target_bin_in_other_warehouse(
+        self, client, warehouse_2_setup
+    ):
+        headers = _login_as(client, "wh1_pref_user", [1])
+        resp = client.post(
+            "/api/putaway/update-preferred",
+            json={
+                "item_id": 1,
+                "bin_id": warehouse_2_setup["bin_id"],  # bin in warehouse 2
+                "set_as_primary": True,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 403
+        assert "Access denied" in resp.get_json()["error"]
+
+    def test_non_admin_can_target_bin_in_own_warehouse(self, client):
+        headers = _login_as(client, "wh1_pref_ok", [1])
+        resp = client.post(
+            "/api/putaway/update-preferred",
+            json={
+                "item_id": 1,
+                "bin_id": 3,  # a bin seeded in warehouse 1
+                "set_as_primary": True,
+            },
+            headers=headers,
+        )
+        # May succeed (200) or return a business-logic error, but must
+        # not be blocked by V-028's cross-warehouse refusal.
+        assert resp.status_code != 403
+
+    def test_admin_can_target_any_bin(self, client, auth_headers, warehouse_2_setup):
+        resp = client.post(
+            "/api/putaway/update-preferred",
+            json={
+                "item_id": 1,
+                "bin_id": warehouse_2_setup["bin_id"],
+                "set_as_primary": True,
+            },
+            headers=auth_headers,
+        )
+        # Admin is not scoped. The write succeeds.
+        assert resp.status_code == 200
