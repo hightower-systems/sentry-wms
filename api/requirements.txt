@@ -11,5 +11,6 @@ redis==5.2.1
 cryptography==44.0.3
 pydantic==2.11.3
 requests==2.32.3
+flask-limiter[redis]==3.8.0
 pytest==8.3.4
 pytest-cov==6.0.0

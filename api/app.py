@@ -36,6 +36,11 @@ def create_app():
     # Origins stay restricted (no wildcard), which is required for cookie auth.
     CORS(app, origins=resolved_origins, supports_credentials=True)
 
+    # V-041: rate limiting. Default 300/min per authenticated user (or per IP
+    # if unauthenticated); sensitive routes override via @limiter.limit(...).
+    from services.rate_limit import init_limiter
+    init_limiter(app)
+
     # Security response headers
     csp_policy = (
         "default-src 'self'; "

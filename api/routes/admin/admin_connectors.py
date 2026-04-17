@@ -15,6 +15,7 @@ from routes.admin import admin_bp
 from schemas.connectors import DeleteCredentialsRequest, SaveCredentialsRequest, TestConnectionRequest
 from services import credential_vault
 from services import sync_state_service
+from services.rate_limit import limiter
 from utils.validation import validate_body
 
 VALID_SYNC_TYPES = ("orders", "items", "inventory", "fulfillment")
@@ -59,6 +60,7 @@ def get_config_schema(connector_name):
 @admin_bp.route("/connectors/<connector_name>/credentials", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("10 per minute")
 @validate_body(SaveCredentialsRequest)
 @with_db
 def save_credentials(connector_name, validated):
@@ -124,6 +126,7 @@ def get_credentials(connector_name):
 @admin_bp.route("/connectors/<connector_name>/test", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("10 per minute")
 @validate_body(TestConnectionRequest)
 @with_db
 def test_connection(connector_name, validated):
@@ -255,6 +258,7 @@ def reset_sync_state(connector_name):
 @admin_bp.route("/connectors/<connector_name>/sync/<sync_type>", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("20 per minute")
 @with_db
 def trigger_sync(connector_name, sync_type):
     """Queue a manual sync for the specified connector+warehouse+type.
