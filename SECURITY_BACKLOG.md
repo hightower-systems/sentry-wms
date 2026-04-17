@@ -10,6 +10,35 @@ which individual fixes break them.
 
 ---
 
+## Accepted Risks
+
+Findings that were evaluated and intentionally not fixed. Each entry
+keeps the original audit severity (no downgrade), states the reason,
+and names the condition that would cause us to revisit. Listed here
+so the next audit and future maintainers can read the history without
+reconstructing it from chat logs.
+
+### V-048 -- Cleartext HTTP allowed in all build profiles
+
+Status: Accepted risk (v1.4)
+Severity: High (as flagged by audit)
+
+Sentry WMS is deployed on warehouse LANs where HTTPS certificates are
+impractical. Clone-and-run users and LAN-only production deployments both
+require cleartext HTTP. Profile-gated enforcement was attempted in v1.1 and
+reverted in v1.1.1 because it broke real deployments.
+
+Domain-scoped cleartext (Android `network_security_config.xml` restricting
+cleartext to RFC1918 ranges) is the most likely future mitigation if this
+needs to change.
+
+Revisit when:
+- A hosted/cloud deployment option ships (Sentry Cloud SaaS)
+- A user requests HTTPS-only enforcement
+- Public deployments outside LANs become a supported use case
+
+---
+
 ## Target v1.4 (Deferred High)
 
 ### V-045 -- JWT stored in admin panel localStorage
