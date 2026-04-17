@@ -213,6 +213,45 @@ def get_sync_status(connector_name):
     })
 
 
+@admin_bp.route("/connectors/<connector_name>/sync-reset", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def reset_sync_state(connector_name):
+    """V-012: clear stuck 'running' rows for this connector+warehouse.
+
+    Body: {"warehouse_id": int, "sync_type": "orders" | ... | null}
+    If sync_type is omitted or null, all sync types are reset.
+    Returns the count of rows moved from 'running' to 'idle'.
+    """
+    from flask import request
+    data = request.get_json(silent=True) or {}
+    warehouse_id = data.get("warehouse_id")
+    if not warehouse_id:
+        return jsonify({"error": "warehouse_id is required"}), 400
+    sync_type = data.get("sync_type")
+    if sync_type is not None and sync_type not in VALID_SYNC_TYPES:
+        return jsonify({
+            "error": f"Invalid sync_type '{sync_type}'. Must be one of: {', '.join(VALID_SYNC_TYPES)}",
+        }), 400
+
+    try:
+        registry.get(connector_name)
+    except KeyError:
+        return jsonify({"error": f"Connector '{connector_name}' not found"}), 404
+
+    count = sync_state_service.reset_running(connector_name, int(warehouse_id), sync_type)
+    g.db.commit()
+
+    return jsonify({
+        "message": "Reset",
+        "connector": connector_name,
+        "warehouse_id": int(warehouse_id),
+        "sync_type": sync_type,
+        "rows_reset": count,
+    })
+
+
 @admin_bp.route("/connectors/<connector_name>/sync/<sync_type>", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
@@ -239,15 +278,34 @@ def trigger_sync(connector_name, sync_type):
     except KeyError:
         return jsonify({"error": f"Connector '{connector_name}' not found"}), 404
 
-    # Check if already running before queuing - avoids a useless task that just raises Ignore
+    # Check if already running before queuing - avoids a useless task that just raises Ignore.
+    # V-012: a 'running' row whose running_since is stale (older than
+    # RUNNING_TIMEOUT) is treated as freeable so a crashed worker doesn't
+    # block manual triggers indefinitely.
     current = sync_state_service.get_sync_state(connector_name, warehouse_id, sync_type)
     if current and current.get("sync_status") == "running":
-        return jsonify({
-            "error": "Sync already running",
-            "connector": connector_name,
-            "warehouse_id": warehouse_id,
-            "sync_type": sync_type,
-        }), 409
+        from sqlalchemy import text as _text
+        row = g.db.execute(
+            _text(
+                "SELECT running_since FROM sync_state "
+                "WHERE connector_name = :n AND warehouse_id = :w AND sync_type = :t"
+            ),
+            {"n": connector_name, "w": warehouse_id, "t": sync_type},
+        ).fetchone()
+        from datetime import datetime, timezone
+        cutoff = datetime.now(timezone.utc) - sync_state_service.RUNNING_TIMEOUT
+        is_stale = (
+            row is not None
+            and row.running_since is not None
+            and row.running_since < cutoff
+        )
+        if not is_stale:
+            return jsonify({
+                "error": "Sync already running",
+                "connector": connector_name,
+                "warehouse_id": warehouse_id,
+                "sync_type": sync_type,
+            }), 409
 
     # Queue the task. Fulfillment manual triggers run a health check
     # (verifies connector is reachable) since actual pushes happen

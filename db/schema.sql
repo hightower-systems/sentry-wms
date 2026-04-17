@@ -572,6 +572,7 @@ CREATE TABLE sync_state (
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     sync_type VARCHAR(32) NOT NULL,              -- 'orders', 'items', 'inventory', 'fulfillment'
     sync_status VARCHAR(16) DEFAULT 'idle',      -- 'idle', 'running', 'error'
+    running_since TIMESTAMPTZ,                    -- V-012: stale 'running' recovery timestamp
     last_synced_at TIMESTAMPTZ,
     last_success_at TIMESTAMPTZ,
     last_error_at TIMESTAMPTZ,

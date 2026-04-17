@@ -10,7 +10,7 @@ is already 'running', calling set_running again raises DuplicateRunError
 so two celery workers can't process the same sync simultaneously.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from flask import g
@@ -22,6 +22,10 @@ VALID_SYNC_TYPES = ("orders", "items", "inventory", "fulfillment")
 
 # Consecutive errors before flipping status to 'error' (sticky)
 ERROR_THRESHOLD = 3
+
+# V-012: a 'running' row older than this is considered stale (worker
+# crashed or was killed mid-sync) and a new run is allowed to take over.
+RUNNING_TIMEOUT = timedelta(hours=1)
 
 
 class DuplicateRunError(Exception):
@@ -87,28 +91,39 @@ def get_all_sync_states(connector_name: str, warehouse_id: int) -> list[dict]:
 
 
 def _set_running_impl(session, connector_name: str, warehouse_id: int, sync_type: str) -> None:
-    """Shared implementation of set_running that works with any session."""
-    # Check current status - if already running, refuse
+    """Shared implementation of set_running that works with any session.
+
+    V-012: a row stuck in 'running' past RUNNING_TIMEOUT is considered
+    stale (crashed worker) and a new run takes over. Without the
+    timeout a single crash blocked all future syncs indefinitely.
+    """
     row = session.execute(
         text("""
-            SELECT sync_status FROM sync_state
+            SELECT sync_status, running_since FROM sync_state
             WHERE connector_name = :name AND warehouse_id = :wid AND sync_type = :type
         """),
         {"name": connector_name, "wid": warehouse_id, "type": sync_type},
     ).fetchone()
 
     if row and row.sync_status == "running":
-        raise DuplicateRunError(
-            f"Sync already running: {connector_name}/{warehouse_id}/{sync_type}"
-        )
+        cutoff = datetime.now(timezone.utc) - RUNNING_TIMEOUT
+        # If running_since is set and older than the cutoff, allow takeover.
+        # If running_since is NULL (pre-migration data) treat as fresh -- the
+        # backfill sets a value on deploy; new inserts set it below.
+        if row.running_since is None or row.running_since > cutoff:
+            raise DuplicateRunError(
+                f"Sync already running: {connector_name}/{warehouse_id}/{sync_type}"
+            )
 
-    # Upsert to running
     session.execute(
         text("""
-            INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status, updated_at)
-            VALUES (:name, :wid, :type, 'running', NOW())
+            INSERT INTO sync_state (connector_name, warehouse_id, sync_type,
+                                    sync_status, running_since, updated_at)
+            VALUES (:name, :wid, :type, 'running', NOW(), NOW())
             ON CONFLICT (connector_name, warehouse_id, sync_type)
-            DO UPDATE SET sync_status = 'running', updated_at = NOW()
+            DO UPDATE SET sync_status = 'running',
+                          running_since = NOW(),
+                          updated_at = NOW()
         """),
         {"name": connector_name, "wid": warehouse_id, "type": sync_type},
     )
@@ -131,10 +146,12 @@ def set_success(connector_name: str, warehouse_id: int, sync_type: str) -> None:
     g.db.execute(
         text("""
             INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                     last_synced_at, last_success_at, consecutive_errors, updated_at)
-            VALUES (:name, :wid, :type, 'idle', :now, :now, 0, :now)
+                                     running_since, last_synced_at, last_success_at,
+                                     consecutive_errors, updated_at)
+            VALUES (:name, :wid, :type, 'idle', NULL, :now, :now, 0, :now)
             ON CONFLICT (connector_name, warehouse_id, sync_type)
             DO UPDATE SET sync_status = 'idle',
+                          running_since = NULL,
                           last_synced_at = :now,
                           last_success_at = :now,
                           consecutive_errors = 0,
@@ -165,11 +182,12 @@ def set_error(connector_name: str, warehouse_id: int, sync_type: str, error_mess
     g.db.execute(
         text("""
             INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                     last_synced_at, last_error_at, last_error_message,
-                                     consecutive_errors, updated_at)
-            VALUES (:name, :wid, :type, :status, :now, :now, :msg, :errors, :now)
+                                     running_since, last_synced_at, last_error_at,
+                                     last_error_message, consecutive_errors, updated_at)
+            VALUES (:name, :wid, :type, :status, NULL, :now, :now, :msg, :errors, :now)
             ON CONFLICT (connector_name, warehouse_id, sync_type)
             DO UPDATE SET sync_status = :status,
+                          running_since = NULL,
                           last_synced_at = :now,
                           last_error_at = :now,
                           last_error_message = :msg,
@@ -181,6 +199,36 @@ def set_error(connector_name: str, warehouse_id: int, sync_type: str, error_mess
             "status": new_status, "now": now, "msg": error_message, "errors": new_errors,
         },
     )
+
+
+def reset_running(connector_name: str, warehouse_id: int, sync_type: Optional[str] = None) -> int:
+    """V-012: admin-triggered reset of stuck 'running' rows to 'idle'.
+
+    If sync_type is None, all sync types for the connector+warehouse are
+    reset. Returns the number of rows updated. Rows that are not currently
+    running are untouched.
+    """
+    if sync_type is None:
+        result = g.db.execute(
+            text("""
+                UPDATE sync_state
+                SET sync_status = 'idle', running_since = NULL, updated_at = NOW()
+                WHERE connector_name = :name AND warehouse_id = :wid
+                  AND sync_status = 'running'
+            """),
+            {"name": connector_name, "wid": warehouse_id},
+        )
+    else:
+        result = g.db.execute(
+            text("""
+                UPDATE sync_state
+                SET sync_status = 'idle', running_since = NULL, updated_at = NOW()
+                WHERE connector_name = :name AND warehouse_id = :wid
+                  AND sync_type = :type AND sync_status = 'running'
+            """),
+            {"name": connector_name, "wid": warehouse_id, "type": sync_type},
+        )
+    return result.rowcount
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +267,12 @@ def set_success_standalone(connector_name: str, warehouse_id: int, sync_type: st
         session.execute(
             text("""
                 INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                         last_synced_at, last_success_at, consecutive_errors, updated_at)
-                VALUES (:name, :wid, :type, 'idle', :now, :now, 0, :now)
+                                         running_since, last_synced_at, last_success_at,
+                                         consecutive_errors, updated_at)
+                VALUES (:name, :wid, :type, 'idle', NULL, :now, :now, 0, :now)
                 ON CONFLICT (connector_name, warehouse_id, sync_type)
                 DO UPDATE SET sync_status = 'idle',
+                              running_since = NULL,
                               last_synced_at = :now,
                               last_success_at = :now,
                               consecutive_errors = 0,
@@ -254,11 +304,12 @@ def set_error_standalone(connector_name: str, warehouse_id: int, sync_type: str,
         session.execute(
             text("""
                 INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                         last_synced_at, last_error_at, last_error_message,
-                                         consecutive_errors, updated_at)
-                VALUES (:name, :wid, :type, :status, :now, :now, :msg, :errors, :now)
+                                         running_since, last_synced_at, last_error_at,
+                                         last_error_message, consecutive_errors, updated_at)
+                VALUES (:name, :wid, :type, :status, NULL, :now, :now, :msg, :errors, :now)
                 ON CONFLICT (connector_name, warehouse_id, sync_type)
                 DO UPDATE SET sync_status = :status,
+                              running_since = NULL,
                               last_synced_at = :now,
                               last_error_at = :now,
                               last_error_message = :msg,
