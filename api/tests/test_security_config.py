@@ -12,6 +12,7 @@ inspect are not reachable from inside the container. The module-level
 ``pytestmark`` below skips the whole file when that is the case.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -161,8 +162,13 @@ class TestV003_AdminDockerfileProduction:
         assert "/index.html" in nginx_conf
 
     def test_compose_admin_listens_on_8080(self):
+        # V-040 rebound to 127.0.0.1:8080:8080 by default. A deployment that
+        # layers a reverse proxy may override via docker-compose.override.yml
+        # to re-open the binding. The test accepts either form.
         compose = _read("docker-compose.yml")
-        assert '"8080:8080"' in compose
+        assert re.search(r'"(127\.0\.0\.1:)?8080:8080"', compose), (
+            "compose must publish admin on port 8080"
+        )
 
     def test_compose_admin_no_bind_mount(self):
         # The prod compose must not bind-mount ./admin into the container;
