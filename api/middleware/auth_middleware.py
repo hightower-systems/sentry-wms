@@ -76,31 +76,49 @@ def require_auth(f):
 
         g.current_user = payload
 
-        # Warehouse authorization: non-admin users can only access assigned warehouses.
-        # V-033: the middleware now reads warehouse_id from path parameters too,
-        # not just body and query string. Routes that take warehouse_id in the
-        # URL (e.g. /pending/<int:warehouse_id>) no longer rely solely on
-        # check_warehouse_access being called by every handler; forget the
-        # explicit helper call and this decorator still blocks cross-warehouse
-        # access for non-admins.
+        # Warehouse authorization: non-admin users can only access assigned
+        # warehouses.
+        #
+        # V-033 added reading warehouse_id from URL path parameters. V-103
+        # hardens that against source-mismatch smuggling: the handler's
+        # function argument comes from view_args, so an attacker who sets
+        # warehouse_id in the body to an allowed value while targeting a
+        # different warehouse in the path would previously slip past the
+        # middleware (body took priority) and still hit the path value in
+        # the handler. The middleware now collects every source the caller
+        # supplied and rejects mismatches with 400 before the handler runs.
+        # If all sources agree, the common value is used for the allow-list
+        # check. If no source is present, no check runs (the route is
+        # warehouse-agnostic).
         if payload.get("role") != "ADMIN":
             allowed = payload.get("warehouse_ids") or []
-            req_wid = None
+
+            candidates: list[tuple[str, object]] = []
+            if request.view_args and request.view_args.get("warehouse_id") is not None:
+                candidates.append(("path", request.view_args["warehouse_id"]))
+            query_wid_raw = request.args.get("warehouse_id")
+            if query_wid_raw is not None:
+                candidates.append(("query", query_wid_raw))
             if request.is_json:
                 body = request.get_json(silent=True)
-                if body:
-                    req_wid = body.get("warehouse_id")
-            if req_wid is None:
-                req_wid = request.args.get("warehouse_id", type=int)
-            if req_wid is None and request.view_args:
-                req_wid = request.view_args.get("warehouse_id")
-            if req_wid is not None:
+                if body and body.get("warehouse_id") is not None:
+                    candidates.append(("body", body["warehouse_id"]))
+
+            req_wid_int: int | None = None
+            if candidates:
                 try:
-                    req_wid_int = int(req_wid)
+                    normalized = {src: int(v) for src, v in candidates}
                 except (TypeError, ValueError):
                     return jsonify({"error": "Invalid warehouse_id"}), 400
-                if req_wid_int not in allowed:
-                    return jsonify({"error": "Access denied for this warehouse"}), 403
+                if len(set(normalized.values())) > 1:
+                    return jsonify({
+                        "error": "warehouse_id mismatch across request",
+                        "sources": normalized,
+                    }), 400
+                req_wid_int = next(iter(normalized.values()))
+
+            if req_wid_int is not None and req_wid_int not in allowed:
+                return jsonify({"error": "Access denied for this warehouse"}), 403
 
         return f(*args, **kwargs)
 
