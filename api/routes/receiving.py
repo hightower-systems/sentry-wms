@@ -148,7 +148,12 @@ def receive_items(validated):
         if bin_row.warehouse_id != warehouse_id:
             return jsonify({"error": f"Bin {bin_id} does not belong to this PO's warehouse"}), 400
 
-        # Find matching PO line
+        # Find matching PO line. V-029: SELECT ... FOR UPDATE holds a
+        # row lock for the remainder of this transaction so two
+        # concurrent receives against the same line cannot both pass
+        # the remaining-quantity check. The second waits until the
+        # first commits (seeing updated quantity_received) or rolls
+        # back (seeing the original).
         po_line = g.db.execute(
             text(
                 """
@@ -156,6 +161,7 @@ def receive_items(validated):
                 FROM purchase_order_lines
                 WHERE po_id = :po_id AND item_id = :item_id
                 LIMIT 1
+                FOR UPDATE
                 """
             ),
             {"po_id": po_id, "item_id": item_id},
