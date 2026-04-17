@@ -113,6 +113,54 @@ class TestConnectionResult:
         assert r.connected is False
 
 
+class TestConnectionMessageSanitization:
+    """V-014: ConnectionResult.message must be length-capped and stripped
+    of non-printable bytes so a misbehaving upstream cannot smuggle huge
+    response bodies or control-character payloads back through the
+    admin UI."""
+
+    def test_truncates_long_message(self):
+        from connectors.base import CONNECTION_MESSAGE_MAX_LEN
+
+        raw = "A" * 10_000
+        r = ConnectionResult(connected=True, message=raw)
+        assert len(r.message) <= CONNECTION_MESSAGE_MAX_LEN
+        assert r.message.endswith("...")
+
+    def test_strips_control_characters(self):
+        # Null bytes, bell, escape, BEL, FF etc. must be removed.
+        raw = "ok\x00\x07\x1b[31mred\x1b[0m\x0cdone"
+        r = ConnectionResult(connected=True, message=raw)
+        assert "\x00" not in r.message
+        assert "\x07" not in r.message
+        assert "\x1b" not in r.message
+        assert "\x0c" not in r.message
+        # Visible content is preserved.
+        assert "ok" in r.message
+        assert "red" in r.message
+        assert "done" in r.message
+
+    def test_strips_non_ascii(self):
+        raw = "connected to Acm\u00e9 Corp  \u2620"
+        r = ConnectionResult(connected=True, message=raw)
+        # Non-ASCII dropped but ASCII preserved.
+        assert "\u00e9" not in r.message
+        assert "\u2620" not in r.message
+        assert "connected to" in r.message
+        assert "Corp" in r.message
+
+    def test_keeps_whitespace(self):
+        # Tab, LF, CR are legitimate in multi-line status messages.
+        raw = "line1\nline2\tindented\r\n"
+        r = ConnectionResult(connected=True, message=raw)
+        assert "\n" in r.message
+        assert "\t" in r.message
+
+    def test_message_field_is_capped_even_when_short(self):
+        r = ConnectionResult(connected=True, message="ok")
+        assert r.message == "ok"
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------

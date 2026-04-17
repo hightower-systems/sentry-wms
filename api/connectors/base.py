@@ -15,7 +15,32 @@ from datetime import datetime
 from typing import Optional
 
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Maximum length of the human-readable ``message`` field on a
+# ConnectionResult. Capping prevents a connector from returning a
+# multi-kilobyte HTTP response body (which could include credentials,
+# PII, or crafted content) back to the admin UI.
+CONNECTION_MESSAGE_MAX_LEN = 500
+
+# Characters permitted in a ConnectionResult message. Anything else is
+# stripped before the value reaches the admin UI. We allow the 95
+# printable-ASCII range plus tab/newline/CR so friendly multi-line
+# status text still renders; everything else (control chars,
+# non-ASCII, ANSI escapes, zero-width tricks) is dropped.
+_ALLOWED_MESSAGE_CHARS = frozenset(
+    chr(c) for c in range(0x20, 0x7F)
+) | {"\t", "\n", "\r"}
+
+
+def _sanitize_connection_message(value: str) -> str:
+    """Strip non-printable bytes and truncate to CONNECTION_MESSAGE_MAX_LEN."""
+    if value is None:
+        return ""
+    cleaned = "".join(ch for ch in str(value) if ch in _ALLOWED_MESSAGE_CHARS)
+    if len(cleaned) > CONNECTION_MESSAGE_MAX_LEN:
+        cleaned = cleaned[: CONNECTION_MESSAGE_MAX_LEN - 3] + "..."
+    return cleaned
 
 from connectors.rate_limiter import (
     MAX_RETRIES_PER_CALL,
@@ -65,10 +90,23 @@ class ConnectionResult(BaseModel):
 
     Returned by test_connection() so the admin panel can show
     whether credentials and endpoints are valid before enabling a connector.
+
+    The ``message`` field is intentionally short. Connector authors MUST
+    summarize the outcome (e.g. "Connected as Acme Corp") rather than
+    pasting raw HTTP response bodies. Anything longer than
+    CONNECTION_MESSAGE_MAX_LEN is truncated; control characters and
+    non-ASCII bytes are stripped before storage so a malicious or
+    misconfigured upstream cannot smuggle exfil payloads back through
+    the admin UI.
     """
 
     connected: bool = Field(..., description="True if the connection test succeeded")
     message: str = Field(..., description="Human-readable status message")
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def _clamp_message(cls, v):
+        return _sanitize_connection_message(v)
 
 
 # ---------------------------------------------------------------------------
