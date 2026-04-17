@@ -228,17 +228,49 @@ def search_items():
     if not q:
         return jsonify([])
 
-    rows = g.db.execute(
-        text(
-            """
-            SELECT item_id, sku, item_name, upc, category, weight_lbs
-            FROM items
-            WHERE sku ILIKE :q OR item_name ILIKE :q OR upc ILIKE :q
-            LIMIT 50
-            """
-        ),
-        {"q": f"%{q}%"},
-    ).fetchall()
+    # V-027: non-admin users only see items that have inventory or a
+    # preferred bin in one of their assigned warehouses. Without this
+    # scope, any authenticated picker could enumerate the full multi-
+    # tenant catalog by searching. Admins still see every item.
+    if g.current_user.get("role") == "ADMIN":
+        rows = g.db.execute(
+            text(
+                """
+                SELECT item_id, sku, item_name, upc, category, weight_lbs
+                FROM items
+                WHERE sku ILIKE :q OR item_name ILIKE :q OR upc ILIKE :q
+                LIMIT 50
+                """
+            ),
+            {"q": f"%{q}%"},
+        ).fetchall()
+    else:
+        allowed_wids = list(g.current_user.get("warehouse_ids") or [])
+        rows = g.db.execute(
+            text(
+                """
+                SELECT DISTINCT i.item_id, i.sku, i.item_name, i.upc,
+                                i.category, i.weight_lbs
+                FROM items i
+                WHERE (i.sku ILIKE :q OR i.item_name ILIKE :q OR i.upc ILIKE :q)
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM inventory inv
+                        WHERE inv.item_id = i.item_id
+                          AND inv.warehouse_id = ANY(:wids)
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM preferred_bins pb
+                        JOIN bins b ON b.bin_id = pb.bin_id
+                        WHERE pb.item_id = i.item_id
+                          AND b.warehouse_id = ANY(:wids)
+                    )
+                  )
+                LIMIT 50
+                """
+            ),
+            {"q": f"%{q}%", "wids": allowed_wids},
+        ).fetchall()
 
     results = [
         {

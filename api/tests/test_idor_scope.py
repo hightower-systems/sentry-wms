@@ -149,3 +149,58 @@ class TestLookupNoExistenceOracle:
             headers=headers,
         )
         assert resp.status_code == 404
+
+
+class TestItemSearchWarehouseScope:
+    """V-027: /api/lookup/item/search must only return items present in
+    the user's assigned warehouses (via inventory or preferred bin)."""
+
+    def _create_wh2_only_item(self, sku, wh_id, bin_id):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO items (sku, item_name) VALUES (%s, 'W2 Only Item') RETURNING item_id",
+            (sku,),
+        )
+        item_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+            "VALUES (%s, %s, %s, 10)",
+            (item_id, bin_id, wh_id),
+        )
+        cur.close()
+        return item_id, sku
+
+    def test_non_admin_does_not_see_item_from_other_warehouse(
+        self, client, warehouse_2_setup
+    ):
+        self._create_wh2_only_item(
+            "W2-SKU-UNIQUE", warehouse_2_setup["warehouse_id"], warehouse_2_setup["bin_id"]
+        )
+        headers = _login_as(client, "wh1_search_user", [1])
+        resp = client.get("/api/lookup/item/search?q=W2-SKU-UNIQUE", headers=headers)
+        assert resp.status_code == 200
+        assert resp.get_json() == []
+
+    def test_non_admin_sees_item_in_their_warehouse(
+        self, client, warehouse_2_setup
+    ):
+        # seed already has items in warehouse 1. Search for one of them.
+        headers = _login_as(client, "wh1_search_user2", [1])
+        resp = client.get("/api/lookup/item/search?q=TST-001", headers=headers)
+        assert resp.status_code == 200
+        skus = [r["sku"] for r in resp.get_json()]
+        assert "TST-001" in skus
+
+    def test_admin_sees_every_warehouse_item(
+        self, client, auth_headers, warehouse_2_setup
+    ):
+        self._create_wh2_only_item(
+            "W2-ADMIN-VIEW", warehouse_2_setup["warehouse_id"], warehouse_2_setup["bin_id"]
+        )
+        resp = client.get(
+            "/api/lookup/item/search?q=W2-ADMIN-VIEW", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        skus = [r["sku"] for r in resp.get_json()]
+        assert "W2-ADMIN-VIEW" in skus
