@@ -5,7 +5,7 @@ Packing endpoints: order lookup for packing, scan-to-verify, and pack completion
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth, check_warehouse_access
+from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.pack_verification import CompletePackingRequest, VerifyPackItemRequest
 from services.audit_service import write_audit_log
@@ -19,25 +19,25 @@ packing_bp = Blueprint("packing", __name__)
 @require_auth
 @with_db
 def get_order(barcode):
+    # V-026: filter warehouse in SELECT so an SO in another warehouse
+    # returns the same 404 as a missing barcode, not 403.
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so = g.db.execute(
         text(
-            """
+            f"""
             SELECT so_id, so_number, so_barcode, customer_name, status,
                    ship_method, ship_address, warehouse_id
             FROM sales_orders
-            WHERE so_barcode = :barcode OR so_number = :barcode
+            WHERE (so_barcode = :barcode OR so_number = :barcode)
+              {scope_clause}
             LIMIT 1
             """
         ),
-        {"barcode": barcode},
+        {"barcode": barcode, **scope_params},
     ).fetchone()
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-
-    ok, denied = check_warehouse_access(so.warehouse_id)
-    if not ok:
-        return denied
 
     if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
@@ -111,18 +111,20 @@ def verify_item(validated):
     scanned_barcode = validated.scanned_barcode
     quantity = validated.quantity
 
-    # Validate SO
+    # Validate SO with warehouse scope at SELECT time (V-026).
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so = g.db.execute(
-        text("SELECT so_id, status, warehouse_id FROM sales_orders WHERE so_id = :so_id"),
-        {"so_id": so_id},
+        text(
+            f"""
+            SELECT so_id, status, warehouse_id FROM sales_orders
+            WHERE so_id = :so_id {scope_clause}
+            """
+        ),
+        {"so_id": so_id, **scope_params},
     ).fetchone()
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-
-    ok, denied = check_warehouse_access(so.warehouse_id)
-    if not ok:
-        return denied
 
     if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400
@@ -211,17 +213,20 @@ def verify_item(validated):
 @with_db
 def complete_packing(validated):
     so_id = validated.so_id
+    # V-026: scoped SELECT.
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so = g.db.execute(
-        text("SELECT so_id, so_number, status, warehouse_id FROM sales_orders WHERE so_id = :so_id"),
-        {"so_id": so_id},
+        text(
+            f"""
+            SELECT so_id, so_number, status, warehouse_id FROM sales_orders
+            WHERE so_id = :so_id {scope_clause}
+            """
+        ),
+        {"so_id": so_id, **scope_params},
     ).fetchone()
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-
-    ok, denied = check_warehouse_access(so.warehouse_id)
-    if not ok:
-        return denied
 
     if so.status != SO_PICKED:
         return jsonify({"error": f"Order is not ready for packing. Current status: {so.status}"}), 400

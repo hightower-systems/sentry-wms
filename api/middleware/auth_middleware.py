@@ -88,6 +88,35 @@ def check_warehouse_access(warehouse_id):
     return True, None
 
 
+def warehouse_scope_clause(column: str = "warehouse_id") -> tuple[str, dict]:
+    """Return (SQL fragment, params) that scopes a query to the user's warehouses.
+
+    Call this when building a SELECT whose existence must not leak across
+    warehouse boundaries. For non-admin users, the fragment ``AND col = ANY(:_wscope)``
+    is returned along with the matching parameter binding. For admins,
+    an empty fragment and no params are returned (admins see all).
+
+    Prefer this over ``check_warehouse_access`` when the concern is
+    avoiding an existence oracle -- filtering in SQL means "does not
+    exist" and "exists in a different warehouse" produce the same empty
+    result set and therefore the same 404. See V-026.
+
+    Args:
+        column: SQL expression (with optional table alias) for the
+                warehouse_id column, e.g. ``"po.warehouse_id"``.
+
+    Returns:
+        (fragment, params). Fragment is either an empty string or
+        "AND <column> = ANY(:_wscope)". Params is either {} or
+        {"_wscope": [warehouse_ids]}.
+    """
+    user = g.current_user
+    if user.get("role") == "ADMIN":
+        return "", {}
+    allowed = list(user.get("warehouse_ids") or [])
+    return f"AND {column} = ANY(:_wscope)", {"_wscope": allowed}
+
+
 def require_role(*roles):
     def decorator(f):
         @wraps(f)

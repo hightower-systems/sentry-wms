@@ -5,7 +5,7 @@ Shipping / fulfillment endpoint: records tracking info and creates fulfillment r
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth, check_warehouse_access
+from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.shipping import FulfillRequest
 from services.audit_service import write_audit_log
@@ -33,25 +33,24 @@ def get_order(barcode):
     if len(barcode) > 100:
         return jsonify({"error": "Barcode too long (max 100 characters)"}), 400
 
+    # V-026: scope at SELECT time so wrong-warehouse looks like not-found.
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so = g.db.execute(
         text(
-            """
+            f"""
             SELECT so_id, so_number, so_barcode, customer_name, status,
                    ship_method, ship_address, warehouse_id
             FROM sales_orders
-            WHERE so_barcode = :barcode OR so_number = :barcode
+            WHERE (so_barcode = :barcode OR so_number = :barcode)
+              {scope_clause}
             LIMIT 1
             """
         ),
-        {"barcode": barcode},
+        {"barcode": barcode, **scope_params},
     ).fetchone()
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-
-    ok, denied = check_warehouse_access(so.warehouse_id)
-    if not ok:
-        return denied
 
     packing_required = _require_packing(g.db)
     allowed_statuses = [SO_PACKED] if packing_required else [SO_PICKED, SO_PACKED]
@@ -118,20 +117,20 @@ def fulfill(validated):
     ship_method = validated.ship_method
     username = g.current_user["username"]
 
-    # Validate SO
+    # Validate SO with warehouse scope at SELECT time (V-026).
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so = g.db.execute(
         text(
-            "SELECT so_id, so_number, status, warehouse_id FROM sales_orders WHERE so_id = :so_id"
+            f"""
+            SELECT so_id, so_number, status, warehouse_id FROM sales_orders
+            WHERE so_id = :so_id {scope_clause}
+            """
         ),
-        {"so_id": so_id},
+        {"so_id": so_id, **scope_params},
     ).fetchone()
 
     if not so:
         return jsonify({"error": "Order not found"}), 404
-
-    ok, denied = check_warehouse_access(so.warehouse_id)
-    if not ok:
-        return denied
 
     packing_required = _require_packing(g.db)
     allowed_statuses = [SO_PACKED] if packing_required else [SO_PICKED, SO_PACKED]

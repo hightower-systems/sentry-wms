@@ -12,7 +12,7 @@ from constants import (
     POL_PENDING, POL_PARTIAL, POL_RECEIVED,
     ACTION_RECEIVE, ACTION_RECEIVE_CANCEL,
 )
-from middleware.auth_middleware import require_auth, check_warehouse_access
+from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.receiving import CancelReceivingRequest, ReceiveItemsRequest
 from services.audit_service import write_audit_log
@@ -26,26 +26,28 @@ receiving_bp = Blueprint("receiving", __name__)
 @require_auth
 @with_db
 def lookup_po(barcode):
+    # V-026: filter warehouse at SELECT time so non-admins cannot use
+    # this endpoint as an existence oracle for POs in other warehouses.
+    # A PO belonging to a warehouse the user can't see returns the same
+    # 404 as a PO that doesn't exist at all.
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     po = g.db.execute(
         text(
-            """
+            f"""
             SELECT po_id, po_number, po_barcode, vendor_name, vendor_id,
                    status, expected_date, warehouse_id, notes, created_at,
                    received_at, created_by
             FROM purchase_orders
-            WHERE po_barcode = :barcode OR po_number = :barcode
+            WHERE (po_barcode = :barcode OR po_number = :barcode)
+              {scope_clause}
             LIMIT 1
             """
         ),
-        {"barcode": barcode},
+        {"barcode": barcode, **scope_params},
     ).fetchone()
 
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
-
-    ok, denied = check_warehouse_access(po.warehouse_id)
-    if not ok:
-        return denied
 
     if po.status == PO_CLOSED:
         return jsonify({"error": "Purchase order is closed"}), 400
@@ -105,10 +107,16 @@ def receive_items(validated):
     po_id = validated.po_id
     items = validated.items
 
-    # Validate PO
+    # Validate PO with warehouse scope at SELECT time (V-026).
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     po = g.db.execute(
-        text("SELECT po_id, status, warehouse_id FROM purchase_orders WHERE po_id = :po_id"),
-        {"po_id": po_id},
+        text(
+            f"""
+            SELECT po_id, status, warehouse_id FROM purchase_orders
+            WHERE po_id = :po_id {scope_clause}
+            """
+        ),
+        {"po_id": po_id, **scope_params},
     ).fetchone()
 
     if not po:
@@ -118,9 +126,6 @@ def receive_items(validated):
         return jsonify({"error": f"Purchase order status is {po.status}, cannot receive"}), 400
 
     warehouse_id = po.warehouse_id
-    ok, denied = check_warehouse_access(warehouse_id)
-    if not ok:
-        return denied
     username = g.current_user["username"]
     receipt_ids = []
     warnings = []
@@ -281,17 +286,24 @@ def cancel_receiving(validated):
     if validated.po_id:
         po_ids.add(validated.po_id)
 
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     for rid in receipt_ids:
+        # V-026: scoped SELECT means a receipt in another warehouse is
+        # indistinguishable from a receipt that doesn't exist (both
+        # silently skipped, not 403).
         receipt = g.db.execute(
-            text("SELECT receipt_id, po_id, po_line_id, item_id, quantity_received, bin_id, warehouse_id FROM item_receipts WHERE receipt_id = :rid"),
-            {"rid": rid},
+            text(
+                f"""
+                SELECT receipt_id, po_id, po_line_id, item_id, quantity_received,
+                       bin_id, warehouse_id
+                FROM item_receipts
+                WHERE receipt_id = :rid {scope_clause}
+                """
+            ),
+            {"rid": rid, **scope_params},
         ).fetchone()
         if not receipt:
             continue
-
-        ok, denied = check_warehouse_access(receipt.warehouse_id)
-        if not ok:
-            return denied
 
         po_ids.add(receipt.po_id)
 

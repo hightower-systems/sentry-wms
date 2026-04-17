@@ -5,7 +5,7 @@ Lookup endpoints: item/bin barcode lookups and text search.
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth, check_warehouse_access
+from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 
 lookup_bp = Blueprint("lookup", __name__)
@@ -89,26 +89,26 @@ def lookup_item(barcode):
 def lookup_bin(barcode):
     barcode = barcode.strip()
 
+    # V-026: scope warehouse in SELECT so a bin in another warehouse
+    # returns 404, not 403.
+    scope_clause, scope_params = warehouse_scope_clause("b.warehouse_id")
     bin_row = g.db.execute(
         text(
-            """
+            f"""
             SELECT b.bin_id, b.bin_code, b.bin_barcode, b.bin_type,
                    b.aisle, b.row_num, b.level_num, z.zone_name, b.warehouse_id
             FROM bins b
             LEFT JOIN zones z ON z.zone_id = b.zone_id
-            WHERE b.bin_barcode = :barcode OR b.bin_code = :barcode
+            WHERE (b.bin_barcode = :barcode OR b.bin_code = :barcode)
+              {scope_clause}
             LIMIT 1
             """
         ),
-        {"barcode": barcode},
+        {"barcode": barcode, **scope_params},
     ).fetchone()
 
     if not bin_row:
         return jsonify({"error": "Bin not found"}), 404
-
-    ok, denied = check_warehouse_access(bin_row.warehouse_id)
-    if not ok:
-        return denied
 
     bin_data = {
         "bin_id": bin_row.bin_id,
@@ -160,25 +160,25 @@ def lookup_so(barcode):
     """Generic SO lookup  -  returns SO data regardless of status."""
     barcode = barcode.strip()
 
+    # V-026: scope warehouse in SELECT so wrong-warehouse SO looks like
+    # a missing barcode, not a 403.
+    scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so_row = g.db.execute(
         text(
-            """
+            f"""
             SELECT so_id, so_number, so_barcode, customer_name, status,
                    warehouse_id, customer_phone, customer_address, ship_address
             FROM sales_orders
-            WHERE so_barcode = :barcode OR so_number = :barcode
+            WHERE (so_barcode = :barcode OR so_number = :barcode)
+              {scope_clause}
             LIMIT 1
             """
         ),
-        {"barcode": barcode},
+        {"barcode": barcode, **scope_params},
     ).fetchone()
 
     if not so_row:
         return jsonify({"error": "Sales order not found"}), 404
-
-    ok, denied = check_warehouse_access(so_row.warehouse_id)
-    if not ok:
-        return denied
 
     # Fetch SO lines for detail display
     lines = g.db.execute(
