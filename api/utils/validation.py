@@ -59,6 +59,17 @@ def validate_body(schema_class):
     def decorator(f):
         @wraps(f)
         def wrapped(*args, **kwargs):
+            # V-016: require application/json on request bodies so that a
+            # future permissive parser slip (e.g. force=True) cannot let a
+            # text/plain or form-encoded payload through. mimetype strips
+            # any charset parameter so "application/json; charset=utf-8"
+            # is still accepted.
+            if request.method in ("POST", "PUT", "PATCH"):
+                if request.mimetype != "application/json":
+                    return jsonify({
+                        "error": "unsupported_media_type",
+                        "message": "Content-Type must be application/json",
+                    }), 415
             raw = request.get_json(silent=True) or {}
             if isinstance(raw, dict):
                 allowed = _allowed_field_names(schema_class)
