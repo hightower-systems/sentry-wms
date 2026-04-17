@@ -36,7 +36,11 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
     ports:
-      - "5000:5000"
+      # V-040: bind to loopback by default so a misconfigured public-cloud
+      # host does not expose the API to the internet. Deployments that
+      # need external access should layer a reverse proxy (nginx, caddy,
+      # cloud ALB) or override this in docker-compose.override.yml.
+      - "127.0.0.1:5000:5000"
     depends_on:
       db:
         condition: service_healthy
@@ -84,7 +88,10 @@ services:
     build: ./admin
     container_name: sentry-admin
     ports:
-      - "8080:8080"
+      # V-040: same rationale as the api service -- loopback only by default.
+      # Warehouse deployments that need LAN access (e.g. tablets/scanners)
+      # should override via docker-compose.override.yml or a compose profile.
+      - "127.0.0.1:8080:8080"
     depends_on:
       - api
 

@@ -51,6 +51,36 @@ class TestV001_FernetKeyNotHardcoded:
 
 
 # ---------------------------------------------------------------------------
+# V-040 -- API and admin ports bound to loopback by default
+# ---------------------------------------------------------------------------
+
+
+class TestV040_LoopbackOnlyByDefault:
+    def test_api_port_binds_loopback(self):
+        compose = _read("docker-compose.yml")
+        # Must not expose 5000 on all interfaces. The loopback-bound form
+        # is "127.0.0.1:5000:5000"; the exposed form is "5000:5000".
+        assert '"5000:5000"' not in compose, (
+            "docker-compose.yml binds the API port on all interfaces; "
+            "use 127.0.0.1:5000:5000 (V-040)"
+        )
+        assert '"127.0.0.1:5000:5000"' in compose
+
+    def test_admin_port_binds_loopback(self):
+        compose = _read("docker-compose.yml")
+        assert '"8080:8080"' not in compose, (
+            "docker-compose.yml binds the admin port on all interfaces; "
+            "use 127.0.0.1:8080:8080 (V-040)"
+        )
+        assert '"127.0.0.1:8080:8080"' in compose
+
+    def test_db_port_still_loopback(self):
+        # The database port was already loopback-bound pre-V-040. Regression guard.
+        compose = _read("docker-compose.yml")
+        assert '"127.0.0.1:5432:5432"' in compose
+
+
+# ---------------------------------------------------------------------------
 # V-002 -- JWT_SECRET must be required via strict-fail form everywhere
 # ---------------------------------------------------------------------------
 
