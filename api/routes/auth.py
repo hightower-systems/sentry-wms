@@ -10,9 +10,11 @@ from sqlalchemy import text
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from schemas.auth import ChangePasswordRequest, LoginRequest
-from services.auth_service import authenticate_user, generate_token, validate_password
+from services.auth_service import authenticate_user, decode_token, generate_token, validate_password
 from services.cookie_auth import (
+    AUTH_COOKIE_NAME,
     clear_auth_cookies,
+    csrf_token_matches,
     generate_csrf_token,
     set_auth_cookies,
 )
@@ -152,10 +154,30 @@ def login(validated):
 
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
-    # Logout is intentionally unauthenticated so stale/expired cookies can
-    # still be cleared. Clears both the HttpOnly auth cookie and the CSRF
-    # cookie. Bearer-token clients manage their own token lifecycle.
+    # V-100: the previous version cleared cookies on every POST, which
+    # meant an attacker-origin form submission could force a victim's
+    # browser to apply expired cookies and end the session. SameSite=Strict
+    # prevents the victim's auth cookie from being sent cross-origin but
+    # does not stop the response's Set-Cookie from being applied.
+    #
+    # Current shape:
+    #   - No auth cookie on the request -> 200 no-op, no Set-Cookie.
+    #     Cross-origin attacker (SameSite=Strict stripped the cookie) and
+    #     idempotent cleanup calls both land here.
+    #   - Valid auth cookie -> require CSRF match; clear cookies on match,
+    #     reject with 403 otherwise. A same-origin XSS can already hijack
+    #     the session directly; the CSRF gate here exists to block any
+    #     path that somehow exposes the auth cookie without the CSRF.
+    #   - Expired / invalid auth cookie -> clear cookies silently. The
+    #     session is already dead, so stale-cleanup keeps working without
+    #     demanding a CSRF token the client no longer has.
     response = jsonify({"message": "logged out"})
+    auth_cookie = request.cookies.get(AUTH_COOKIE_NAME)
+    if not auth_cookie:
+        return response
+    payload = decode_token(auth_cookie)
+    if payload is not None and not csrf_token_matches():
+        return jsonify({"error": "CSRF token missing or invalid"}), 403
     clear_auth_cookies(response)
     return response
 

@@ -152,8 +152,9 @@ class TestCsrfEnforcement:
 
 class TestLogout:
     def test_logout_clears_both_cookies(self, client):
-        _login(client)
-        resp = client.post("/api/auth/logout")
+        login_resp = _login(client)
+        csrf = _find_cookie(login_resp, "sentry_csrf")["_value"]
+        resp = client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf})
         assert resp.status_code == 200
 
         auth_set = _find_cookie(resp, "sentry_auth")
@@ -162,12 +163,48 @@ class TestLogout:
         assert csrf_set is not None and csrf_set["_value"] == ""
 
     def test_after_logout_cookie_auth_no_longer_works(self, client):
-        _login(client)
-        client.post("/api/auth/logout")
+        login_resp = _login(client)
+        csrf = _find_cookie(login_resp, "sentry_csrf")["_value"]
+        client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf})
         resp = client.get("/api/auth/me")
         assert resp.status_code == 401
 
-    def test_logout_does_not_require_auth(self, client):
-        # No prior login; logout should succeed idempotently.
+    def test_logout_without_session_is_noop(self, client):
+        # V-100: no prior login, no cookies. Should succeed idempotently
+        # WITHOUT emitting Set-Cookie (nothing to clear). A cross-origin
+        # attacker (SameSite=Strict strips the cookie) lands here too,
+        # and must not be able to force the victim's session to end.
         resp = client.post("/api/auth/logout")
         assert resp.status_code == 200
+        assert _find_cookie(resp, "sentry_auth") is None
+        assert _find_cookie(resp, "sentry_csrf") is None
+
+    def test_logout_with_valid_cookie_but_no_csrf_is_forbidden(self, client):
+        # V-100: a same-origin request with the auth cookie attached
+        # must still present a valid CSRF token. Blocks forced-logout
+        # CSRF even in the rare cases where the auth cookie leaks into
+        # a cross-origin request.
+        _login(client)
+        resp = client.post("/api/auth/logout")
+        assert resp.status_code == 403
+        assert "csrf" in (resp.get_json() or {}).get("error", "").lower()
+
+    def test_logout_with_valid_cookie_and_bad_csrf_is_forbidden(self, client):
+        _login(client)
+        resp = client.post(
+            "/api/auth/logout",
+            headers={"X-CSRF-Token": "not-the-real-csrf-value"},
+        )
+        assert resp.status_code == 403
+
+    def test_logout_with_expired_cookie_clears_silently(self, client):
+        # V-100: a cookie that cannot decode (expired or garbage JWT)
+        # represents a session that is already dead. Clear the cookies
+        # without demanding a CSRF token the client may no longer have.
+        client.set_cookie("sentry_auth", "not-a-real-jwt", domain="localhost")
+        resp = client.post("/api/auth/logout")
+        assert resp.status_code == 200
+        auth_set = _find_cookie(resp, "sentry_auth")
+        csrf_set = _find_cookie(resp, "sentry_csrf")
+        assert auth_set is not None and auth_set["_value"] == ""
+        assert csrf_set is not None and csrf_set["_value"] == ""
