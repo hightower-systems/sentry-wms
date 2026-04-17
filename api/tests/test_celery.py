@@ -80,12 +80,17 @@ class TestSyncTasks:
 
     @pytest.fixture(autouse=True)
     def _register_example(self):
-        """Register the example connector for task tests."""
+        """Register the example connector for task tests.
+
+        V-010: register() now raises on duplicate names. `connectors.example`
+        auto-registers at app creation, so we pop first and re-register to
+        start from a known state, then pop again on teardown.
+        """
         from connectors import registry
         from connectors.example import ExampleConnector
+        registry._connectors.pop("example", None)
         registry.register("example", ExampleConnector)
         yield
-        # Clean up - remove from registry
         registry._connectors.pop("example", None)
 
     def test_sync_orders_eager(self):
