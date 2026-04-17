@@ -87,15 +87,76 @@ deployments cannot reproduce the exposure.
 
 ## Security Practices
 
+### Authentication and session
 - JWT authentication with live database validation on every request
 - User role, warehouse access, and active status verified per-request (not cached in token)
 - Deactivated users and permission changes take effect immediately
 - Warehouse authorization middleware on all endpoints
-- All SQL queries use parameterized bindings
-- Login lockout after 5 failed attempts
-- bcrypt password hashing
-- CORS restricted to configured origins
 - Role-based access control (ADMIN/USER)
-- Full audit trail on every warehouse action
+- Login lockout after 5 failed attempts, scoped to the client IP so an
+  attacker cannot DoS a known username from a different network
+- bcrypt password hashing with per-password salt
+- `JWT_SECRET` and `SENTRY_ENCRYPTION_KEY` required at startup; missing
+  values fail the container before any request is served
+
+### Data protection
+- Encrypted credential vault for connector secrets (Fernet, AES-128
+  in CBC + HMAC-SHA256). Keys are env-only; never logged, never
+  written to disk outside the Postgres cipher column.
+- Audit log is append-only: `BEFORE UPDATE` and `BEFORE DELETE`
+  triggers reject DML on `audit_log` rows, and every row carries a
+  SHA-256 chain hash (`prev_hash || payload`) so retroactive changes
+  are detectable via `verify_audit_log_chain()`.
+- All SQL queries use parameterized bindings (no string concatenation)
+- Row-level locks (`SELECT ... FOR UPDATE`) serialize inventory moves,
+  PO receipts, and pick-allocation under concurrency, preventing
+  double-spend and over-receipt races.
+
+### Tenant isolation
+- Non-admin lookups are scoped in SQL (not post-filtered), so a record
+  in a warehouse the user cannot see returns the same 404 as a record
+  that does not exist. No existence oracle.
+- `/api/lookup/item/search` for non-admins returns only items present
+  as inventory or preferred-bin entries in their assigned warehouses.
+- Preferred-bin writes refuse to target a bin outside the caller's
+  assigned warehouses.
+
+### Connector framework
+- Outbound HTTP guarded by an SSRF allowlist. The guard rejects
+  non-http(s) schemes, internal docker service hostnames, and any
+  URL that resolves to a loopback / private / link-local / reserved /
+  multicast / unspecified IP (IPv4 or IPv6). Single-private result
+  in a multi-record lookup blocks the whole URL.
+- `ConnectionResult.message` is capped at 500 characters and stripped
+  of non-printable bytes, so a misbehaving upstream cannot smuggle
+  response bodies or control sequences back through the admin UI.
+
+### Input validation
+- Pydantic v2 schemas on every JSON request body, including CSV
+  import rows (items, bins, purchase orders, sales orders).
+- CSV cells that would start with a spreadsheet formula prefix
+  (`=`, `+`, `-`, `@`, TAB, CR) are rejected on import; the existing
+  DataTable sanitizer handles export.
 - Request body size limited to 10MB
 - Pagination capped to prevent memory exhaustion
+
+### Infrastructure
+- Postgres bound to 127.0.0.1 on the host
+- Redis broker requires `requirepass`; Celery broker URL uses the
+  authenticated form
+- Admin panel served as a production nginx build (no Vite dev-server
+  in production); a separate `docker-compose.dev.yml` restores hot
+  reload for local development
+- API container runs as a non-root user; Dockerfile uses a multi-stage
+  pattern for the admin SPA
+
+### Response headers
+- X-Content-Type-Options: nosniff
+- X-Frame-Options: DENY
+- X-XSS-Protection: 0 (legacy header; CSP planned for v1.4)
+- Referrer-Policy: strict-origin-when-cross-origin
+- Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+### Backlog
+Findings deferred to future releases are catalogued in
+[`SECURITY_BACKLOG.md`](./SECURITY_BACKLOG.md).
