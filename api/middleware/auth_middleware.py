@@ -76,7 +76,13 @@ def require_auth(f):
 
         g.current_user = payload
 
-        # Warehouse authorization: non-admin users can only access assigned warehouses
+        # Warehouse authorization: non-admin users can only access assigned warehouses.
+        # V-033: the middleware now reads warehouse_id from path parameters too,
+        # not just body and query string. Routes that take warehouse_id in the
+        # URL (e.g. /pending/<int:warehouse_id>) no longer rely solely on
+        # check_warehouse_access being called by every handler; forget the
+        # explicit helper call and this decorator still blocks cross-warehouse
+        # access for non-admins.
         if payload.get("role") != "ADMIN":
             allowed = payload.get("warehouse_ids") or []
             req_wid = None
@@ -86,8 +92,15 @@ def require_auth(f):
                     req_wid = body.get("warehouse_id")
             if req_wid is None:
                 req_wid = request.args.get("warehouse_id", type=int)
-            if req_wid is not None and int(req_wid) not in allowed:
-                return jsonify({"error": "Access denied for this warehouse"}), 403
+            if req_wid is None and request.view_args:
+                req_wid = request.view_args.get("warehouse_id")
+            if req_wid is not None:
+                try:
+                    req_wid_int = int(req_wid)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Invalid warehouse_id"}), 400
+                if req_wid_int not in allowed:
+                    return jsonify({"error": "Access denied for this warehouse"}), 403
 
         return f(*args, **kwargs)
 
