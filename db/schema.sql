@@ -365,11 +365,88 @@ CREATE TABLE audit_log (
     device_id VARCHAR(100),                -- Chainway C6000 device identifier
     warehouse_id INT REFERENCES warehouses(warehouse_id),
     details JSONB,                         -- JSON blob of action details
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- V-025: tamper-resistance hash chain. Populated by the
+    -- audit_log_chain_before_insert trigger defined below. UPDATE and
+    -- DELETE are rejected by triggers; any retroactive change to a
+    -- row breaks downstream row_hash values, detectable via
+    -- verify_audit_log_chain().
+    prev_hash BYTEA,
+    row_hash BYTEA
 );
 
 CREATE INDEX ix_audit_log_action ON audit_log(action_type, created_at);
 CREATE INDEX ix_audit_log_entity ON audit_log(entity_type, entity_id);
+
+-- V-025 tamper resistance: hash-chain trigger + append-only guards.
+-- The identical DDL lives in db/migrations/016_audit_log_tamper_resistance.sql
+-- for deployments that were created before V-025 shipped.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION audit_log_chain_hash() RETURNS TRIGGER AS $$
+DECLARE
+    prev BYTEA;
+    payload TEXT;
+BEGIN
+    SELECT row_hash INTO prev FROM audit_log ORDER BY log_id DESC LIMIT 1;
+    NEW.prev_hash := COALESCE(prev, '\x00'::bytea);
+    payload := COALESCE(NEW.action_type, '') || '|' ||
+               COALESCE(NEW.entity_type, '') || '|' ||
+               COALESCE(NEW.entity_id::text, '') || '|' ||
+               COALESCE(NEW.user_id, '') || '|' ||
+               COALESCE(NEW.warehouse_id::text, '') || '|' ||
+               COALESCE(NEW.details::text, '') || '|' ||
+               COALESCE(NEW.created_at::text, NOW()::text);
+    NEW.row_hash := digest(NEW.prev_hash || payload::bytea, 'sha256');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_log_chain_before_insert
+    BEFORE INSERT ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION audit_log_chain_hash();
+
+CREATE OR REPLACE FUNCTION audit_log_reject_mutation() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_log rows are append-only (V-025 tamper resistance)';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_log_no_update
+    BEFORE UPDATE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION audit_log_reject_mutation();
+
+CREATE TRIGGER audit_log_no_delete
+    BEFORE DELETE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION audit_log_reject_mutation();
+
+CREATE OR REPLACE FUNCTION verify_audit_log_chain() RETURNS BIGINT AS $$
+DECLARE
+    prev BYTEA := '\x00'::bytea;
+    r RECORD;
+    computed BYTEA;
+    payload TEXT;
+BEGIN
+    FOR r IN SELECT * FROM audit_log ORDER BY log_id ASC LOOP
+        IF r.prev_hash IS DISTINCT FROM prev THEN
+            RETURN r.log_id;
+        END IF;
+        payload := COALESCE(r.action_type, '') || '|' ||
+                   COALESCE(r.entity_type, '') || '|' ||
+                   COALESCE(r.entity_id::text, '') || '|' ||
+                   COALESCE(r.user_id, '') || '|' ||
+                   COALESCE(r.warehouse_id::text, '') || '|' ||
+                   COALESCE(r.details::text, '') || '|' ||
+                   COALESCE(r.created_at::text, '');
+        computed := digest(r.prev_hash || payload::bytea, 'sha256');
+        IF computed IS DISTINCT FROM r.row_hash THEN
+            RETURN r.log_id;
+        END IF;
+        prev := r.row_hash;
+    END LOOP;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
 -- USERS (Authentication)

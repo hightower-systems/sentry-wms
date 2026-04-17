@@ -293,6 +293,11 @@ def cancel_receiving(validated):
         po_ids.add(validated.po_id)
 
     scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
+    # V-025: derive audit warehouse_id from the receipt rows themselves,
+    # never from the attacker-controlled request body. Track per-
+    # warehouse reversals so each audit row has a trustworthy
+    # warehouse_id + reversed-receipt list.
+    reversed_by_warehouse: dict[int, list[int]] = {}
     for rid in receipt_ids:
         # V-026: scoped SELECT means a receipt in another warehouse is
         # indistinguishable from a receipt that doesn't exist (both
@@ -312,6 +317,7 @@ def cancel_receiving(validated):
             continue
 
         po_ids.add(receipt.po_id)
+        reversed_by_warehouse.setdefault(receipt.warehouse_id, []).append(rid)
 
         # 1. Reverse inventory
         g.db.execute(
@@ -357,16 +363,19 @@ def cancel_receiving(validated):
             {"status": new_status, "pid": pid},
         )
 
-    # Audit log
-    write_audit_log(
-        g.db,
-        action_type=ACTION_RECEIVE_CANCEL,
-        entity_type="PO",
-        entity_id=validated.po_id or 0,
-        user_id=username,
-        warehouse_id=validated.warehouse_id,
-        details={"reversed_receipts": reversed_count, "receipt_ids": receipt_ids},
-    )
+    # V-025: one audit row per warehouse involved, each with the
+    # authoritative warehouse_id from the receipt rows rather than the
+    # request body. Never fall back to validated.warehouse_id.
+    for wh_id, rids in reversed_by_warehouse.items():
+        write_audit_log(
+            g.db,
+            action_type=ACTION_RECEIVE_CANCEL,
+            entity_type="PO",
+            entity_id=validated.po_id or 0,
+            user_id=username,
+            warehouse_id=wh_id,
+            details={"reversed_receipts": len(rids), "receipt_ids": rids},
+        )
 
     g.db.commit()
     return jsonify({"message": f"Cancelled {reversed_count} receipt(s)", "reversed": reversed_count})
