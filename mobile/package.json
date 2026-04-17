@@ -37,5 +37,9 @@
     "eas-cli": "^18.5.0",
     "vitest": "^4.1.4"
   },
+  "overrides": {
+    "tar": "^7.5.13"
+  },
+  "_overridesNote": "tar pinned to >=7.5.11 to fix GHSA-83g3-92jg-28cx, GHSA-qffp-2rhf-9h96, GHSA-9ppj-qmqm-q256 (path traversal) which surface in prod tree via expo -> @expo/cli -> tar.",
   "private": true
 }

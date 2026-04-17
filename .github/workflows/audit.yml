@@ -56,6 +56,10 @@ jobs:
         run: npm audit --audit-level=high
 
   npm-audit-mobile:
+    # Gating audit: production dependencies only. eas-cli and its
+    # transitive tree are devDependencies used at build time, not shipped
+    # on the device, so their advisories (tracked separately under the
+    # deferred v1.5 eas-cli upgrade) should not block merges here.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -72,5 +76,30 @@ jobs:
       - name: Install mobile dependencies
         run: npm ci --ignore-scripts
 
-      - name: Audit mobile dependencies
+      - name: Audit mobile production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  npm-audit-mobile-dev:
+    # Informational audit: full tree including devDependencies. Failures
+    # are surfaced in the Actions UI but do not block the build so that
+    # a known-vulnerable devtool (currently eas-cli, v1.5 upgrade) cannot
+    # stop security fixes from landing.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit mobile full dependency tree (informational)
         run: npm audit --audit-level=high
