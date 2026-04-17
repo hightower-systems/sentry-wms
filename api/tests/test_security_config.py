@@ -81,6 +81,38 @@ class TestV040_LoopbackOnlyByDefault:
 
 
 # ---------------------------------------------------------------------------
+# V-042 -- pip-audit and npm audit run in CI
+# ---------------------------------------------------------------------------
+
+
+class TestV042_DependencyAuditInCI:
+    def test_audit_workflow_exists(self):
+        workflow = _read(".github/workflows/audit.yml")
+        assert "pip-audit" in workflow
+        assert "npm audit" in workflow
+
+    def test_pip_audit_is_strict(self):
+        # --strict makes pip-audit exit non-zero on advisories.
+        workflow = _read(".github/workflows/audit.yml")
+        assert "--strict" in workflow
+
+    def test_npm_audit_fails_on_high(self):
+        workflow = _read(".github/workflows/audit.yml")
+        assert "--audit-level=high" in workflow
+
+    def test_covers_api_admin_mobile(self):
+        workflow = _read(".github/workflows/audit.yml")
+        assert "api/requirements.txt" in workflow
+        assert "working-directory: admin" in workflow
+        assert "working-directory: mobile" in workflow
+
+    def test_runs_on_push_and_schedule(self):
+        workflow = _read(".github/workflows/audit.yml")
+        assert "push:" in workflow
+        assert "schedule:" in workflow
+
+
+# ---------------------------------------------------------------------------
 # V-002 -- JWT_SECRET must be required via strict-fail form everywhere
 # ---------------------------------------------------------------------------
 

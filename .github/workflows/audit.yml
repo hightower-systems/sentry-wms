@@ -1,0 +1,76 @@
+name: Dependency Audit
+
+# V-042: fails the build on high-severity advisories in either the
+# Python or npm dependency trees. Runs on every push/PR to catch
+# regressions early, plus a nightly scheduled run so a newly-disclosed
+# CVE fails the next build even when no code changed.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * *"
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.7.3
+
+      - name: Audit Python dependencies
+        # Fails on any advisory at or above high severity. --strict makes
+        # the command exit non-zero when vulnerabilities are found rather
+        # than only on tooling errors.
+        run: |
+          pip-audit \
+            --requirement api/requirements.txt \
+            --strict \
+            --vulnerability-service osv
+
+  npm-audit-admin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install admin dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit admin dependencies
+        run: npm audit --audit-level=high
+
+  npm-audit-mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit mobile dependencies
+        run: npm audit --audit-level=high
