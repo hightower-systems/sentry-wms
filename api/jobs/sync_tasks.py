@@ -28,6 +28,7 @@ from services.sync_state_service import (
     set_running_standalone,
     set_success_standalone,
 )
+from utils.log_sanitize import scrub_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,11 @@ def _run_sync(self, connector_name: str, warehouse_id: int, sync_type: str, meth
         return {"success": result.success, "records_synced": result.records_synced}
 
     except Exception as exc:
-        set_error_standalone(connector_name, warehouse_id, sync_type, str(exc))
-        logger.error("%s failed: connector=%s error=%s", sync_type, connector_name, str(exc))
+        # V-007: scrub URL userinfo / sensitive query values before the
+        # exception string hits sync_state.last_error_message or the log.
+        safe_error = scrub_secrets(exc)
+        set_error_standalone(connector_name, warehouse_id, sync_type, safe_error)
+        logger.error("%s failed: connector=%s error=%s", sync_type, connector_name, safe_error)
         raise self.retry(exc=exc)
 
 
@@ -131,8 +135,9 @@ def fulfillment_health_check(self, connector_name: str, warehouse_id: int):
         return {"success": result.connected, "message": result.message}
 
     except Exception as exc:
-        set_error_standalone(connector_name, warehouse_id, "fulfillment", str(exc))
-        logger.error("fulfillment health check failed: connector=%s error=%s", connector_name, str(exc))
+        safe_error = scrub_secrets(exc)
+        set_error_standalone(connector_name, warehouse_id, "fulfillment", safe_error)
+        logger.error("fulfillment health check failed: connector=%s error=%s", connector_name, safe_error)
         raise self.retry(exc=exc)
 
 
@@ -173,6 +178,7 @@ def push_fulfillment(self, connector_name: str, warehouse_id: int, order_id: str
         return {"success": result.success, "external_id": result.external_id}
 
     except Exception as exc:
-        set_error_standalone(connector_name, warehouse_id, "fulfillment", str(exc))
-        logger.error("push_fulfillment failed: connector=%s order=%s error=%s", connector_name, order_id, str(exc))
+        safe_error = scrub_secrets(exc)
+        set_error_standalone(connector_name, warehouse_id, "fulfillment", safe_error)
+        logger.error("push_fulfillment failed: connector=%s order=%s error=%s", connector_name, order_id, safe_error)
         raise self.retry(exc=exc)
