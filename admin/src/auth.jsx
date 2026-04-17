@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { api } from './api.js';
+import { friendlyError } from './utils/friendlyError.js';
 
 const AuthContext = createContext(null);
 
@@ -30,8 +31,9 @@ export function AuthProvider({ children }) {
   async function login(username, password) {
     const res = await api.post('/auth/login', { username, password });
     if (!res || !res.ok) {
-      const data = res ? await res.json() : {};
-      throw new Error(data.error || 'Login failed');
+      const data = res ? await res.json().catch(() => ({})) : {};
+      // V-021: never echo the raw backend error string to the user.
+      throw new Error(friendlyError(data, 'Login failed. Please try again.'));
     }
     const data = await res.json();
     if (data.user.role !== 'ADMIN') {

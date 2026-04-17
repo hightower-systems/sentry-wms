@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import PageHeader from '../components/PageHeader.jsx';
+import { friendlyError } from '../utils/friendlyError.js';
 
 export default function Integrations() {
   const { warehouseId } = useWarehouse();
@@ -84,8 +85,8 @@ export default function Integrations() {
         setCredMsg(`${syncType} sync queued`);
         setTimeout(() => loadSyncStates(selectedConnector.name), 1000);
       } else {
-        const data = await res.json();
-        setCredError(data.error || 'Sync failed');
+        const data = await res.json().catch(() => ({}));
+        setCredError(friendlyError(data, 'Sync failed. Please try again.'));
       }
     } catch { setCredError('Sync error'); }
     setSyncingTypes((prev) => ({ ...prev, [syncType]: false }));
@@ -106,8 +107,8 @@ export default function Integrations() {
         setCredForm({});
         selectConnector(selectedConnector);
       } else {
-        const data = await res.json();
-        setCredError(data.error || 'Failed to save');
+        const data = await res.json().catch(() => ({}));
+        setCredError(friendlyError(data, 'Failed to save credentials.'));
       }
     } catch { setCredError('Connection error'); }
     setCredSaving(false);
@@ -125,8 +126,8 @@ export default function Integrations() {
         const data = await res.json();
         setTestResult(data);
       } else {
-        const data = await res.json();
-        setTestResult({ connected: false, message: data.error || 'Test failed' });
+        const data = await res.json().catch(() => ({}));
+        setTestResult({ connected: false, message: friendlyError(data, 'Connection test failed.') });
       }
     } catch { setTestResult({ connected: false, message: 'Connection error' }); }
     setTesting(false);
