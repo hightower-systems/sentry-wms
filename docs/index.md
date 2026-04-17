@@ -16,6 +16,7 @@ It connects barcode scans, pick tasks, and inventory movements to whatever datab
 - **Inter-Warehouse Transfer** -- cross-warehouse inventory moves
 - **Inventory Adjustments** -- direct add/remove with reason tracking
 - **Barcode Lookup** -- scan any barcode from the home screen to identify items, bins, POs, or SOs
+- **Connector Framework** -- pluggable ERP / commerce sync with encrypted credential vault, sync-health dashboard, rate limiting, and circuit breaker
 - **Admin Panel** -- React web app for warehouse managers to monitor operations and configure the system
 
 ## Stack
@@ -34,17 +35,26 @@ It connects barcode scans, pick tasks, and inventory movements to whatever datab
 git clone https://github.com/hightower-systems/sentry-wms.git
 cd sentry-wms
 cp .env.example .env
+# Set every required secret inside .env (JWT_SECRET, SENTRY_ENCRYPTION_KEY,
+# REDIS_PASSWORD). See the comments in .env.example for generation commands.
 docker compose up -d
 ```
 
 - API: [http://localhost:5000](http://localhost:5000)
-- Admin panel: [http://localhost:3000](http://localhost:3000)
+- Admin panel: [http://localhost:8080](http://localhost:8080)
 - Health check: [http://localhost:5000/api/health](http://localhost:5000/api/health)
 
 The admin password is printed in the docker logs on first run:
 
 ```bash
-docker compose logs api | grep "Admin password"
+docker compose logs db | grep "Admin password"
+```
+
+For local development with Vite dev-server and hot reload, layer on the
+dev overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
 ## Documentation
@@ -57,6 +67,6 @@ docker compose logs api | grep "Admin password"
 
 ## Current Version
 
-v1.2.0 -- 392 tests passing, 88 API endpoints, 26-table PostgreSQL schema.
+v1.3.0 -- 570 tests passing, connector framework shipped, external security audit with 4 Critical + 12 High fixes landed. See [CHANGELOG.md](https://github.com/hightower-systems/sentry-wms/blob/main/CHANGELOG.md) for details and [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md) for the security advisory rotation steps.
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).

@@ -13,21 +13,37 @@
 git clone https://github.com/hightower-systems/sentry-wms.git
 cd sentry-wms
 cp .env.example .env
+# Generate the three required secrets and paste them into .env:
+#   JWT_SECRET            -- openssl rand -hex 32
+#   SENTRY_ENCRYPTION_KEY -- python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   REDIS_PASSWORD        -- python -c "import secrets; print(secrets.token_hex(32))"
+# docker compose will refuse to start if any of these are missing.
 docker compose up -d
 ```
 
-This starts three containers:
+This starts five containers:
 
-- **sentry-db** - PostgreSQL 16 on port 5432 (bound to localhost only)
-- **sentry-api** - Flask API on port 5000
-- **sentry-admin** - React admin panel on port 3000
+- **sentry-db** -- PostgreSQL 16 on port 5432 (bound to localhost only)
+- **sentry-api** -- Flask API on port 5000
+- **sentry-redis** -- Redis 7 (broker for Celery, no host port)
+- **sentry-celery** -- Celery worker for connector sync tasks
+- **sentry-admin** -- React admin panel served by nginx on port 8080
+
+For local development with Vite dev-server and hot reload:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+The overlay replaces the nginx admin with the Vite dev-server on port 3000
+and mounts `./api` and `./admin` into their containers for live reload.
 
 ### Finding the Admin Password
 
 On first run, the seed script generates a random admin password:
 
 ```bash
-docker compose logs api | grep "Admin password"
+docker compose logs db | grep "Admin password"
 ```
 
 Set `ADMIN_PASSWORD` in your `.env` to override the auto-generated password.
@@ -46,7 +62,10 @@ SKIP_SEED=true docker compose up -d
 docker compose exec api python -m pytest tests/ -x -q
 ```
 
-307 tests using transaction rollback isolation. Runs in about 13 seconds.
+570 backend tests using transaction-rollback isolation. Runs in about 18 seconds.
+24 of those are infrastructure-config assertions and correctly skip when the
+suite runs inside the api container; run on the host (`python -m pytest tests/`)
+to get full coverage.
 
 ---
 
@@ -54,19 +73,32 @@ docker compose exec api python -m pytest tests/ -x -q
 
 ### Required Environment Variables
 
-Both `JWT_SECRET` and `DATABASE_URL` are required. The app raises `RuntimeError` on startup if either is missing.
+All of the following are required. `docker compose` refuses to start if any are missing:
 
 ```bash
-# Generate a secret
-openssl rand -hex 32
+# Application auth
+JWT_SECRET=$(openssl rand -hex 32)
 
-# .env
-JWT_SECRET=your-generated-secret-here
+# Connector credential vault (Fernet, base64, 32 bytes)
+SENTRY_ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
+# Redis broker password (Celery)
+REDIS_PASSWORD=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Database
 DATABASE_URL=postgresql://user:pass@db:5432/sentry
 POSTGRES_USER=your-db-user
 POSTGRES_PASSWORD=your-db-password
+
+# Allowed browser origins for the admin panel / mobile
 CORS_ORIGINS=https://your-admin-domain.com
 ```
+
+`SENTRY_ENCRYPTION_KEY` in particular is load-bearing: rotating it
+requires decrypting every row of `connector_credentials` with the old
+key and re-encrypting with the new one. Treat it like a master key.
+The app does not auto-generate a replacement -- missing values raise
+`RuntimeError` at startup.
 
 ### Production Docker Compose
 
@@ -78,10 +110,22 @@ docker compose -f docker-compose.prod.yml up -d
 
 Key differences from the dev compose:
 
-- No `./api:/app` or `./db:/db` volume mounts
+- No `./api:/app`, `./db:/db`, or `./admin:/app` volume mounts
 - `SKIP_SEED=true` by default
-- All credentials required via env vars (no defaults)
+- Every secret required via env var (no defaults); hard-fail on missing
 - `FLASK_ENV=production` hardcoded
+- Redis requires `--requirepass $REDIS_PASSWORD`; Celery broker URL uses
+  the authenticated form
+- Admin container is a multi-stage nginx build serving the compiled Vite
+  bundle; Vite dev-server is unavailable in production
+
+### Required migration
+
+Before running v1.3.0 against an existing v1.2 database, apply migration
+`db/migrations/016_audit_log_tamper_resistance.sql`. It adds the
+`prev_hash` / `row_hash` columns on `audit_log`, installs the hash-chain
+trigger and the `BEFORE UPDATE / BEFORE DELETE` guards, and exposes
+`verify_audit_log_chain()` for periodic integrity checks.
 
 ### Infrastructure Notes
 
@@ -129,7 +173,7 @@ Download the APK from the [GitHub Releases](https://github.com/hightower-systems
 Install via ADB:
 
 ```bash
-adb install sentry-wms-v1.2.0.apk
+adb install sentry-wms-v1.3.0.apk
 ```
 
 Or transfer the APK to the device and open it from the file manager.

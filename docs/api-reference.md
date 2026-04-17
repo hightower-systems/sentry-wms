@@ -1196,3 +1196,25 @@ Self-approval blocked when `require_count_approval_separation` is enabled.
 ### Admin - Audit Log
 
 **GET /api/admin/audit-log** - Paginated audit log. Filter by `action_type`, `user_id`, `start_date`, `end_date`.
+
+---
+
+### Admin - Connectors (v1.3.0+)
+
+All connector endpoints require `ADMIN` role.
+
+**GET /api/admin/connectors** - List every registered connector with its config-schema fields and declared capabilities. The response includes only metadata; stored credentials are not returned here.
+
+**GET /api/admin/connectors/{connector_name}/config-schema** - Return the config-schema + capabilities for one connector.
+
+**POST /api/admin/connectors/{connector_name}/credentials** - Save encrypted credentials for `warehouse_id`. Body: `{"warehouse_id": <int>, "credentials": {<key>: <string>, ...}}`. Values are encrypted with the Fernet master key (`SENTRY_ENCRYPTION_KEY`) before insert.
+
+**GET /api/admin/connectors/{connector_name}/credentials?warehouse_id={id}** - List stored credential keys for a connector + warehouse. Values are masked as `****`; plaintext is never returned through this endpoint.
+
+**DELETE /api/admin/connectors/{connector_name}/credentials** - Remove all credentials for one connector + warehouse. Body: `{"warehouse_id": <int>}`.
+
+**POST /api/admin/connectors/{connector_name}/test** - Invoke the connector's `test_connection()` with the stored credentials. Returns `{"connected": <bool>, "message": <string>, ...}`. The message is length-capped at 500 characters and stripped of non-printable bytes. Returns `400` with `error: "blocked_destination"` if the configured `base_url` resolves to a private / loopback / internal address (SSRF guard, see [SECURITY.md](../SECURITY.md)).
+
+**GET /api/admin/connectors/{connector_name}/sync-status?warehouse_id={id}** - Return the sync-state row for every sync type (`orders`, `items`, `inventory`, `fulfillment`). Each row carries `sync_status` (`idle` / `running` / `error`), `last_synced_at`, `last_success_at`, `last_error_at`, `last_error_message`, and `consecutive_errors`.
+
+**POST /api/admin/connectors/{connector_name}/sync/{sync_type}** - Queue a manual Celery task for one sync type. `sync_type` is one of `orders`, `items`, `inventory`, `fulfillment`. Returns `202 Accepted` with the Celery task ID. Returns `409 Conflict` if a sync of the same type is already running (state machine enforcement).

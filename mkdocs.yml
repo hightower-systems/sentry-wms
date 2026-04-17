@@ -41,6 +41,7 @@ nav:
   - API Reference: api-reference.md
   - Deployment: deployment.md
   - Admin Panel: admin-panel.md
+  - Connectors: connectors.md
   - Test Lab: test-lab.md
   - Contributing: contributing.md
 

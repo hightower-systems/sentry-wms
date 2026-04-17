@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.2.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-382%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.3.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-570%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -31,6 +31,7 @@ Sentry is the link between the warehouse floor and your system of record. It con
 - **Bin Transfers** - Move inventory between locations
 - **Inter-Warehouse Transfers** - Cross-warehouse inventory moves with audit trail
 - **Inventory Adjustments** - Direct add/remove with reason tracking
+- **Connector Framework** - Pluggable ERP / commerce sync (orders, items, inventory, fulfillment) with encrypted credential vault, health dashboard, and circuit-breaker-protected outbound calls
 
 ## What Sentry Is Not
 
@@ -52,19 +53,27 @@ Sentry is not an ERP. It does not manage orders, products, or customers. It conn
 git clone https://github.com/hightower-systems/sentry-wms.git
 cd sentry-wms
 
-# Copy environment config
+# Copy environment config and generate required secrets
 cp .env.example .env
+# Then edit .env and set each of:
+#   JWT_SECRET            -- openssl rand -hex 32
+#   SENTRY_ENCRYPTION_KEY -- python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   REDIS_PASSWORD        -- python -c "import secrets; print(secrets.token_hex(32))"
+# Startup hard-fails if any of these are missing.
 
-# Start PostgreSQL + API + Admin Panel with Docker
-docker-compose up -d
+# Start PostgreSQL + API + Admin Panel + Redis + Celery worker
+docker compose up -d
 
 # Or start with a clean system (no demo data):
-# SKIP_SEED=true docker-compose up -d
+# SKIP_SEED=true docker compose up -d
 
 # API is now running at http://localhost:5000
-# Admin panel is now running at http://localhost:3000
+# Admin panel is now running at http://localhost:8080
 # Health check: http://localhost:5000/api/health
 # Admin password is printed in docker logs on first run
+
+# For local development with Vite dev-server and hot reload:
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 # Start the mobile app (separate terminal)
 cd mobile
@@ -87,7 +96,7 @@ The admin panel is a React web app for warehouse managers to monitor operations 
 - **Users** - user management with role assignment
 - **Audit Log** - filterable log viewer with entity name resolution
 - **Import** - CSV/JSON bulk import for items, bins, POs, SOs with templates
-- **Settings** - warehouse config, manual PO/SO entry, fulfillment workflow toggles
+- **Settings** - warehouse config, manual PO/SO entry, fulfillment workflow toggles, connector setup (credential form + sync health dashboard)
 - **Warehouse Picker** - header dropdown to switch warehouse context (all pages filter dynamically)
 
 Built with React 19, Vite, React Router, and plain CSS. Dark theme with copper accents. No component libraries.
@@ -231,28 +240,35 @@ Set `SKIP_SEED=true` to start with a clean system (admin user + one empty wareho
 
 ### Security
 
-- JWT authentication with live database validation on every request - `require_auth` verifies the user's role, warehouse access, and active status per-request (not cached in the token)
-- Deactivated users and permission changes take effect immediately
-- Required `JWT_SECRET` environment variable (crashes on startup if missing)
-- Warehouse authorization middleware - non-admin users blocked from unassigned warehouses (403)
-- Lookup endpoints enforce warehouse isolation - users only see inventory, bins, and orders for their assigned warehouses
-- Login lockout - 5 failed attempts locks the account for 15 minutes (DB-backed, per-user and per-IP)
-- All SQL queries use parameterized bindings (no string interpolation of user input)
-- bcrypt password hashing with salt, password complexity policy (8+ chars, letters + digits)
-- JWT tokens include iat/jti claims; tokens invalidated on password change
-- Self-service password change for all users
-- Random admin password generated at seed time (no default credentials)
-- Over-pick and negative quantity prevention on all warehouse operations
-- Security response headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy)
-- Stack trace suppression in production (generic 500 error responses)
-- CORS restricted to explicit origin whitelist
-- Role-based access control (ADMIN/USER) with function-level visibility
-- Non-root container with gunicorn (4 workers) in production
-- Full audit trail on every warehouse action
+See [SECURITY.md](SECURITY.md) for the full policy, [SECURITY_BACKLOG.md](SECURITY_BACKLOG.md) for the
+deferred-findings roadmap, and the `v1.3.0` entry in [CHANGELOG.md](CHANGELOG.md) for the
+per-finding list closed in this release. Highlights:
+
+- All secrets (`JWT_SECRET`, `SENTRY_ENCRYPTION_KEY`, `REDIS_PASSWORD`) required at startup;
+  containers hard-fail on missing values
+- Encrypted credential vault (Fernet) for connector secrets; values are never returned in API
+  responses or logs
+- Audit log is append-only with a SHA-256 chain hash; `verify_audit_log_chain()` detects any
+  retroactive edit
+- Row-level locks on inventory mutations (receive, pick, allocate, move) prevent over-receipt
+  and oversell under concurrency
+- Tenant isolation is enforced in SQL: non-admin lookups return the same 404 for
+  wrong-warehouse as they do for missing records (no existence oracle)
+- Connector outbound HTTP guarded by an SSRF allowlist (blocks private/loopback/link-local
+  IPs and internal docker hostnames)
+- Login lockout is IP-scoped so a remote attacker cannot DoS a known username
+- Admin panel is a production nginx multi-stage build (Vite dev-server only available in the
+  `docker-compose.dev.yml` overlay); runs as `USER nginx`
+- Redis broker requires `--requirepass`; Celery uses the authenticated URL
+- CSV import runs through pydantic with formula-injection guards on text fields
+- All SQL uses parameterized bindings; response headers set nosniff / DENY / strict-origin
+  Referrer-Policy / restrictive Permissions-Policy
 
 ### Testing
 
-307 tests using transaction rollback isolation (savepoint per test, rollback after). Runs in ~13 seconds.
+570 backend tests using transaction-rollback isolation (savepoint per test, rollback after).
+Runs in ~18 seconds. 24 are infrastructure-config tests that correctly skip when the suite
+runs inside the api container.
 
 ```bash
 docker compose exec api python -m pytest tests/ -v --tb=short
@@ -260,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.2.0 - Validation & Error Boundary Hardening**
+**v1.3.0 - Connector framework and security hardening**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -286,7 +302,9 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | **v1.0.0** | **Production release - full security audit, penetration test fixes, hardened infrastructure** | ✅ **Released** |
 | **v1.1.0** | **Security hardening - JWT claims, token invalidation, rate limiting, pagination, password policy** | ✅ **Released** |
 | **v1.2.0** | **Pydantic validation schemas, React error boundaries, standardized error format** | ✅ **Released** |
-| v2.0.0 | ERP + commerce integration (NetSuite, QuickBooks, Shopify, Fabric, REST API connectors) | Planned |
+| **v1.3.0** | **Connector framework (Celery + Redis + credential vault + sync health + rate limiter), external security audit with 80 findings triaged, 4 Critical + 12 High fixes landed, audit-log tamper resistance, SSRF allowlist, inventory-race hardening** | ✅ **Released** |
+| v1.4.0 | CSP + HttpOnly cookie auth, mobile SecureStore migration, DNS-rebinding guard, `pip-audit` / `npm-audit` CI, MFA for ADMIN | Planned |
+| v2.0.0 | First-party ERP + commerce connectors (NetSuite, QuickBooks, Shopify, Fabric) on top of the v1.3 connector framework | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
@@ -298,4 +316,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.2.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.3.0

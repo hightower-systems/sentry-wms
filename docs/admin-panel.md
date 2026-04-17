@@ -1,6 +1,6 @@
 # Admin Panel
 
-The admin panel is a React web app at `http://localhost:3000` for warehouse managers to monitor operations and configure the system. Requires ADMIN role.
+The admin panel is a React web app at `http://localhost:8080` for warehouse managers to monitor operations and configure the system. Requires ADMIN role. The production build is served by nginx; a development overlay (`docker-compose.dev.yml`) restores the Vite dev-server on port 3000 with hot reload.
 
 ---
 
@@ -222,7 +222,7 @@ System configuration:
 - **Mobile App**
     - Show expected quantities during cycle counts (checkbox)
 - **Manual Entry** - create POs and SOs directly (for standalone deployments)
-- **ERP Connectors** - placeholder for future release
+- **ERP Connectors** - list of registered connectors (example connector auto-registered out of the box). Selecting one opens a credential form whose fields come from `get_config_schema()`. Values are saved via the admin API, encrypted with `SENTRY_ENCRYPTION_KEY`, and displayed back as `****`. A Sync Health panel below the form shows live sync-state indicators (green / yellow / red) for each sync type along with the last success timestamp and error message, plus a **Sync Now** button per type that is disabled while a sync is running. See [Connectors](connectors.md) for the framework guide.
 - **About** - version number and repository link
 
 All settings use a batch save with unsaved changes warning.
