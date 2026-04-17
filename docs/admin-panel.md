@@ -222,7 +222,19 @@ System configuration:
 - **Mobile App**
     - Show expected quantities during cycle counts (checkbox)
 - **Manual Entry** - create POs and SOs directly (for standalone deployments)
-- **ERP Connectors** - list of registered connectors (example connector auto-registered out of the box). Selecting one opens a credential form whose fields come from `get_config_schema()`. Values are saved via the admin API, encrypted with `SENTRY_ENCRYPTION_KEY`, and displayed back as `****`. A Sync Health panel below the form shows live sync-state indicators (green / yellow / red) for each sync type along with the last success timestamp and error message, plus a **Sync Now** button per type that is disabled while a sync is running. See [Connectors](connectors.md) for the framework guide.
 - **About** - version number and repository link
 
 All settings use a batch save with unsaved changes warning.
+
+## Integrations
+
+The Integrations page (sidebar -> System -> Integrations) is the home for
+ERP and commerce connectors. Each registered connector appears as a
+button; selecting one opens a credential form whose fields come from
+`get_config_schema()`. Values are encrypted with `SENTRY_ENCRYPTION_KEY`
+before they hit the database and are displayed back as `****`. The same
+card shows a Sync Health panel with live indicators (green / yellow /
+red) for each sync type, the last success timestamp, the last error
+message, and a **Sync Now** button per type (disabled while a sync is
+running). See the [Connectors](connectors.md) guide for the framework
+internals and how to add your own.

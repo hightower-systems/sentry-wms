@@ -47,6 +47,7 @@ const NAV = [
       { to: '/users', label: 'Users' },
       { to: '/audit-log', label: 'Audit log' },
       { to: '/imports', label: 'Import' },
+      { to: '/integrations', label: 'Integrations' },
       { to: '/settings', label: 'Settings' },
     ],
   },
