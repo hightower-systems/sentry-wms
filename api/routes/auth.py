@@ -11,6 +11,11 @@ from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from schemas.auth import ChangePasswordRequest, LoginRequest
 from services.auth_service import authenticate_user, generate_token, validate_password
+from services.cookie_auth import (
+    clear_auth_cookies,
+    generate_csrf_token,
+    set_auth_cookies,
+)
 from utils.validation import validate_body
 
 ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
@@ -123,7 +128,22 @@ def login(validated):
     _reset_attempts(g.db, user_key)
     _reset_attempts(g.db, ip_key)
     token = generate_token(user)
-    return jsonify({"token": token, "user": user})
+    # V-045: dual-path auth. The token is returned in the body (mobile)
+    # and also set as HttpOnly + CSRF cookies (admin SPA).
+    csrf = generate_csrf_token()
+    response = jsonify({"token": token, "user": user})
+    set_auth_cookies(response, token, csrf)
+    return response
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    # Logout is intentionally unauthenticated so stale/expired cookies can
+    # still be cleared. Clears both the HttpOnly auth cookie and the CSRF
+    # cookie. Bearer-token clients manage their own token lifecycle.
+    response = jsonify({"message": "logged out"})
+    clear_auth_cookies(response)
+    return response
 
 
 @auth_bp.route("/me")
@@ -185,7 +205,10 @@ def refresh():
         "warehouse_ids": list(row.warehouse_ids) if row.warehouse_ids else [],
     }
     token = generate_token(user_dict)
-    return jsonify({"token": token})
+    csrf = generate_csrf_token()
+    response = jsonify({"token": token})
+    set_auth_cookies(response, token, csrf)
+    return response
 
 
 @auth_bp.route("/change-password", methods=["POST"])

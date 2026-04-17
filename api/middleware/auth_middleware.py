@@ -8,16 +8,38 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from services.auth_service import decode_token
+from services.cookie_auth import (
+    AUTH_COOKIE_NAME,
+    CSRF_PROTECTED_METHODS,
+    csrf_token_matches,
+)
+
+
+def _extract_token():
+    """Return (token, source) where source is 'header' or 'cookie', or (None, None)."""
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header.split(" ", 1)[1], "header"
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        return cookie_token, "cookie"
+    return None, None
 
 
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        token, source = _extract_token()
+        if not token:
             return jsonify({"error": "Unauthorized"}), 401
 
-        token = auth_header.split(" ", 1)[1]
+        # V-045: cookie-auth callers must prove they can read the CSRF cookie
+        # on mutating requests (double-submit). Bearer-header callers are
+        # exempt because bearer tokens don't auto-attach cross-origin.
+        if source == "cookie" and request.method in CSRF_PROTECTED_METHODS:
+            if not csrf_token_matches():
+                return jsonify({"error": "CSRF token missing or invalid"}), 403
+
         payload = decode_token(token)
         if payload is None:
             return jsonify({"error": "Token expired"}), 401

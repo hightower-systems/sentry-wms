@@ -32,7 +32,9 @@ def create_app():
         "http://localhost:3000,http://localhost:5000,http://localhost:8081",
     ).split(",")
     resolved_origins = [o.strip() for o in cors_origins]
-    CORS(app, origins=resolved_origins)
+    # V-045: credentials must cross CORS for the admin SPA's HttpOnly cookie.
+    # Origins stay restricted (no wildcard), which is required for cookie auth.
+    CORS(app, origins=resolved_origins, supports_credentials=True)
 
     # Security response headers
     csp_policy = (

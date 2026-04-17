@@ -8,19 +8,23 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('sentry_token');
-    const saved = localStorage.getItem('sentry_user');
-    if (token && saved) {
-      const parsed = JSON.parse(saved);
-      // Only allow ADMIN users in the admin panel
-      if (parsed.role === 'ADMIN') {
-        setUser(parsed);
-      } else {
-        localStorage.removeItem('sentry_token');
-        localStorage.removeItem('sentry_user');
+    // V-045: session lives in an HttpOnly cookie; there is no token in
+    // localStorage to read. Ask the API who we are. If the cookie is
+    // missing or expired, /auth/me returns 401 and we stay unauthenticated.
+    let cancelled = false;
+    api.get('/auth/me').then(async (res) => {
+      if (cancelled) return;
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.role === 'ADMIN') {
+          setUser(data);
+        }
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   async function login(username, password) {
@@ -31,18 +35,20 @@ export function AuthProvider({ children }) {
     }
     const data = await res.json();
     if (data.user.role !== 'ADMIN') {
+      // Not an admin -- ask the server to clear the cookies we just got.
+      await api.post('/auth/logout', {});
       throw new Error('Not authorized');
     }
-    localStorage.setItem('sentry_token', data.token);
-    localStorage.setItem('sentry_user', JSON.stringify(data.user));
     setUser(data.user);
     return data.user;
   }
 
-  function logout() {
-    localStorage.removeItem('sentry_token');
-    localStorage.removeItem('sentry_user');
-    setUser(null);
+  async function logout() {
+    try {
+      await api.post('/auth/logout', {});
+    } finally {
+      setUser(null);
+    }
   }
 
   return (
