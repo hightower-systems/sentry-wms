@@ -2,6 +2,49 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.3.0] - 2026-04-16
+
+### Added -- connector framework (Phases 1-5)
+- Connector interface contract and registry with auto-discovery (`api/connectors/`)
+- Celery + Redis background job runner with JSON serialization
+- Encrypted credential vault (Fernet) with per-connector + per-warehouse scoping
+- Sync state tracking with consecutive-error threshold and admin health dashboard
+- Rate limiter, circuit breaker, and `make_request` helper inherited by every connector
+
+### Security (Phase 6 -- audit findings triaged and fixed in Phase 7)
+- **V-001** -- Removed hardcoded `SENTRY_ENCRYPTION_KEY` default from `docker-compose.yml`. Key is now required via strict `${... :?}` form. The auto-generation + logging path in `credential_vault.py` is gone; missing key is a `RuntimeError`. See `SECURITY.md` `SA-2026-001` for remediation if your deployment used the previous default.
+- **V-002** -- Documented historical `JWT_SECRET` defaults that remain in git history (`dev-secret-change-in-production`, `dev-jwt-secret-do-not-use-in-production-b7e2f`). Current compose uses the strict `${... :?}` form. See `SA-2026-002` for rotation steps.
+- **V-003** -- Admin panel rebuilt as a production nginx multi-stage image. Vite dev-server no longer runs in production; dev-mode hot reload is available via `docker-compose.dev.yml`. Admin container runs as `USER nginx`; source tree bind-mount removed from default compose.
+- **V-004** -- Redis broker now requires `--requirepass ${REDIS_PASSWORD}`. Celery broker and result backend URLs use the authenticated form. Healthcheck authenticates with `redis-cli -a`.
+- **V-005** -- No credential-vault code path logs key material. Any missing `SENTRY_ENCRYPTION_KEY` raises `RuntimeError` rather than silently generating and printing a replacement.
+- **V-009** -- SSRF allowlist on every connector outbound request. The guard rejects non-http(s) schemes, internal docker service hostnames, and any URL that resolves to loopback / private / link-local / reserved / multicast / unspecified addresses (IPv4 or IPv6). Applies uniformly via `BaseConnector.make_request`.
+- **V-014** -- `ConnectionResult.message` is capped at 500 characters and stripped of non-printable bytes so connectors cannot smuggle response bodies or control sequences back through the admin UI.
+- **V-015** -- CSV import (`/api/admin/import/<type>`) now runs every row through a per-entity pydantic schema. Text-field validators reject leading characters that a spreadsheet treats as a formula prefix (`=`, `+`, `-`, `@`, tab, CR). Numeric coercion is handled by pydantic; a non-numeric value skips its row instead of crashing the whole import.
+- **V-023** -- Login lockout is now IP-scoped. An attacker at one IP can no longer DoS a known username by exhausting its per-username counter: the real user at a different IP keeps working.
+- **V-025** -- `audit_log` is append-only. `BEFORE UPDATE` / `BEFORE DELETE` triggers reject DML, and every row carries a SHA-256 chain hash. The operational helper `verify_audit_log_chain()` returns the first broken `log_id` or NULL when intact. Cancel-receiving audit rows now derive warehouse_id from the receipt rows themselves rather than from the request body.
+- **V-026** -- Lookup endpoints (receiving, packing, shipping, lookup) scope `warehouse_id` in the SELECT for non-admin users. A record in another warehouse produces the same 404 as a missing barcode; no existence oracle.
+- **V-027** -- `/api/lookup/item/search` for non-admin users returns only items present as inventory or preferred-bin entries in their assigned warehouses. Admins keep the full catalogue.
+- **V-028** -- `/api/putaway/update-preferred` refuses to target a bin outside the caller's assigned warehouses. Admins bypass as usual.
+- **V-029** -- Receive over-receipt TOCTOU closed via `SELECT ... FOR UPDATE` on the PO line. Two concurrent receives against the same line can no longer both pass the remaining-quantity check.
+- **V-030** -- Inventory move, pick allocation, and wave allocation acquire row locks (`FOR UPDATE` / `FOR UPDATE OF inv`) before reading and writing. `add_inventory` serializes NULL-lot upserts with a transaction-scoped advisory lock so concurrent callers never create duplicate rows.
+- **V-069** -- Removed the hardcoded bcrypt hash of `admin` from `db/seed-apartment-lab.sql`. Seed SQL now inserts a placeholder; `seed.sh` must run to install a random password. Running the SQL directly leaves the admin account unable to authenticate (safe failure).
+
+### Security -- infrastructure defaults
+- `api/` and `admin/` services are rebuilt with production settings (nginx runtime for admin, non-root user in both). Dev reload moved to `docker-compose.dev.yml`.
+- `SECURITY.md` reorganized into Authentication, Data protection, Tenant isolation, Connector framework, Input validation, Infrastructure, Response headers, and Backlog sections.
+- `SECURITY_BACKLOG.md` (new) catalogues every Phase 6 finding not fixed in v1.3 with suggested fixes and target versions.
+
+### Tests
+- Security-oriented tests across 6 new files: `test_security_config.py`, `test_url_guard.py`, `test_idor_scope.py`, `test_concurrency.py`, `test_audit_tamper.py`, `test_csv_import_security.py`, plus additions to existing `test_auth.py`, `test_connectors.py`, `test_credential_vault.py`.
+- Replaced the test JWT secret with a 32-byte value to silence PyJWT's `InsecureKeyLengthWarning` across the suite.
+- Total: 570 backend tests passing.
+
+### Notes for operators
+- If you ever deployed this repo with the default compose file, read `SA-2026-001` and `SA-2026-002` in `SECURITY.md` and rotate `SENTRY_ENCRYPTION_KEY` and `JWT_SECRET` accordingly.
+- The new `REDIS_PASSWORD` variable is required. See `.env.example`.
+- The admin panel now listens on port 8080. Update reverse-proxy configs if applicable.
+- The `db/migrations/016_audit_log_tamper_resistance.sql` migration must be applied on existing deployments before running v1.3.
+
 ## [v1.2.0] - 2026-04-16
 
 ### Added
