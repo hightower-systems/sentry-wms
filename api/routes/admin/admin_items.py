@@ -5,9 +5,17 @@ import math
 from flask import g, jsonify, request
 from sqlalchemy import text
 
+from pydantic import ValidationError
+
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
+from schemas.csv_import import (
+    BinImportRow,
+    ItemImportRow,
+    PurchaseOrderImportRow,
+    SalesOrderImportRow,
+)
 from schemas.items import CreateItemRequest, CreatePreferredBinRequest, UpdateItemRequest, UpdatePreferredBinRequest
 from utils.validation import validate_body
 
@@ -334,12 +342,46 @@ def list_inventory():
 
 # ── CSV Import ────────────────────────────────────────────────────────────────
 
+class _SkipRow(Exception):
+    pass
+
+
+# V-015: per-entity pydantic schemas validate every CSV row. On a
+# ValidationError the row is skipped with a 400-style error message;
+# on an int-coercion failure (now handled by pydantic), same outcome.
+# Text fields are stripped of formula-injection prefixes before reaching
+# the database.
+_IMPORT_ROW_SCHEMAS = {
+    "items": ItemImportRow,
+    "bins": BinImportRow,
+    "purchase-orders": PurchaseOrderImportRow,
+    "sales-orders": SalesOrderImportRow,
+}
+
+
+def _validate_row(entity_type, rec):
+    """Parse a record dict through the matching pydantic schema.
+
+    Raises _SkipRow with a human-readable message on any validation
+    failure (missing required field, formula prefix, non-numeric
+    integer, etc.). The caller catches and records the row index.
+    """
+    schema = _IMPORT_ROW_SCHEMAS[entity_type]
+    try:
+        return schema(**(rec if isinstance(rec, dict) else {}))
+    except ValidationError as exc:
+        # Collapse the pydantic error list into a short per-row message
+        first = exc.errors()[0] if exc.errors() else {"msg": "invalid"}
+        loc = ".".join(str(p) for p in first.get("loc", ()))
+        raise _SkipRow(f"{loc}: {first.get('msg', 'invalid')}" if loc else first.get("msg", "invalid"))
+
+
 @admin_bp.route("/import/<entity_type>", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
 @with_db
 def csv_import(entity_type):
-    if entity_type not in ("items", "bins", "purchase-orders", "sales-orders"):
+    if entity_type not in _IMPORT_ROW_SCHEMAS:
         return jsonify({"error": f"Unsupported entity type: {entity_type}"}), 400
 
     data = request.get_json()
@@ -359,14 +401,15 @@ def csv_import(entity_type):
 
     for idx, rec in enumerate(records, 1):
         try:
+            row = _validate_row(entity_type, rec)
             if entity_type == "items":
-                _import_item(g.db, rec, idx, errors)
+                _import_item(g.db, row)
             elif entity_type == "bins":
-                _import_bin(g.db, rec, idx, errors)
+                _import_bin(g.db, row, rec)
             elif entity_type == "purchase-orders":
-                _import_purchase_order(g.db, rec, idx, errors, default_warehouse_id)
+                _import_purchase_order(g.db, row, default_warehouse_id)
             elif entity_type == "sales-orders":
-                _import_sales_order(g.db, rec, idx, errors, default_warehouse_id)
+                _import_sales_order(g.db, row, default_warehouse_id)
             imported += 1
         except _SkipRow as e:
             errors.append({"row": idx, "error": str(e)})
@@ -381,16 +424,9 @@ def csv_import(entity_type):
     })
 
 
-class _SkipRow(Exception):
-    pass
-
-
-def _import_item(db, rec, idx, errors):
-    sku = rec.get("sku")
-    # Accept "name" or "item_name"
-    name = rec.get("item_name") or rec.get("name")
-    if not sku:
-        raise _SkipRow("Missing required field: sku")
+def _import_item(db, row: ItemImportRow):
+    sku = row.sku
+    name = row.resolved_name()
     if not name:
         raise _SkipRow("Missing required field: name")
 
@@ -398,50 +434,46 @@ def _import_item(db, rec, idx, errors):
     if dup:
         raise _SkipRow(f"Duplicate SKU: {sku}")
 
-    upc = rec.get("upc")
-    if upc:
-        dup_upc = db.execute(text("SELECT 1 FROM items WHERE upc = :upc"), {"upc": upc}).fetchone()
+    if row.upc:
+        dup_upc = db.execute(text("SELECT 1 FROM items WHERE upc = :upc"), {"upc": row.upc}).fetchone()
         if dup_upc:
-            raise _SkipRow(f"Duplicate UPC: {upc}")
+            raise _SkipRow(f"Duplicate UPC: {row.upc}")
 
     # Resolve default_bin by code if provided
     default_bin_id = None
-    if rec.get("default_bin"):
-        bin_row = db.execute(text("SELECT bin_id FROM bins WHERE bin_code = :code"), {"code": rec["default_bin"]}).fetchone()
+    if row.default_bin:
+        bin_row = db.execute(text("SELECT bin_id FROM bins WHERE bin_code = :code"), {"code": row.default_bin}).fetchone()
         if bin_row:
             default_bin_id = bin_row.bin_id
 
+    weight = row.resolved_weight()
     result = db.execute(
         text("INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, default_bin_id) VALUES (:sku, :name, :desc, :upc, :cat, :weight, :bin) RETURNING item_id"),
-        {"sku": sku, "name": name, "desc": rec.get("description"),
-         "upc": upc, "cat": rec.get("category"),
-         "weight": rec.get("weight_lbs") or rec.get("weight") or None,
+        {"sku": sku, "name": name, "desc": row.description,
+         "upc": row.upc, "cat": row.category,
+         "weight": float(weight) if weight is not None else None,
          "bin": default_bin_id},
     )
 
     # If quantity provided, create inventory in default bin
-    qty = rec.get("quantity") or rec.get("qty")
+    qty = row.resolved_quantity()
     if qty and default_bin_id:
         item_id = result.fetchone()[0]
-        qty_int = int(qty)
-        if qty_int > 0:
-            # Get warehouse_id from the bin
+        if qty > 0:
             wh_row = db.execute(text("SELECT warehouse_id FROM bins WHERE bin_id = :bid"), {"bid": default_bin_id}).fetchone()
             wh_id = wh_row.warehouse_id if wh_row else 1
             db.execute(
                 text("INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES (:iid, :bid, :wid, :qty)"),
-                {"iid": item_id, "bid": default_bin_id, "wid": wh_id, "qty": qty_int},
+                {"iid": item_id, "bid": default_bin_id, "wid": wh_id, "qty": qty},
             )
 
 
-def _import_bin(db, rec, idx, errors):
-    bin_code = rec.get("bin_code")
-    if not bin_code:
-        raise _SkipRow("Missing required field: bin_code")
+def _import_bin(db, row: BinImportRow, raw_rec: dict):
+    bin_code = row.bin_code
 
     # Resolve zone by name or code if zone_id not provided
-    zone_id = rec.get("zone_id")
-    zone_value = rec.get("zone", "").strip()
+    zone_id = row.zone_id
+    zone_value = (row.zone or "").strip()
     if not zone_id and zone_value:
         zone_row = db.execute(
             text("SELECT zone_id FROM zones WHERE LOWER(zone_code) = LOWER(:z) OR LOWER(zone_name) = LOWER(:z) LIMIT 1"),
@@ -454,14 +486,13 @@ def _import_bin(db, rec, idx, errors):
             raise _SkipRow(f"Zone '{zone_value}' not found. Create the zone first, then import bins.")
         raise _SkipRow("Missing required field: zone (or zone_id)")
 
-    # Get warehouse_id from zone if not provided
-    warehouse_id = rec.get("warehouse_id")
+    warehouse_id = row.warehouse_id
     if not warehouse_id:
         wh_row = db.execute(text("SELECT warehouse_id FROM zones WHERE zone_id = :zid"), {"zid": zone_id}).fetchone()
         warehouse_id = wh_row.warehouse_id if wh_row else 1
 
-    bin_type = rec.get("bin_type", "Pickable")
-    bin_barcode = rec.get("bin_barcode") or bin_code
+    bin_type = row.bin_type or "Pickable"
+    bin_barcode = row.bin_barcode or bin_code
 
     dup = db.execute(
         text("SELECT 1 FROM bins WHERE warehouse_id = :wid AND bin_code = :code"),
@@ -478,36 +509,27 @@ def _import_bin(db, rec, idx, errors):
         {
             "zid": zone_id, "wid": warehouse_id, "code": bin_code,
             "barcode": bin_barcode, "type": bin_type,
-            "aisle": rec.get("aisle"), "row": rec.get("row_num"), "level": rec.get("level_num"),
-            "pick_seq": rec.get("pick_sequence", 0), "put_seq": rec.get("putaway_sequence", 0),
-            "desc": rec.get("description"),
+            "aisle": row.aisle, "row": row.row_num, "level": row.level_num,
+            "pick_seq": row.pick_sequence or 0, "put_seq": row.putaway_sequence or 0,
+            "desc": row.description,
         },
     )
 
 
-def _import_purchase_order(db, rec, idx, errors, default_warehouse_id=None):
-    po_number = rec.get("po_number")
-    sku = rec.get("sku")
-    if not po_number:
-        raise _SkipRow("Missing required field: po_number")
-    if not sku:
-        raise _SkipRow("Missing required field: sku")
-
-    quantity = int(rec.get("quantity") or rec.get("quantity_expected") or 0)
+def _import_purchase_order(db, row: PurchaseOrderImportRow, default_warehouse_id=None):
+    quantity = row.resolved_quantity() or 0
     if quantity <= 0:
         raise _SkipRow("quantity must be > 0")
 
-    warehouse_id = rec.get("warehouse_id") or default_warehouse_id
+    warehouse_id = row.warehouse_id or default_warehouse_id
     if not warehouse_id:
         raise _SkipRow("Missing required field: warehouse_id")
 
-    # Find item by SKU
-    item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
+    item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": row.sku}).fetchone()
     if not item_row:
-        raise _SkipRow(f"Item not found: {sku}")
+        raise _SkipRow(f"Item not found: {row.sku}")
 
-    # Find or create PO
-    po_row = db.execute(text("SELECT po_id FROM purchase_orders WHERE po_number = :pn"), {"pn": po_number}).fetchone()
+    po_row = db.execute(text("SELECT po_id FROM purchase_orders WHERE po_number = :pn"), {"pn": row.po_number}).fetchone()
     if not po_row:
         result = db.execute(
             text("""
@@ -515,13 +537,12 @@ def _import_purchase_order(db, rec, idx, errors, default_warehouse_id=None):
                 VALUES (:pn, :pn, :vendor, :exp_date, :wid, 'OPEN')
                 RETURNING po_id
             """),
-            {"pn": po_number, "vendor": rec.get("vendor"), "exp_date": rec.get("expected_date") or None, "wid": warehouse_id},
+            {"pn": row.po_number, "vendor": row.vendor, "exp_date": row.expected_date or None, "wid": warehouse_id},
         )
         po_id = result.fetchone()[0]
     else:
         po_id = po_row.po_id
 
-    # Get next line number
     max_ln = db.execute(text("SELECT COALESCE(MAX(line_number), 0) FROM purchase_order_lines WHERE po_id = :pid"), {"pid": po_id}).scalar()
 
     db.execute(
@@ -530,29 +551,20 @@ def _import_purchase_order(db, rec, idx, errors, default_warehouse_id=None):
     )
 
 
-def _import_sales_order(db, rec, idx, errors, default_warehouse_id=None):
-    so_number = rec.get("so_number")
-    sku = rec.get("sku")
-    if not so_number:
-        raise _SkipRow("Missing required field: so_number")
-    if not sku:
-        raise _SkipRow("Missing required field: sku")
-
-    quantity = int(rec.get("quantity") or rec.get("quantity_ordered") or 0)
+def _import_sales_order(db, row: SalesOrderImportRow, default_warehouse_id=None):
+    quantity = row.resolved_quantity() or 0
     if quantity <= 0:
         raise _SkipRow("quantity must be > 0")
 
-    warehouse_id = rec.get("warehouse_id") or default_warehouse_id
+    warehouse_id = row.warehouse_id or default_warehouse_id
     if not warehouse_id:
         raise _SkipRow("Missing required field: warehouse_id")
 
-    # Find item by SKU
-    item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": sku}).fetchone()
+    item_row = db.execute(text("SELECT item_id FROM items WHERE sku = :sku"), {"sku": row.sku}).fetchone()
     if not item_row:
-        raise _SkipRow(f"Item not found: {sku}")
+        raise _SkipRow(f"Item not found: {row.sku}")
 
-    # Find or create SO
-    so_row = db.execute(text("SELECT so_id FROM sales_orders WHERE so_number = :sn"), {"sn": so_number}).fetchone()
+    so_row = db.execute(text("SELECT so_id FROM sales_orders WHERE so_number = :sn"), {"sn": row.so_number}).fetchone()
     if not so_row:
         result = db.execute(
             text("""
@@ -560,7 +572,7 @@ def _import_sales_order(db, rec, idx, errors, default_warehouse_id=None):
                 VALUES (:sn, :sn, :cust, :phone, :caddr, :wid, NOW(), 'OPEN')
                 RETURNING so_id
             """),
-            {"sn": so_number, "cust": rec.get("customer"), "phone": rec.get("customer_phone"), "caddr": rec.get("customer_address"), "wid": warehouse_id},
+            {"sn": row.so_number, "cust": row.customer, "phone": row.customer_phone, "caddr": row.customer_address, "wid": warehouse_id},
         )
         so_id = result.fetchone()[0]
     else:
