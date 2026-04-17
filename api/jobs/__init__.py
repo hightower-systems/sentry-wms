@@ -30,8 +30,20 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
+# V-024: run cleanup tasks on a beat schedule. Celery beat must be running
+# for these to fire -- add a celery-beat service to docker-compose alongside
+# the worker, or run `celery -A jobs beat` in the same container as the
+# worker when a single-process deployment is fine.
+celery_app.conf.beat_schedule = {
+    "cleanup-login-attempts-every-15-min": {
+        "task": "jobs.cleanup_tasks.cleanup_login_attempts",
+        "schedule": 15 * 60.0,  # seconds
+    },
+}
+
 # Auto-discover task modules in the jobs package
 celery_app.autodiscover_tasks(["jobs"], related_name="sync_tasks")
+celery_app.autodiscover_tasks(["jobs"], related_name="cleanup_tasks")
 
 # Import connector modules so they auto-register in worker processes
 import connectors.example  # noqa: E402, F401

@@ -22,12 +22,24 @@ ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfe
 
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+# V-024: cap login_attempts.key at 64 chars so an attacker cannot bloat
+# the table by spraying long random usernames. Anything longer is SHA-256
+# hashed (hex digest = 64 chars) before it reaches the DB.
+LOGIN_ATTEMPT_KEY_MAX_LEN = 64
 
 auth_bp = Blueprint("auth", __name__)
 
 
+def _normalize_rate_limit_key(key: str) -> str:
+    if len(key) <= LOGIN_ATTEMPT_KEY_MAX_LEN:
+        return key
+    import hashlib
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def _check_rate_limit(db, key):
     """Check if a rate-limit key is locked out. Returns (locked, remaining_seconds)."""
+    key = _normalize_rate_limit_key(key)
     row = db.execute(
         text("SELECT attempts, locked_until FROM login_attempts WHERE key = :key"),
         {"key": key},
@@ -54,6 +66,7 @@ def _record_failure(db, key, allow_lockout):
     True when ``allow_lockout`` is also True and the key has crossed
     the threshold.
     """
+    key = _normalize_rate_limit_key(key)
     lockout_at = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
     db.execute(
         text("""
@@ -81,6 +94,7 @@ def _record_failure(db, key, allow_lockout):
 
 def _reset_attempts(db, key):
     """Clear attempts after successful login."""
+    key = _normalize_rate_limit_key(key)
     db.execute(
         text("DELETE FROM login_attempts WHERE key = :key"),
         {"key": key},
