@@ -40,7 +40,9 @@ services:
       # host does not expose the API to the internet. Deployments that
       # need external access should layer a reverse proxy (nginx, caddy,
       # cloud ALB) or override this in docker-compose.override.yml.
-      - "127.0.0.1:5000:5000"
+      # Dev laptops that need a phone / scanner on the same LAN to reach
+      # the API directly can set API_BIND_HOST=0.0.0.0 in .env (#64).
+      - "${API_BIND_HOST:-127.0.0.1}:5000:5000"
     depends_on:
       db:
         condition: service_healthy
@@ -90,8 +92,9 @@ services:
     ports:
       # V-040: same rationale as the api service -- loopback only by default.
       # Warehouse deployments that need LAN access (e.g. tablets/scanners)
-      # should override via docker-compose.override.yml or a compose profile.
-      - "127.0.0.1:8080:8080"
+      # should override via docker-compose.override.yml or a compose profile,
+      # or set ADMIN_BIND_HOST=0.0.0.0 in .env for LAN-dev convenience (#64).
+      - "${ADMIN_BIND_HOST:-127.0.0.1}:8080:8080"
     depends_on:
       - api
 

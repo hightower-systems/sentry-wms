@@ -59,21 +59,24 @@ class TestV001_FernetKeyNotHardcoded:
 class TestV040_LoopbackOnlyByDefault:
     def test_api_port_binds_loopback(self):
         compose = _read("docker-compose.yml")
-        # Must not expose 5000 on all interfaces. The loopback-bound form
-        # is "127.0.0.1:5000:5000"; the exposed form is "5000:5000".
+        # Must not expose 5000 on all interfaces. The bind host is
+        # parametrized via API_BIND_HOST (#64); production deployments
+        # that do not set the variable still resolve to 127.0.0.1 via
+        # the ${VAR:-127.0.0.1} default. A bare "5000:5000" would be
+        # a V-040 regression.
         assert '"5000:5000"' not in compose, (
             "docker-compose.yml binds the API port on all interfaces; "
-            "use 127.0.0.1:5000:5000 (V-040)"
+            "use ${API_BIND_HOST:-127.0.0.1}:5000:5000 (V-040)"
         )
-        assert '"127.0.0.1:5000:5000"' in compose
+        assert '"${API_BIND_HOST:-127.0.0.1}:5000:5000"' in compose
 
     def test_admin_port_binds_loopback(self):
         compose = _read("docker-compose.yml")
         assert '"8080:8080"' not in compose, (
             "docker-compose.yml binds the admin port on all interfaces; "
-            "use 127.0.0.1:8080:8080 (V-040)"
+            "use ${ADMIN_BIND_HOST:-127.0.0.1}:8080:8080 (V-040)"
         )
-        assert '"127.0.0.1:8080:8080"' in compose
+        assert '"${ADMIN_BIND_HOST:-127.0.0.1}:8080:8080"' in compose
 
     def test_db_port_still_loopback(self):
         # The database port was already loopback-bound pre-V-040. Regression guard.
@@ -162,13 +165,31 @@ class TestV003_AdminDockerfileProduction:
         assert "/index.html" in nginx_conf
 
     def test_compose_admin_listens_on_8080(self):
-        # V-040 rebound to 127.0.0.1:8080:8080 by default. A deployment that
-        # layers a reverse proxy may override via docker-compose.override.yml
-        # to re-open the binding. The test accepts either form.
+        # V-040 rebound to 127.0.0.1 by default; #64 parametrized the
+        # bind host via ADMIN_BIND_HOST so LAN dev can set 0.0.0.0 in
+        # .env. The test accepts any prefix (bare, literal IP, or the
+        # parametrized default-fallback form) as long as the port
+        # mapping lands on 8080:8080.
         compose = _read("docker-compose.yml")
-        assert re.search(r'"(127\.0\.0\.1:)?8080:8080"', compose), (
+        assert re.search(r'"(\S*:)?8080:8080"', compose), (
             "compose must publish admin on port 8080"
         )
+
+    def test_compose_admin_bind_host_defaults_to_loopback(self):
+        # #64: LAN dev can override ADMIN_BIND_HOST; the DEFAULT must
+        # still be 127.0.0.1 so a production deploy that does not set
+        # the variable stays V-040-safe.
+        compose = _read("docker-compose.yml")
+        assert re.search(
+            r'"\$\{ADMIN_BIND_HOST:-127\.0\.0\.1\}:8080:8080"', compose
+        ), "admin port binding must default to 127.0.0.1"
+
+    def test_compose_api_bind_host_defaults_to_loopback(self):
+        # #64: same invariant for the api service.
+        compose = _read("docker-compose.yml")
+        assert re.search(
+            r'"\$\{API_BIND_HOST:-127\.0\.0\.1\}:5000:5000"', compose
+        ), "api port binding must default to 127.0.0.1"
 
     def test_compose_admin_no_bind_mount(self):
         # The prod compose must not bind-mount ./admin into the container;
