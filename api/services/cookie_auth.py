@@ -30,6 +30,10 @@ def _cookie_secure() -> bool:
 
 
 def set_auth_cookies(response, token: str, csrf_token: str) -> None:
+    # NOTE (V-112): SameSite=Strict is correct for the current LAN
+    # deployment model. Revisit if SSO / external-link integration is
+    # scoped (clicks from external providers would be cross-site nav
+    # and would not carry the cookie under Strict).
     secure = _cookie_secure()
     max_age = TOKEN_EXPIRY_HOURS * 3600
     response.set_cookie(
