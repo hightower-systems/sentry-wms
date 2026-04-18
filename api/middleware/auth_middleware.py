@@ -15,6 +15,17 @@ from services.cookie_auth import (
 )
 
 
+# Endpoints a user with must_change_password=true is allowed to call.
+# Any other endpoint returns 403 password_change_required until the user
+# completes the change-password flow. Keep this list tight -- adding a
+# fourth entry widens the forced-change escape hatch and warrants review.
+FORCED_CHANGE_ALLOWED_ENDPOINTS = frozenset({
+    "auth.change_password",
+    "auth.logout",
+    "auth.me",
+})
+
+
 def _extract_token():
     """Return (token, source) where source is 'header' or 'cookie', or (None, None)."""
     auth_header = request.headers.get("Authorization")
@@ -52,7 +63,8 @@ def require_auth(f):
         try:
             row = db.execute(
                 text(
-                    "SELECT role, is_active, warehouse_ids, password_changed_at "
+                    "SELECT role, is_active, warehouse_ids, password_changed_at, "
+                    "must_change_password "
                     "FROM users WHERE user_id = :uid"
                 ),
                 {"uid": payload["user_id"]},
@@ -75,6 +87,17 @@ def require_auth(f):
         payload["warehouse_ids"] = list(row.warehouse_ids) if row.warehouse_ids else []
 
         g.current_user = payload
+
+        # Forced password change: when the flag is set the user can only
+        # hit change-password / logout / me. Everything else is 403 until
+        # the flag clears. Matched by Flask endpoint (blueprint.view_fn),
+        # not URL path, so query strings and method variants cannot slip
+        # past.
+        if row.must_change_password and request.endpoint not in FORCED_CHANGE_ALLOWED_ENDPOINTS:
+            return jsonify({
+                "error": "password_change_required",
+                "message": "Admin must change password before accessing other resources",
+            }), 403
 
         # Warehouse authorization: non-admin users can only access assigned
         # warehouses.
