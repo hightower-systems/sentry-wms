@@ -1119,3 +1119,15 @@ class TestRepeatOffender23_WarehouseHardDelete:
         resp = client.get(f"/api/admin/warehouses/{wh_id}", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["warehouse"]["is_active"] is False
+
+
+class TestInterWarehouseTransfersList:
+    """Bug #65: GET /api/admin/inter-warehouse-transfers 500s on nonexistent bt.notes column."""
+
+    def test_list_returns_200(self, client, auth_headers):
+        """Endpoint must return 200 even when no transfers exist (fresh seed)."""
+        resp = client.get("/api/admin/inter-warehouse-transfers?limit=50", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "transfers" in data
+        assert isinstance(data["transfers"], list)
