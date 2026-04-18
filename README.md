@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.3.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-570%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.4.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-647%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -266,7 +266,7 @@ per-finding list closed in this release. Highlights:
 
 ### Testing
 
-570 backend tests using transaction-rollback isolation (savepoint per test, rollback after).
+647 backend tests using transaction-rollback isolation (savepoint per test, rollback after).
 Runs in ~18 seconds. 24 are infrastructure-config tests that correctly skip when the suite
 runs inside the api container.
 
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.3.0 - Connector framework and security hardening**
+**v1.4.0 - Security backlog cleanup**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -303,7 +303,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | **v1.1.0** | **Security hardening - JWT claims, token invalidation, rate limiting, pagination, password policy** | ✅ **Released** |
 | **v1.2.0** | **Pydantic validation schemas, React error boundaries, standardized error format** | ✅ **Released** |
 | **v1.3.0** | **Connector framework (Celery + Redis + credential vault + sync health + rate limiter), external security audit with 80 findings triaged, 4 Critical + 12 High fixes landed, audit-log tamper resistance, SSRF allowlist, inventory-race hardening** | ✅ **Released** |
-| v1.4.0 | CSP + HttpOnly cookie auth, mobile SecureStore migration, DNS-rebinding guard, `pip-audit` / `npm-audit` CI, MFA for ADMIN | Planned |
+| **v1.4.0** | **Security backlog cleanup - HttpOnly cookie + CSRF for admin auth (V-045), mobile SecureStore migration (V-047), strict Content-Security-Policy (V-050), Flask-Limiter rate limiting (V-041), `pip-audit` + `npm audit` in CI (V-042), DNS-rebinding pin (V-108), self-hosted fonts (V-110), and all 9 v1.4 audit findings (V-100 through V-111) closed** | ✅ **Released** |
 | v2.0.0 | First-party ERP + commerce connectors (NetSuite, QuickBooks, Shopify, Fabric) on top of the v1.3 connector framework | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -316,4 +316,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.3.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.4.0

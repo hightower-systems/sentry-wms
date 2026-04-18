@@ -2,6 +2,74 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.4.0] - 2026-04-18
+
+Pure security and hardening release. No new features. Closes the remaining High-severity items from the v1.3.0 audit backlog, every finding from a fresh audit of the v1.4 work (V-100 through V-111), and the most impactful Medium / Low items.
+
+### Security -- v1.3 backlog (Priority 1)
+- **V-045** -- Admin JWT moved out of `localStorage` into an HttpOnly cookie. CSRF double-submit pattern (`X-CSRF-Token` header cross-checked against a non-HttpOnly companion cookie) protects all mutating methods on admin endpoints. Mobile continues using bearer tokens; the cookie + CSRF path and the bearer path resolve to the same server-side auth middleware.
+- **V-047** -- Mobile JWT migrated from plaintext AsyncStorage to the Android Keystore via `expo-secure-store`. One-shot migration on app launch copies any existing AsyncStorage token into SecureStore and then wipes the AsyncStorage copy; `clearAllAuth` wipes both backends.
+- **V-048** -- Cleartext HTTP stays allowed in all build profiles (warehouse LANs require it). Risk is accepted and documented in `SECURITY_BACKLOG.md` with revisit condition: the hosted / cloud deployment option.
+- **V-050** -- Strict Content-Security-Policy set by the API and mirrored by nginx on the admin container. `default-src 'self'`, `script-src 'self'` with per-build SRI hashes, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data:`, `font-src 'self'`, `connect-src 'self'`.
+
+### Security -- v1.3 backlog (Priority 2)
+- **V-006** -- Fernet cache held in module state. Python cannot reliably zero memory; threat model assumes local-read adversary. Accepted, documented in `SECURITY_BACKLOG.md`.
+- **V-007** -- `scrub_secrets()` applied to Celery task error strings so decrypted credentials cannot leak through traceback payloads.
+- **V-008** -- Closed via the v1.3 V-001 hard `RuntimeError` on missing `SENTRY_ENCRYPTION_KEY`. No new code change; verification only.
+- **V-010** -- Connector registry rejects duplicate registration of the same connector name with a `ValueError` at import time rather than silently overwriting.
+- **V-012** -- Stale `running` sync_state recovery. New `running_since` and `run_id` columns (migrations 017 and 018). A fresh worker whose state is older than the 1-hour takeover threshold claims the row with a new `run_id`; any late write from the stale worker is dropped on UUID mismatch.
+- **V-016** -- `Content-Type: application/json` now required on POST / PUT / PATCH; non-JSON requests return `415 Unsupported Media Type`.
+- **V-017** -- Pydantic schemas use `model_config = ConfigDict(extra="forbid")` so unknown request body fields return `validation_error` instead of silently dropping.
+- **V-020** -- ErrorBoundary console output goes through a scrub helper that redacts bearer tokens and cookie values before log emission.
+- **V-021** -- Admin UI surfaces operator-friendly messages on common failures (403, 404, 409, 429, validation) instead of raw `response.error`.
+- **V-024** -- `login_attempts` table now has a periodic cleanup (`delete_stale_login_attempts()`) and a 254-char cap on the username column to bound storage.
+- **V-031** -- Last-admin delete race closed by SELECT FOR UPDATE on the count query inside the delete transaction. Two concurrent deletes can no longer both pass the "one admin remains" check.
+- **V-033** -- URL-path `warehouse_id` is now the authoritative value; middleware rejects any request whose body or query-string `warehouse_id` disagrees with the path.
+- **V-040** -- API and admin containers default to `127.0.0.1` bind (parametrized via `API_BIND_HOST` and `ADMIN_BIND_HOST`). Production deployments behind a reverse proxy are unaffected. LAN-dev workflows set both to `0.0.0.0` in a local `.env`.
+- **V-041** -- Flask-Limiter enabled globally (300 / minute per client) and tightened per-route on auth, sync-reset, and connector test-connection. Backed by the existing `REDIS_PASSWORD`-authenticated Redis broker.
+- **V-042** -- `pip-audit` and `npm audit` gate every push. `.github/workflows/dependency-audit.yml` runs both on the hardened prod deps and fails the run on any non-ignored advisory.
+- **V-046** -- Subresource Integrity hashes generated at admin build time and written into the nginx-served `index.html` for the Vite bundle `<script>` and `<style>` tags.
+- **V-051** -- HSTS header set on the API when the request is served over HTTPS; `Strict-Transport-Security: max-age=63072000; includeSubDomains`. Nginx mirror added in V-111 below.
+
+### Security -- v1.4 audit findings (V-100 through V-111)
+- **V-100** -- Logout endpoint gated by CSRF. Previously the cookie-only logout path could be triggered cross-origin.
+- **V-101** -- `POST /api/admin/connectors/<name>/sync-reset` writes an `audit_log` row and is rate-limited; it was the only admin-mutation without either.
+- **V-102** -- Sync state write race. The `run_id` UUID from V-012 plus a `WHERE run_id = :expected` clause prevents a stale worker from clobbering a fresh run's progress even after the takeover threshold.
+- **V-103** -- Coverage extension of V-033 to the remaining admin endpoints that still read `warehouse_id` from the body.
+- **V-104** -- Mobile SecureStore migration hardening. The migration step always clears AsyncStorage (even when the migration source is empty) so an abandoned pre-1.4 token cannot resurface. `clearAllAuth` wipes both backends on logout.
+- **V-107** -- Rate limiter docstring was inaccurate about storage URI precedence; corrected. Added `rediss://` (TLS) URI support for deployments with a TLS-fronted Redis.
+- **V-108** -- DNS rebinding pin on connector outbound requests. The SSRF guard resolves the hostname once, validates the address against the blocklist, then connects to the pinned IP while preserving the original `Host` header. A rebind between validate and connect no longer bypasses the guard.
+- **V-110** -- Self-hosted Instrument Sans and JetBrains Mono under `admin/public/fonts/`, SIL Open Font License. Removes the last third-party origin; lets `font-src 'self'` stay strict.
+- **V-111** -- Nginx CSP and HSTS headers mirror the API's values so admin responses that are served straight out of nginx carry the same policy.
+
+### Fixes -- collateral
+- **#56** -- `test_compose_admin_listens_on_8080` updated for the V-040 loopback binding; the assertion now matches either `127.0.0.1:8080` or `0.0.0.0:8080` depending on `ADMIN_BIND_HOST`.
+- **#57** -- Mobile npm audit scoped to production dependencies. `tar` pinned to clear two GHSA path-traversal advisories in the dev toolchain.
+- **#58** -- Bumped `flask`, `flask-cors`, `pyjwt`, and `requests` to clear pip-audit advisories.
+- **#62** -- Deferred-advisory ignore pattern for pip-audit and npm audit so the job does not page on findings tracked as known-accepted in `SECURITY_BACKLOG.md`.
+- **#63** -- Admin Users edit form no longer sends `username` in the PUT body. The `UserUpdate` schema rejects it with `extra="forbid"` per V-017, which the form was tripping.
+- **#64** -- `API_BIND_HOST` and `ADMIN_BIND_HOST` parametrized so LAN-dev can override the V-040 loopback binding without forking the compose file.
+- **#65** -- `/api/admin/inter-warehouse-transfers` removed a `bt.notes` SELECT + response field that referenced a column the `bin_transfers` schema never had. Endpoint returned 500 on every call; now returns 200.
+
+### Accepted risks
+- **V-048** -- Cleartext HTTP in all build profiles. Profile-gating was tried in v1.1 and reverted in v1.1.1 because warehouse LAN deployments require HTTP. Revisit when the hosted / cloud deployment option ships.
+- **V-006** -- Fernet cache in module state. Python cannot reliably zero memory; threat model assumes a local-read adversary already has process memory access.
+
+### Deferred to v1.5
+Open issues with `v1.5` labels: **#52** (V-105 broaden `scrub_secrets` to non-URL credential fragments), **#53** (V-106 scrub `ConnectionResult.message` content), **#54** (V-109 CSP `report-to` endpoint), **#55** (V-113 drop carriage return from `ConnectionResult` allowlist), **#59** (bump `cryptography` 44.0.3 -> 46.0.x), **#60** (bump `pytest` 8.3.4 -> 9.0.3), **#61** (bump `eas-cli` to 0.52.0).
+
+### Tests
+- 647 backend tests passing (up from 570), 54 skipped inside the api container for infrastructure-config assertions.
+- 32 admin frontend tests passing.
+- 8 mobile tests passing.
+- All CI workflows green on tag (`Tests`, `Dependency Audit`, `Deploy Docs`).
+
+### Notes for operators
+- Admin panel now authenticates via HttpOnly cookie + CSRF. On upgrade, clear `localStorage` and cookies for the admin origin and log in fresh.
+- Mobile JWT migrated to SecureStore on first launch. Users may need to log in once after upgrade.
+- API and admin containers default to `127.0.0.1` bind. Production behind a reverse proxy is unaffected. LAN-dev with a scanner on the same network must set `API_BIND_HOST=0.0.0.0` and `ADMIN_BIND_HOST=0.0.0.0` in a local `.env`.
+- Migrations `017_sync_state_running_since.sql` and `018_sync_state_run_id.sql` must be applied before running v1.4.0 against an existing v1.3 database.
+
 ## [v1.3.0] - 2026-04-16
 
 ### Added -- connector framework (Phases 1-5)
