@@ -188,7 +188,10 @@ def logout():
 def me():
     user_id = g.current_user["user_id"]
     row = g.db.execute(
-        text("SELECT user_id, username, full_name, role, warehouse_id, allowed_functions FROM users WHERE user_id = :uid"),
+        text(
+            "SELECT user_id, username, full_name, role, warehouse_id, allowed_functions, "
+            "must_change_password FROM users WHERE user_id = :uid"
+        ),
         {"uid": user_id},
     ).fetchone()
     if not row:
@@ -216,6 +219,7 @@ def me():
         "warehouse_id": row.warehouse_id,
         "allowed_functions": functions,
         "require_packing": require_packing,
+        "must_change_password": bool(row.must_change_password),
     })
 
 
