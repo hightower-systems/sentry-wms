@@ -573,6 +573,7 @@ CREATE TABLE sync_state (
     sync_type VARCHAR(32) NOT NULL,              -- 'orders', 'items', 'inventory', 'fulfillment'
     sync_status VARCHAR(16) DEFAULT 'idle',      -- 'idle', 'running', 'error'
     running_since TIMESTAMPTZ,                    -- V-012: stale 'running' recovery timestamp
+    run_id UUID,                                  -- V-102: generation id; transitions match on this
     last_synced_at TIMESTAMPTZ,
     last_success_at TIMESTAMPTZ,
     last_error_at TIMESTAMPTZ,
