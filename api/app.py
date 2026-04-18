@@ -42,11 +42,16 @@ def create_app():
     init_limiter(app)
 
     # Security response headers
+    # V-110: fonts are now self-hosted under admin/public/fonts and
+    # served by the admin nginx container. Neither style-src nor
+    # font-src carry a Google origin, so the admin panel has no
+    # third-party asset dependency and a successful XSS cannot load
+    # an attacker-controlled stylesheet or font from any origin.
     csp_policy = (
         "default-src 'self'; "
         "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
         "frame-ancestors 'none'; "
