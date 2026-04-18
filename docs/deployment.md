@@ -62,10 +62,9 @@ SKIP_SEED=true docker compose up -d
 docker compose exec api python -m pytest tests/ -x -q
 ```
 
-570 backend tests using transaction-rollback isolation. Runs in about 18 seconds.
-24 of those are infrastructure-config assertions and correctly skip when the
-suite runs inside the api container; run on the host (`python -m pytest tests/`)
-to get full coverage.
+647 backend tests using transaction-rollback isolation (54 skipped inside the
+api container for infrastructure-config assertions; run on the host with
+`python -m pytest tests/` to get full coverage).
 
 ---
 
@@ -121,18 +120,47 @@ Key differences from the dev compose:
 
 ### Required migration
 
-Before running v1.3.0 against an existing v1.2 database, apply migration
+Before running v1.3.0+ against an existing v1.2 database, apply migration
 `db/migrations/016_audit_log_tamper_resistance.sql`. It adds the
 `prev_hash` / `row_hash` columns on `audit_log`, installs the hash-chain
 trigger and the `BEFORE UPDATE / BEFORE DELETE` guards, and exposes
-`verify_audit_log_chain()` for periodic integrity checks.
+`verify_audit_log_chain()` for periodic integrity checks. v1.4.0 adds
+migrations `017_sync_state_running_since.sql` and
+`018_sync_state_run_id.sql` for the stale-running sync recovery (V-012)
+and sync_state race fix (V-102).
 
 ### Infrastructure Notes
 
 - PostgreSQL port is bound to `127.0.0.1:5432` only (not exposed to the network)
+- API and admin ports default to `127.0.0.1` (see LAN development access below)
 - API runs Gunicorn with 4 workers (not the Flask dev server)
 - Container runs as non-root user `appuser`
 - `debug=False` is hardcoded in `app.py`
+
+### Content-Security-Policy
+
+A strict CSP header is set by the API and mirrored by nginx in the admin
+container. `default-src 'self'`, `script-src 'self'` with per-build SRI
+hashes, `style-src 'self' 'unsafe-inline'`, `img-src 'self' data:`,
+`font-src 'self'`, `connect-src 'self'`. If you override `CORS_ORIGINS`
+you do not need to edit the CSP -- `connect-src 'self'` is same-origin
+only and browser requests to the API go through the admin origin.
+
+### Rate limiting
+
+Flask-Limiter is enabled by default, backed by the same Redis broker as
+Celery. Global default is `300/minute` per client; sensitive endpoints
+(auth, sync-reset, connector test-connection) have tighter per-route
+quotas. The limiter reads from the `REDIS_PASSWORD`-authenticated
+broker URL; set `RATELIMIT_STORAGE_URI` explicitly if you want a
+separate Redis instance.
+
+### Self-hosted fonts
+
+Instrument Sans and JetBrains Mono ship inside `admin/public/fonts/`
+under the SIL Open Font License. No third-party font requests are made
+at runtime -- relevant if you have strict egress controls on the
+warehouse network.
 
 ### LAN development access
 
@@ -191,7 +219,7 @@ Download the APK from the [GitHub Releases](https://github.com/hightower-systems
 Install via ADB:
 
 ```bash
-adb install sentry-wms-v1.3.0.apk
+adb install sentry-wms-v1.4.0.apk
 ```
 
 Or transfer the APK to the device and open it from the file manager.

@@ -67,6 +67,6 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Current Version
 
-v1.3.0 -- 570 tests passing, connector framework shipped, external security audit with 4 Critical + 12 High fixes landed. See [CHANGELOG.md](https://github.com/hightower-systems/sentry-wms/blob/main/CHANGELOG.md) for details and [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md) for the security advisory rotation steps.
+v1.4.0 -- Security backlog cleanup. HttpOnly cookie + CSRF for admin auth, SecureStore on mobile, strict Content-Security-Policy, Flask-Limiter rate limiting, self-hosted fonts, and dependency audit in CI. 647 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.0 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.0).
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).

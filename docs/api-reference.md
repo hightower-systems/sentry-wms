@@ -1,10 +1,23 @@
 # API Reference
 
-All endpoints are prefixed with `/api`. Authentication uses Bearer JWT tokens in the `Authorization` header.
+All endpoints are prefixed with `/api`. The API supports two authentication paths:
+
+**Bearer token (mobile, CLI, any programmatic caller):**
 
 ```
 Authorization: Bearer <token>
 ```
+
+**HttpOnly cookie + CSRF (admin panel browser sessions):**
+
+The admin panel's JWT lives in an HttpOnly cookie set at login. Browser requests on mutating methods (POST, PUT, PATCH, DELETE) must include the CSRF double-submit header:
+
+```
+Cookie: sentry_auth=<jwt>
+X-CSRF-Token: <csrf-token>
+```
+
+The CSRF token is returned by `POST /api/auth/login` alongside the user payload and is also readable by the admin panel via a non-HttpOnly companion cookie. Bearer-token callers never need CSRF. Both paths resolve to the same server-side auth middleware; individual endpoint docs below use bearer examples for brevity.
 
 ---
 
@@ -992,7 +1005,7 @@ curl "http://localhost:5000/api/lookup/bin/search?q=A-01" \
 
 ## Admin Endpoints
 
-All admin endpoints require authentication and the **ADMIN** role.
+All admin endpoints require authentication and the **ADMIN** role. Mutating admin endpoints (POST / PUT / PATCH / DELETE) called via the HttpOnly-cookie path must include the `X-CSRF-Token` header. Bearer-token callers are unaffected.
 
 ---
 

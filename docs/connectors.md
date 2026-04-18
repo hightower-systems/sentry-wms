@@ -148,10 +148,11 @@ section for request / response details. Every endpoint requires
   internal docker service names (`redis`, `db`, `api`, `admin`,
   `celery-worker`, plus `sentry-*` aliases). A single private result
   in a multi-record DNS lookup blocks the whole URL.
-- **DNS rebinding** -- the v1.3 guard does not pin the resolved IP
-  for the actual request. DNS rebinding (public first, private on
-  connect) is tracked in
-  [SECURITY_BACKLOG.md](../SECURITY_BACKLOG.md) for v1.4.
+- **DNS rebinding** -- v1.4.0 pins the resolved IP (V-108). The SSRF
+  guard resolves the hostname once, validates the address against the
+  blocklist, and then connects to the pinned IP while preserving the
+  original `Host` header for TLS / vhost routing. A rebind between
+  validation and connect no longer bypasses the guard.
 - **Credential handling** -- credentials are never returned in
   plaintext through the API. The vault is the only code path that
   sees plaintext values; it reads / writes Fernet ciphertext to
@@ -167,9 +168,12 @@ section for request / response details. Every endpoint requires
 
 ## Troubleshooting
 
-**Sync stuck in `running`.** v1.3 does not yet have a heartbeat-based
-stale-running detection (tracked as V-012 in the backlog). If a worker
-crashes mid-task, reset the state manually:
+**Sync stuck in `running`.** v1.4.0 adds stale-running recovery
+(V-012, V-102). A fresh worker that finds a `running` state older
+than the 1-hour takeover threshold claims it with a new `run_id`, and
+the stale worker's late writes are dropped on UUID mismatch. If you
+need to force an immediate reset (for example, during a controlled
+restart), you can still clear the row manually:
 
 ```sql
 UPDATE sync_state

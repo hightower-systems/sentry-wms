@@ -44,6 +44,7 @@ nav:
   - Connectors: connectors.md
   - Test Lab: test-lab.md
   - Contributing: contributing.md
+  - Changelog: changelog.md
 
 markdown_extensions:
   - tables
