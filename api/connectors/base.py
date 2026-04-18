@@ -49,7 +49,9 @@ from connectors.rate_limiter import (
     RateLimitState,
     exponential_backoff,
 )
-from connectors.url_guard import BlockedDestinationError, assert_url_allowed
+from urllib.parse import urlsplit as _urlsplit
+
+from connectors.url_guard import BlockedDestinationError, assert_url_allowed, pinned_host
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +184,15 @@ class BaseConnector(ABC):
             requests.HTTPError: For final 5xx responses after exhausting retries.
             requests.RequestException: For network-level errors after exhausting retries.
         """
-        # Reject internal / private / loopback destinations before issuing
-        # the HTTP call. See connectors/url_guard.py for the blocklist.
-        assert_url_allowed(url)
+        # V-009 + V-108: reject internal / private / loopback destinations
+        # before issuing the HTTP call, and pin DNS resolution to the
+        # validated IP so an attacker-controlled DNS server cannot return
+        # a public IP on the guard lookup and a private IP on the actual
+        # connection. assert_url_allowed returns the IP to pin; the
+        # retry loop below runs inside pinned_host(hostname, ip) so
+        # every attempt uses the same validated address.
+        pinned_ip = assert_url_allowed(url)
+        request_hostname = (_urlsplit(url).hostname or "").lower()
 
         # Fail fast if the circuit is open
         self._circuit_breaker.check()
@@ -203,56 +211,57 @@ class BaseConnector(ABC):
             time.sleep(wait)
 
         last_exception = None
-        for attempt in range(MAX_RETRIES_PER_CALL):
-            try:
-                response = requests.request(method, url, **kwargs)
-            except requests.RequestException as exc:
-                last_exception = exc
-                logger.warning(
-                    "Request error on attempt %d: %s", attempt + 1, exc,
+        with pinned_host(request_hostname, pinned_ip):
+            for attempt in range(MAX_RETRIES_PER_CALL):
+                try:
+                    response = requests.request(method, url, **kwargs)
+                except requests.RequestException as exc:
+                    last_exception = exc
+                    logger.warning(
+                        "Request error on attempt %d: %s", attempt + 1, exc,
+                    )
+                    self._circuit_breaker.record_failure()
+                    if attempt + 1 < MAX_RETRIES_PER_CALL:
+                        time.sleep(exponential_backoff(attempt))
+                    continue
+
+                # Update rate limit state from response headers
+                self._rate_limit.update_from_response(
+                    response,
+                    self.rate_limit_remaining_header,
+                    self.rate_limit_limit_header,
+                    self.retry_after_header,
                 )
-                self._circuit_breaker.record_failure()
-                if attempt + 1 < MAX_RETRIES_PER_CALL:
-                    time.sleep(exponential_backoff(attempt))
-                continue
 
-            # Update rate limit state from response headers
-            self._rate_limit.update_from_response(
-                response,
-                self.rate_limit_remaining_header,
-                self.rate_limit_limit_header,
-                self.retry_after_header,
-            )
+                # 429 (rate limited) and 503 (service unavailable) are retryable
+                if response.status_code in (429, 503) and attempt + 1 < MAX_RETRIES_PER_CALL:
+                    # Respect Retry-After if the server set one, otherwise exponential backoff
+                    if self._rate_limit.retry_after and self._rate_limit.retry_after > 0:
+                        delay = self._rate_limit.retry_after
+                        self._rate_limit.retry_after = None
+                    else:
+                        delay = exponential_backoff(attempt)
+                    logger.info(
+                        "Got %d, retrying in %.2fs (attempt %d/%d)",
+                        response.status_code, delay, attempt + 1, MAX_RETRIES_PER_CALL,
+                    )
+                    time.sleep(delay)
+                    continue
 
-            # 429 (rate limited) and 503 (service unavailable) are retryable
-            if response.status_code in (429, 503) and attempt + 1 < MAX_RETRIES_PER_CALL:
-                # Respect Retry-After if the server set one, otherwise exponential backoff
-                if self._rate_limit.retry_after and self._rate_limit.retry_after > 0:
-                    delay = self._rate_limit.retry_after
-                    self._rate_limit.retry_after = None
+                # Success or non-retryable failure - update breaker and return
+                if response.status_code < 500:
+                    self._circuit_breaker.record_success()
                 else:
-                    delay = exponential_backoff(attempt)
-                logger.info(
-                    "Got %d, retrying in %.2fs (attempt %d/%d)",
-                    response.status_code, delay, attempt + 1, MAX_RETRIES_PER_CALL,
-                )
-                time.sleep(delay)
-                continue
+                    self._circuit_breaker.record_failure()
 
-            # Success or non-retryable failure - update breaker and return
-            if response.status_code < 500:
-                self._circuit_breaker.record_success()
-            else:
-                self._circuit_breaker.record_failure()
+                return response
 
+            # Exhausted all retries with a connection error
+            self._circuit_breaker.record_failure()
+            if last_exception is not None:
+                raise last_exception
+            # Should not reach here, but return the last 429/503 response just in case
             return response
-
-        # Exhausted all retries with a connection error
-        self._circuit_breaker.record_failure()
-        if last_exception is not None:
-            raise last_exception
-        # Should not reach here, but return the last 429/503 response just in case
-        return response
 
     @abstractmethod
     def sync_orders(self, since: datetime) -> SyncResult:
