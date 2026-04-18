@@ -28,6 +28,19 @@ export function AuthProvider({ children }) {
     return () => { cancelled = true; };
   }, []);
 
+  // Re-fetch /auth/me. Used after change-password to pick up the cleared
+  // must_change_password flag so the router guard lets the user out of
+  // the forced-change screen.
+  async function refreshUser() {
+    const res = await api.get('/auth/me');
+    if (res && res.ok) {
+      const data = await res.json();
+      setUser(data);
+      return data;
+    }
+    return null;
+  }
+
   async function login(username, password) {
     const res = await api.post('/auth/login', { username, password });
     if (!res || !res.ok) {
@@ -54,7 +67,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

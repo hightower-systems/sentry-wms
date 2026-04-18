@@ -1,8 +1,9 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './auth.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
+import ChangePassword from './pages/ChangePassword.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Inventory from './pages/Inventory.jsx';
 import CycleCounts from './pages/CycleCounts.jsx';
@@ -28,8 +29,16 @@ import InterWarehouseTransfers from './pages/InterWarehouseTransfers.jsx';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
+  // Forced password change: block everything except the change-password
+  // page until the server-side flag clears. The /api/auth/me response is
+  // the source of truth; flipping the admin UI client-side would not
+  // actually let the user past the middleware's 403 anyway.
+  if (user.must_change_password && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
+  }
   return children;
 }
 
@@ -38,6 +47,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+        <Route path="/change-password" element={<ErrorBoundary fallbackMessage="Could not load change-password form."><ChangePassword /></ErrorBoundary>} />
         <Route path="/" element={<ErrorBoundary fallbackMessage="Could not load dashboard."><Dashboard /></ErrorBoundary>} />
         <Route path="/inventory" element={<ErrorBoundary fallbackMessage="Could not load inventory."><Inventory /></ErrorBoundary>} />
         <Route path="/cycle-counts" element={<ErrorBoundary fallbackMessage="Could not load cycle counts."><CycleCounts /></ErrorBoundary>} />
