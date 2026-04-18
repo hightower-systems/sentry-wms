@@ -253,6 +253,7 @@ def refresh():
 @with_db
 def change_password(validated):
     import bcrypt
+    from services.audit_service import write_audit_log
 
     pw_error = validate_password(validated.new_password)
     if pw_error:
@@ -260,18 +261,39 @@ def change_password(validated):
 
     user_id = g.current_user["user_id"]
     row = g.db.execute(
-        text("SELECT password_hash FROM users WHERE user_id = :uid"),
+        text(
+            "SELECT password_hash, must_change_password, username, warehouse_id "
+            "FROM users WHERE user_id = :uid"
+        ),
         {"uid": user_id},
     ).fetchone()
 
     if not row or not bcrypt.checkpw(validated.current_password.encode("utf-8"), row.password_hash.encode("utf-8")):
         return jsonify({"error": "Current password is incorrect"}), 403
 
+    was_forced = bool(row.must_change_password)
+
     new_hash = bcrypt.hashpw(validated.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     g.db.execute(
-        text("UPDATE users SET password_hash = :pw, password_changed_at = NOW() WHERE user_id = :uid"),
+        text(
+            "UPDATE users SET password_hash = :pw, password_changed_at = NOW(), "
+            "must_change_password = FALSE WHERE user_id = :uid"
+        ),
         {"pw": new_hash, "uid": user_id},
     )
+
+    # Distinct action name when the change satisfied a forced-change flag so
+    # operators can grep the audit log for onboarding events separately from
+    # voluntary password rotations.
+    write_audit_log(
+        g.db,
+        action_type="forced_password_change_completed" if was_forced else "password_change",
+        entity_type="user",
+        entity_id=user_id,
+        user_id=row.username,
+        warehouse_id=row.warehouse_id,
+    )
+
     g.db.commit()
 
     return jsonify({"message": "Password changed"})

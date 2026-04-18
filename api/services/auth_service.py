@@ -19,6 +19,14 @@ TOKEN_EXPIRY_HOURS = 8
 
 def validate_password(password):
     """Return an error message if the password is invalid, or None if valid."""
+    # Reject the literal string "admin" (case-insensitive, whitespace-stripped).
+    # Covers "admin", "ADMIN", "Admin", "aDmIn", " admin ", "\tadmin\n", etc.
+    # Checked before length so the error is specific instead of the generic
+    # length message. Matters most after the v1.4.1 forced-password-change
+    # flow, where the default seed credential is literally "admin" and we
+    # must block users from "changing" back to it.
+    if password.strip().lower() == "admin":
+        return "Password cannot be 'admin'"
     if len(password) < 8:
         return "Password must be at least 8 characters"
     if not any(c.isalpha() for c in password):
