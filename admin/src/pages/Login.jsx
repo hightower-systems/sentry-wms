@@ -19,9 +19,8 @@ export default function Login() {
     try {
       const userData = await login(username, password);
       if (userData && userData.role !== 'ADMIN') {
-        // Non-admin users cannot access the admin panel
-        localStorage.removeItem('sentry_token');
-        localStorage.removeItem('sentry_user');
+        // V-045: the login() context function already called /auth/logout
+        // to clear the cookies for non-admin users. Just surface the error.
         setError('Not authorized, contact admin');
         setLoading(false);
         return;

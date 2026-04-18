@@ -120,15 +120,22 @@ def update_user(user_id, validated):
         if "role" in data and data["role"] != "ADMIN":
             return jsonify({"error": "Cannot downgrade your own role"}), 400
 
-    # Prevent deactivating or demoting the last active admin
+    # Prevent deactivating or demoting the last active admin.
+    # V-031: SELECT ... FOR UPDATE locks every active admin row so that a
+    # concurrent demote/deactivate/delete cannot observe the same count
+    # and both proceed to leave zero admins.
     if existing.role == "ADMIN" and existing.is_active:
         demoting = ("role" in data and data["role"] != "ADMIN")
         deactivating = ("is_active" in data and not data["is_active"])
         if demoting or deactivating:
-            admin_count = g.db.execute(
-                text("SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND is_active = TRUE")
-            ).scalar()
-            if admin_count <= 1:
+            admins = g.db.execute(
+                text(
+                    "SELECT user_id FROM users "
+                    "WHERE role = 'ADMIN' AND is_active = TRUE "
+                    "FOR UPDATE"
+                )
+            ).fetchall()
+            if len(admins) <= 1:
                 return jsonify({"error": "Cannot remove the last active admin"}), 400
 
     ALLOWED_FIELDS = {"full_name", "role", "warehouse_id", "is_active"}
@@ -192,15 +199,21 @@ def delete_user(user_id):
     if g.current_user["user_id"] == user_id:
         return jsonify({"error": "Cannot delete yourself"}), 400
 
-    # Prevent deleting the last active admin
+    # Prevent deleting the last active admin.
+    # V-031: same row-locking pattern as update_user so two concurrent
+    # deletes cannot both observe admin_count == 2 and both proceed.
     target = g.db.execute(
         text("SELECT role, is_active FROM users WHERE user_id = :uid"), {"uid": user_id}
     ).fetchone()
     if target and target.role == "ADMIN" and target.is_active:
-        admin_count = g.db.execute(
-            text("SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND is_active = TRUE")
-        ).scalar()
-        if admin_count <= 1:
+        admins = g.db.execute(
+            text(
+                "SELECT user_id FROM users "
+                "WHERE role = 'ADMIN' AND is_active = TRUE "
+                "FOR UPDATE"
+            )
+        ).fetchall()
+        if len(admins) <= 1:
             return jsonify({"error": "Cannot delete the last active admin"}), 400
 
     g.db.execute(text("DELETE FROM users WHERE user_id = :uid"), {"uid": user_id})

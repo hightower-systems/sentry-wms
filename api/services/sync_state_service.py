@@ -8,9 +8,19 @@ working so they can address it before the warehouse floor notices.
 Uses a strict state machine to prevent duplicate sync runs: if a sync
 is already 'running', calling set_running again raises DuplicateRunError
 so two celery workers can't process the same sync simultaneously.
+
+V-102: a stale 'running' row can be taken over after RUNNING_TIMEOUT
+(see V-012). Each transition into 'running' mints a new run_id UUID.
+Standalone completion paths (set_success_standalone / set_error_standalone)
+accept the run_id they started with and only write if the row's
+current run_id still matches. If it does not, the row has been taken
+over by a newer run and the stale completion no-ops; without this
+guard the original worker's set_success would clobber the new worker's
+'running' row back to 'idle'.
 """
 
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from flask import g
@@ -22,6 +32,10 @@ VALID_SYNC_TYPES = ("orders", "items", "inventory", "fulfillment")
 
 # Consecutive errors before flipping status to 'error' (sticky)
 ERROR_THRESHOLD = 3
+
+# V-012: a 'running' row older than this is considered stale (worker
+# crashed or was killed mid-sync) and a new run is allowed to take over.
+RUNNING_TIMEOUT = timedelta(hours=1)
 
 
 class DuplicateRunError(Exception):
@@ -86,55 +100,85 @@ def get_all_sync_states(connector_name: str, warehouse_id: int) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-def _set_running_impl(session, connector_name: str, warehouse_id: int, sync_type: str) -> None:
-    """Shared implementation of set_running that works with any session."""
-    # Check current status - if already running, refuse
+def _set_running_impl(session, connector_name: str, warehouse_id: int, sync_type: str) -> str:
+    """Shared implementation of set_running that works with any session.
+
+    V-012: a row stuck in 'running' past RUNNING_TIMEOUT is considered
+    stale (crashed worker) and a new run takes over. Without the
+    timeout a single crash blocked all future syncs indefinitely.
+
+    V-102: every transition into 'running' mints a new UUID and stores
+    it in the run_id column. Callers carry the returned UUID forward
+    to set_success_standalone / set_error_standalone so their
+    completion is conditional on still being the active run.
+
+    Returns the run_id (string UUID) the caller should pass to the
+    eventual success or error transition.
+    """
     row = session.execute(
         text("""
-            SELECT sync_status FROM sync_state
+            SELECT sync_status, running_since FROM sync_state
             WHERE connector_name = :name AND warehouse_id = :wid AND sync_type = :type
         """),
         {"name": connector_name, "wid": warehouse_id, "type": sync_type},
     ).fetchone()
 
     if row and row.sync_status == "running":
-        raise DuplicateRunError(
-            f"Sync already running: {connector_name}/{warehouse_id}/{sync_type}"
-        )
+        cutoff = datetime.now(timezone.utc) - RUNNING_TIMEOUT
+        # If running_since is set and older than the cutoff, allow takeover.
+        # If running_since is NULL (pre-migration data) treat as fresh -- the
+        # backfill sets a value on deploy; new inserts set it below.
+        if row.running_since is None or row.running_since > cutoff:
+            raise DuplicateRunError(
+                f"Sync already running: {connector_name}/{warehouse_id}/{sync_type}"
+            )
 
-    # Upsert to running
+    new_run_id = str(uuid.uuid4())
     session.execute(
         text("""
-            INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status, updated_at)
-            VALUES (:name, :wid, :type, 'running', NOW())
+            INSERT INTO sync_state (connector_name, warehouse_id, sync_type,
+                                    sync_status, running_since, run_id, updated_at)
+            VALUES (:name, :wid, :type, 'running', NOW(), :run_id, NOW())
             ON CONFLICT (connector_name, warehouse_id, sync_type)
-            DO UPDATE SET sync_status = 'running', updated_at = NOW()
+            DO UPDATE SET sync_status = 'running',
+                          running_since = NOW(),
+                          run_id = :run_id,
+                          updated_at = NOW()
         """),
-        {"name": connector_name, "wid": warehouse_id, "type": sync_type},
+        {"name": connector_name, "wid": warehouse_id, "type": sync_type, "run_id": new_run_id},
     )
+    return new_run_id
 
 
-def set_running(connector_name: str, warehouse_id: int, sync_type: str) -> None:
+def set_running(connector_name: str, warehouse_id: int, sync_type: str) -> str:
     """Mark a sync as running. Raises DuplicateRunError if already running.
 
-    Uses g.db (Flask request context).
+    Uses g.db (Flask request context). Returns the run_id UUID (see
+    V-102). Flask-context callers may ignore the return value because
+    the flask path is single-worker per request and has no race with
+    Celery takeovers; the UUID is still minted so the row's run_id
+    column stays non-NULL.
     """
-    _set_running_impl(g.db, connector_name, warehouse_id, sync_type)
+    return _set_running_impl(g.db, connector_name, warehouse_id, sync_type)
 
 
 def set_success(connector_name: str, warehouse_id: int, sync_type: str) -> None:
     """Mark a sync as succeeded: status=idle, update last_success_at, reset consecutive_errors.
 
-    Uses g.db (Flask request context).
+    Uses g.db (Flask request context). Clears run_id because the
+    completed run is no longer active (V-102).
     """
     now = datetime.now(timezone.utc)
     g.db.execute(
         text("""
             INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                     last_synced_at, last_success_at, consecutive_errors, updated_at)
-            VALUES (:name, :wid, :type, 'idle', :now, :now, 0, :now)
+                                     running_since, run_id, last_synced_at, last_success_at,
+                                     consecutive_errors, updated_at)
+            VALUES (:name, :wid, :type, 'idle', NULL, NULL, :now, :now, 0, :now)
             ON CONFLICT (connector_name, warehouse_id, sync_type)
             DO UPDATE SET sync_status = 'idle',
+                          running_since = NULL,
+                          run_id = NULL,
                           last_synced_at = :now,
                           last_success_at = :now,
                           consecutive_errors = 0,
@@ -147,7 +191,8 @@ def set_success(connector_name: str, warehouse_id: int, sync_type: str) -> None:
 def set_error(connector_name: str, warehouse_id: int, sync_type: str, error_message: str) -> None:
     """Record a sync error: increment consecutive_errors, set status='error' once threshold reached.
 
-    Uses g.db (Flask request context).
+    Uses g.db (Flask request context). Clears run_id because the
+    failed run is no longer active (V-102).
     """
     now = datetime.now(timezone.utc)
     # Look up current error count
@@ -165,11 +210,13 @@ def set_error(connector_name: str, warehouse_id: int, sync_type: str, error_mess
     g.db.execute(
         text("""
             INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                     last_synced_at, last_error_at, last_error_message,
-                                     consecutive_errors, updated_at)
-            VALUES (:name, :wid, :type, :status, :now, :now, :msg, :errors, :now)
+                                     running_since, run_id, last_synced_at, last_error_at,
+                                     last_error_message, consecutive_errors, updated_at)
+            VALUES (:name, :wid, :type, :status, NULL, NULL, :now, :now, :msg, :errors, :now)
             ON CONFLICT (connector_name, warehouse_id, sync_type)
             DO UPDATE SET sync_status = :status,
+                          running_since = NULL,
+                          run_id = NULL,
                           last_synced_at = :now,
                           last_error_at = :now,
                           last_error_message = :msg,
@@ -181,6 +228,41 @@ def set_error(connector_name: str, warehouse_id: int, sync_type: str, error_mess
             "status": new_status, "now": now, "msg": error_message, "errors": new_errors,
         },
     )
+
+
+def reset_running(connector_name: str, warehouse_id: int, sync_type: Optional[str] = None) -> int:
+    """V-012: admin-triggered reset of stuck 'running' rows to 'idle'.
+
+    V-102: also clears run_id so the stuck worker's eventual completion
+    (if it arrives) no-ops against the cleared row instead of flipping
+    it back to idle -- after a reset, only a future set_running call
+    with a fresh run_id may update this row.
+
+    If sync_type is None, all sync types for the connector+warehouse are
+    reset. Returns the number of rows updated. Rows that are not currently
+    running are untouched.
+    """
+    if sync_type is None:
+        result = g.db.execute(
+            text("""
+                UPDATE sync_state
+                SET sync_status = 'idle', running_since = NULL, run_id = NULL, updated_at = NOW()
+                WHERE connector_name = :name AND warehouse_id = :wid
+                  AND sync_status = 'running'
+            """),
+            {"name": connector_name, "wid": warehouse_id},
+        )
+    else:
+        result = g.db.execute(
+            text("""
+                UPDATE sync_state
+                SET sync_status = 'idle', running_since = NULL, run_id = NULL, updated_at = NOW()
+                WHERE connector_name = :name AND warehouse_id = :wid
+                  AND sync_type = :type AND sync_status = 'running'
+            """),
+            {"name": connector_name, "wid": warehouse_id, "type": sync_type},
+        )
+    return result.rowcount
 
 
 # ---------------------------------------------------------------------------
@@ -198,12 +280,17 @@ def _standalone_session():
     return db.SessionLocal()
 
 
-def set_running_standalone(connector_name: str, warehouse_id: int, sync_type: str) -> None:
-    """Standalone set_running for Celery tasks. Commits on success."""
+def set_running_standalone(connector_name: str, warehouse_id: int, sync_type: str) -> str:
+    """Standalone set_running for Celery tasks. Commits on success.
+
+    V-102: returns the run_id the caller must thread through to
+    set_success_standalone / set_error_standalone.
+    """
     session = _standalone_session()
     try:
-        _set_running_impl(session, connector_name, warehouse_id, sync_type)
+        run_id = _set_running_impl(session, connector_name, warehouse_id, sync_type)
         session.commit()
+        return run_id
     except Exception:
         session.rollback()
         raise
@@ -211,32 +298,54 @@ def set_running_standalone(connector_name: str, warehouse_id: int, sync_type: st
         session.close()
 
 
-def set_success_standalone(connector_name: str, warehouse_id: int, sync_type: str) -> None:
-    """Standalone set_success for Celery tasks. Commits on success."""
+def set_success_standalone(
+    connector_name: str, warehouse_id: int, sync_type: str, run_id: str
+) -> bool:
+    """Standalone set_success for Celery tasks. Commits on success.
+
+    V-102: applies the transition only when the row's current run_id
+    matches the caller's run_id. Returns True if the transition was
+    applied, False if the row has been taken over by a newer run (the
+    stale worker's completion must not clobber the new run's state).
+    """
     session = _standalone_session()
     try:
         now = datetime.now(timezone.utc)
-        session.execute(
+        result = session.execute(
             text("""
-                INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                         last_synced_at, last_success_at, consecutive_errors, updated_at)
-                VALUES (:name, :wid, :type, 'idle', :now, :now, 0, :now)
-                ON CONFLICT (connector_name, warehouse_id, sync_type)
-                DO UPDATE SET sync_status = 'idle',
-                              last_synced_at = :now,
-                              last_success_at = :now,
-                              consecutive_errors = 0,
-                              updated_at = :now
+                UPDATE sync_state
+                SET sync_status = 'idle',
+                    running_since = NULL,
+                    run_id = NULL,
+                    last_synced_at = :now,
+                    last_success_at = :now,
+                    consecutive_errors = 0,
+                    updated_at = :now
+                WHERE connector_name = :name
+                  AND warehouse_id = :wid
+                  AND sync_type = :type
+                  AND run_id = :run_id
             """),
-            {"name": connector_name, "wid": warehouse_id, "type": sync_type, "now": now},
+            {
+                "name": connector_name, "wid": warehouse_id, "type": sync_type,
+                "now": now, "run_id": run_id,
+            },
         )
         session.commit()
+        return result.rowcount > 0
     finally:
         session.close()
 
 
-def set_error_standalone(connector_name: str, warehouse_id: int, sync_type: str, error_message: str) -> None:
-    """Standalone set_error for Celery tasks. Commits on success."""
+def set_error_standalone(
+    connector_name: str, warehouse_id: int, sync_type: str, error_message: str, run_id: str
+) -> bool:
+    """Standalone set_error for Celery tasks. Commits on success.
+
+    V-102: applies the transition only when the row's current run_id
+    matches the caller's run_id. Returns True if applied, False if
+    taken over.
+    """
     session = _standalone_session()
     try:
         now = datetime.now(timezone.utc)
@@ -244,33 +353,45 @@ def set_error_standalone(connector_name: str, warehouse_id: int, sync_type: str,
             text("""
                 SELECT consecutive_errors FROM sync_state
                 WHERE connector_name = :name AND warehouse_id = :wid AND sync_type = :type
+                  AND run_id = :run_id
             """),
-            {"name": connector_name, "wid": warehouse_id, "type": sync_type},
+            {
+                "name": connector_name, "wid": warehouse_id, "type": sync_type,
+                "run_id": run_id,
+            },
         ).fetchone()
-        current_errors = row.consecutive_errors if row else 0
+        if row is None:
+            # Taken over by a newer run; stale completion must not write.
+            session.commit()
+            return False
+        current_errors = row.consecutive_errors
         new_errors = current_errors + 1
         new_status = "error" if new_errors >= ERROR_THRESHOLD else "idle"
 
-        session.execute(
+        result = session.execute(
             text("""
-                INSERT INTO sync_state (connector_name, warehouse_id, sync_type, sync_status,
-                                         last_synced_at, last_error_at, last_error_message,
-                                         consecutive_errors, updated_at)
-                VALUES (:name, :wid, :type, :status, :now, :now, :msg, :errors, :now)
-                ON CONFLICT (connector_name, warehouse_id, sync_type)
-                DO UPDATE SET sync_status = :status,
-                              last_synced_at = :now,
-                              last_error_at = :now,
-                              last_error_message = :msg,
-                              consecutive_errors = :errors,
-                              updated_at = :now
+                UPDATE sync_state
+                SET sync_status = :status,
+                    running_since = NULL,
+                    run_id = NULL,
+                    last_synced_at = :now,
+                    last_error_at = :now,
+                    last_error_message = :msg,
+                    consecutive_errors = :errors,
+                    updated_at = :now
+                WHERE connector_name = :name
+                  AND warehouse_id = :wid
+                  AND sync_type = :type
+                  AND run_id = :run_id
             """),
             {
                 "name": connector_name, "wid": warehouse_id, "type": sync_type,
                 "status": new_status, "now": now, "msg": error_message, "errors": new_errors,
+                "run_id": run_id,
             },
         )
         session.commit()
+        return result.rowcount > 0
     finally:
         session.close()
 

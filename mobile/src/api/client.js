@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuthItem } from '../auth/secureStorage';
 
 // Build-time default from .env / eas.json env
 const DEFAULT_API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
@@ -55,7 +56,7 @@ export const setLogoutHandler = (handler) => {
 };
 
 async function request(method, path, body) {
-  const token = await AsyncStorage.getItem('jwt_token');
+  const token = await getAuthItem('jwt_token');
   const headers = { 'Content-Type': 'application/json' };
   if (token) {
     headers.Authorization = `Bearer ${token}`;

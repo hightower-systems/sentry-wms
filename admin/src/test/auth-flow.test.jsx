@@ -1,9 +1,11 @@
 /**
- * Admin panel auth flow tests.
+ * Admin panel auth flow tests (V-045 cookie-based).
  *
- * These catch the two bugs that caused the infinite reload loop:
- * 1. api.js must clear BOTH sentry_token and sentry_user on 401
- * 2. WarehouseProvider must not fetch when no user is logged in
+ * After V-045 the admin SPA no longer stores tokens in localStorage.
+ * Session lives in an HttpOnly cookie; the bootstrap flow asks
+ * /api/auth/me to determine whether the user is logged in, and all
+ * mutating requests attach an X-CSRF-Token header read from the
+ * readable sentry_csrf cookie.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -13,112 +15,208 @@ import { AuthProvider } from '../auth.jsx';
 import { WarehouseProvider } from '../warehouse.jsx';
 import App from '../App.jsx';
 
-// Stub window.location to prevent jsdom errors on redirect
 const locationAssignSpy = vi.fn();
 Object.defineProperty(window, 'location', {
   value: { href: '', assign: locationAssignSpy },
   writable: true,
 });
 
+function mockMeResponse({ status = 401, body = null } = {}) {
+  return vi.fn().mockImplementation((input) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (url.includes('/api/auth/me')) {
+      return Promise.resolve({
+        status,
+        ok: status >= 200 && status < 300,
+        json: async () => body || { error: 'Unauthorized' },
+      });
+    }
+    return Promise.resolve({ status: 200, ok: true, json: async () => ({}) });
+  });
+}
+
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
+  document.cookie.split(';').forEach((c) => {
+    const name = c.split('=')[0].trim();
+    if (name) document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+  });
   vi.restoreAllMocks();
   window.location.href = '';
 });
 
-function renderApp(initialRoute = '/') {
-  return render(
-    <MemoryRouter initialEntries={[initialRoute]}>
-      <AuthProvider>
-        <WarehouseProvider>
-          <App />
-        </WarehouseProvider>
-      </AuthProvider>
-    </MemoryRouter>
-  );
-}
+// -- Bootstrap: no session cookie -> stays unauthenticated --------------------
 
-// -- Test 1: Login page renders without API calls when not authenticated ------
+describe('unauthenticated bootstrap', () => {
+  it('renders login page and calls /auth/me once, no other API calls', async () => {
+    const fetchSpy = mockMeResponse({ status: 401 });
+    vi.stubGlobal('fetch', fetchSpy);
 
-describe('unauthenticated access', () => {
-  it('renders login page without making API calls', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-
-    renderApp('/login');
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <WarehouseProvider>
+            <App />
+          </WarehouseProvider>
+        </AuthProvider>
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(screen.getByText('Sign in')).toBeInTheDocument();
     });
 
-    // No API calls should have been made - WarehouseProvider should skip fetch
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const urls = fetchSpy.mock.calls.map(([u]) => (typeof u === 'string' ? u : u.url));
+    expect(urls.some((u) => u.includes('/api/auth/me'))).toBe(true);
+    expect(urls.some((u) => u.includes('/api/admin/warehouses'))).toBe(false);
   });
 
-  it('redirects to login when accessing protected route', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  it('redirects to login when accessing protected route without a session', async () => {
+    vi.stubGlobal('fetch', mockMeResponse({ status: 401 }));
 
-    renderApp('/');
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <AuthProvider>
+          <WarehouseProvider>
+            <App />
+          </WarehouseProvider>
+        </AuthProvider>
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(screen.getByText('Sign in')).toBeInTheDocument();
     });
-
-    // Still no API calls - redirect happened via React Router, not 401 loop
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
-// -- Test 2: 401 response clears all auth state ------------------------------
+// -- API client: credentials + CSRF --------------------------------------------
 
-describe('401 handling', () => {
-  it('clears both token and user from localStorage on 401', async () => {
-    // Simulate a logged-in state with a stale token
-    localStorage.setItem('sentry_token', 'stale-token');
-    localStorage.setItem('sentry_user', JSON.stringify({
-      user_id: 1, username: 'admin', role: 'ADMIN',
-    }));
-
-    // Mock fetch to return 401 for any API call
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      status: 401,
-      ok: false,
-      json: async () => ({ error: 'Token expired' }),
+describe('api client', () => {
+  it('sends credentials: include on every request', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({}),
     });
+    vi.stubGlobal('fetch', fetchSpy);
 
-    // Import and call api directly to test the 401 handler
     const { api } = await import('../api.js');
     await api.get('/admin/dashboard');
 
-    expect(localStorage.getItem('sentry_token')).toBeNull();
-    expect(localStorage.getItem('sentry_user')).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/admin/dashboard',
+      expect.objectContaining({ credentials: 'include' }),
+    );
   });
 
-  it('does not redirect on 401 from login endpoint', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+  it('attaches X-CSRF-Token header on POST when the CSRF cookie is set', async () => {
+    document.cookie = 'sentry_csrf=test-csrf-value-123; path=/';
+    const fetchSpy = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { api } = await import('../api.js');
+    await api.post('/admin/connectors/test', { name: 'x' });
+
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options.headers['X-CSRF-Token']).toBe('test-csrf-value-123');
+    expect(options.credentials).toBe('include');
+  });
+
+  it('does not attach Authorization header (token no longer in localStorage)', async () => {
+    // Even if some legacy code path tried to set this, the current api.js
+    // never reads localStorage. Verify the header is absent.
+    const fetchSpy = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { api } = await import('../api.js');
+    await api.get('/admin/dashboard');
+
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options.headers.Authorization).toBeUndefined();
+  });
+
+  it('does not attach CSRF header on GET requests', async () => {
+    document.cookie = 'sentry_csrf=csrf-v; path=/';
+    const fetchSpy = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { api } = await import('../api.js');
+    await api.get('/admin/dashboard');
+
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options.headers['X-CSRF-Token']).toBeUndefined();
+  });
+});
+
+// -- 401 handling --------------------------------------------------------------
+
+describe('401 handling', () => {
+  it('redirects to /login on 401 from a protected endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 401,
+      ok: false,
+      json: async () => ({ error: 'Unauthorized' }),
+    }));
+
+    const { api } = await import('../api.js');
+    await api.get('/admin/dashboard');
+
+    expect(window.location.href).toBe('/login');
+  });
+
+  it('does not redirect on 401 from /auth/login itself', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       status: 401,
       ok: false,
       json: async () => ({ error: 'Invalid credentials' }),
-    });
+    }));
 
     const { api } = await import('../api.js');
     const res = await api.post('/auth/login', {
       username: 'bad', password: 'creds',
     });
 
-    // Login 401s should return the response, not redirect
     expect(res).toBeDefined();
     expect(res.status).toBe(401);
-    // Token should NOT be cleared for login failures
+    expect(window.location.href).not.toBe('/login');
+  });
+
+  it('does not redirect on 401 from /auth/me (bootstrap probe)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 401,
+      ok: false,
+      json: async () => ({ error: 'Unauthorized' }),
+    }));
+
+    const { api } = await import('../api.js');
+    const res = await api.get('/auth/me');
+
+    expect(res).toBeDefined();
+    expect(res.status).toBe(401);
     expect(window.location.href).not.toBe('/login');
   });
 });
 
-// -- Test 3: WarehouseProvider only fetches when user exists ------------------
+// -- WarehouseProvider gating --------------------------------------------------
 
 describe('WarehouseProvider', () => {
-  it('does not fetch warehouses when no user is logged in', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  it('does not fetch warehouses when the bootstrap returns no user', async () => {
+    const fetchSpy = mockMeResponse({ status: 401 });
+    vi.stubGlobal('fetch', fetchSpy);
 
     render(
       <MemoryRouter>
@@ -134,20 +232,28 @@ describe('WarehouseProvider', () => {
       expect(screen.getByTestId('child')).toBeInTheDocument();
     });
 
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const urls = fetchSpy.mock.calls.map(([u]) => (typeof u === 'string' ? u : u.url));
+    expect(urls.some((u) => u.includes('/api/admin/warehouses'))).toBe(false);
   });
 
-  it('fetches warehouses when user is logged in', async () => {
-    localStorage.setItem('sentry_token', 'valid-token');
-    localStorage.setItem('sentry_user', JSON.stringify({
-      user_id: 1, username: 'admin', role: 'ADMIN',
-    }));
-
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      status: 200,
-      ok: true,
-      json: async () => ({ warehouses: [{ id: 1, warehouse_code: 'WH1', warehouse_name: 'Main' }] }),
+  it('fetches warehouses after bootstrap returns an ADMIN user', async () => {
+    const fetchSpy = vi.fn().mockImplementation((input) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (url.includes('/api/auth/me')) {
+        return Promise.resolve({
+          status: 200, ok: true,
+          json: async () => ({ user_id: 1, username: 'admin', role: 'ADMIN' }),
+        });
+      }
+      if (url.includes('/api/admin/warehouses')) {
+        return Promise.resolve({
+          status: 200, ok: true,
+          json: async () => ({ warehouses: [{ id: 1, warehouse_code: 'WH1', warehouse_name: 'Main' }] }),
+        });
+      }
+      return Promise.resolve({ status: 200, ok: true, json: async () => ({}) });
     });
+    vi.stubGlobal('fetch', fetchSpy);
 
     render(
       <MemoryRouter>
@@ -160,14 +266,16 @@ describe('WarehouseProvider', () => {
     );
 
     await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect(fetchSpy).toHaveBeenCalledWith(
         '/api/admin/warehouses',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer valid-token',
-          }),
-        }),
+        expect.objectContaining({ credentials: 'include' }),
       );
     });
+
+    // Ensure no Authorization header was attached
+    const warehouseCall = fetchSpy.mock.calls.find(
+      ([u]) => (typeof u === 'string' ? u : u.url) === '/api/admin/warehouses',
+    );
+    expect(warehouseCall[1].headers.Authorization).toBeUndefined();
   });
 });

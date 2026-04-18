@@ -10,6 +10,64 @@ which individual fixes break them.
 
 ---
 
+## Accepted Risks
+
+Findings that were evaluated and intentionally not fixed. Each entry
+keeps the original audit severity (no downgrade), states the reason,
+and names the condition that would cause us to revisit. Listed here
+so the next audit and future maintainers can read the history without
+reconstructing it from chat logs.
+
+### V-006 -- Fernet cipher instance cached globally in module state
+
+Status: Accepted risk (v1.4)
+Severity: Medium (as flagged by audit)
+
+`_fernet` is a module-level cache, so the Fernet key material lives in
+process memory for the lifetime of the gunicorn worker. Best-effort
+zeroing is not possible in pure Python: strings are immutable and
+garbage collection runs on its own schedule, so `del _fernet` does
+not scrub the bytes. A local attacker with a core dump or ptrace can
+recover the key regardless of what Python code does.
+
+Rotating the module-level cache to a per-request cache would reduce
+the window slightly but would not change the outcome and would add a
+cost on every encrypt/decrypt. The threat model already assumes a
+local-read adversary on the API host cannot be defeated by in-process
+obfuscation; the same adversary can read `SENTRY_ENCRYPTION_KEY` from
+the process environment directly.
+
+Revisit when:
+- Key handling moves to an external KMS (AWS/GCP/Vault) where the
+  process only holds short-lived decrypted blobs
+- Key handling moves to a native extension that can mlock and
+  explicitly zero memory
+- A hardened deployment profile (SaaS) requires a stronger local
+  posture
+
+---
+
+### V-048 -- Cleartext HTTP allowed in all build profiles
+
+Status: Accepted risk (v1.4)
+Severity: High (as flagged by audit)
+
+Sentry WMS is deployed on warehouse LANs where HTTPS certificates are
+impractical. Clone-and-run users and LAN-only production deployments both
+require cleartext HTTP. Profile-gated enforcement was attempted in v1.1 and
+reverted in v1.1.1 because it broke real deployments.
+
+Domain-scoped cleartext (Android `network_security_config.xml` restricting
+cleartext to RFC1918 ranges) is the most likely future mitigation if this
+needs to change.
+
+Revisit when:
+- A hosted/cloud deployment option ships (Sentry Cloud SaaS)
+- A user requests HTTPS-only enforcement
+- Public deployments outside LANs become a supported use case
+
+---
+
 ## Target v1.4 (Deferred High)
 
 ### V-045 -- JWT stored in admin panel localStorage

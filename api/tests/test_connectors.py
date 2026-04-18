@@ -236,12 +236,29 @@ class TestRegistry:
         # Example connector is excluded from auto-discovery, so registry stays empty
         # (unless other connector modules exist in the directory)
 
-    def test_register_overwrites(self):
-        """Registering the same name twice replaces the previous connector."""
+    def test_register_duplicate_name_raises(self):
+        """V-010: registering the same name twice must raise, not overwrite.
+
+        Silent overwrite was a supply-chain foothold -- a second import of
+        a malicious module under the same name would win.
+        """
         reg = ConnectorRegistry()
         reg.register("test", CompleteConnector)
-        reg.register("test", CompleteConnector)
+        with pytest.raises(ValueError, match="already registered"):
+            reg.register("test", CompleteConnector)
+        # Original registration stays intact
         assert reg.get("test") is CompleteConnector
+
+    def test_register_duplicate_name_rejects_different_class(self):
+        """V-010: duplicate check applies even when the second class differs."""
+        class AnotherConnector(CompleteConnector):
+            pass
+
+        reg = ConnectorRegistry()
+        reg.register("netsuite", CompleteConnector)
+        with pytest.raises(ValueError, match="already registered"):
+            reg.register("netsuite", AnotherConnector)
+        assert reg.get("netsuite") is CompleteConnector
 
 
 # ---------------------------------------------------------------------------

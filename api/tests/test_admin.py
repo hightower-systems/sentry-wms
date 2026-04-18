@@ -458,6 +458,66 @@ class TestUsers:
         resp = client.post("/api/auth/login", json={"username": "pwtest", "password": "newpass1234"})
         assert resp.status_code == 200
 
+    def test_update_user_accepts_full_admin_panel_payload(self, client, auth_headers):
+        # Regression guard for #63: the admin panel's Users edit form
+        # POSTs the whole form shape (full_name, role, warehouse_ids,
+        # allowed_functions, password). Before the fix it also posted
+        # `username`, which UpdateUserRequest does not declare and V-017
+        # extras=forbid rejected with validation_error. This test pins
+        # the post-fix payload shape so a future UI change that sneaks
+        # an extra field back in trips here before landing in prod.
+        client.post("/api/admin/users", json={
+            "username": "panel_edit_fixture",
+            "password": "orig_pw_1234",
+            "full_name": "Panel Fixture",
+            "role": "USER",
+            "warehouse_id": 1,
+            "allowed_functions": ["pick", "pack"],
+        }, headers=auth_headers)
+        user_id = _query_val(
+            "SELECT user_id FROM users WHERE username = 'panel_edit_fixture'"
+        )
+
+        # Exactly what admin/src/pages/Users.jsx::save sends on the
+        # editId branch (with a password set).
+        edit_body = {
+            "full_name": "Panel Fixture Renamed",
+            "role": "USER",
+            "warehouse_ids": [1],
+            "allowed_functions": ["pick", "pack", "count"],
+            "password": "new_pw_1234",
+        }
+        resp = client.put(
+            f"/api/admin/users/{user_id}", json=edit_body, headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        data = resp.get_json()
+        assert data["full_name"] == "Panel Fixture Renamed"
+        assert data["allowed_functions"] == ["pick", "pack", "count"]
+
+        # Password actually took effect.
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "panel_edit_fixture", "password": "new_pw_1234"},
+        )
+        assert login.status_code == 200
+
+    def test_update_user_rejects_username_field(self, client, auth_headers):
+        # Make the invariant explicit: username is intentionally NOT in
+        # UpdateUserRequest (the user_id is in the URL path; renaming a
+        # user is a separate operation). The v1.3 V-017 extras=forbid
+        # gate catches it. This test pins that rejection so a future
+        # "let's add username for convenience" PR has to also think
+        # about the admin panel's PUT payload.
+        resp = client.put(
+            "/api/admin/users/1",
+            json={"username": "renamed_admin", "full_name": "X"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        details = resp.get_json()["details"]
+        assert any(d.get("loc") == ["username"] for d in details)
+
     def test_delete_user(self, client, auth_headers):
         # Create a user then hard-delete
         create = client.post("/api/admin/users", json={
@@ -1059,3 +1119,15 @@ class TestRepeatOffender23_WarehouseHardDelete:
         resp = client.get(f"/api/admin/warehouses/{wh_id}", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["warehouse"]["is_active"] is False
+
+
+class TestInterWarehouseTransfersList:
+    """Bug #65: GET /api/admin/inter-warehouse-transfers 500s on nonexistent bt.notes column."""
+
+    def test_list_returns_200(self, client, auth_headers):
+        """Endpoint must return 200 even when no transfers exist (fresh seed)."""
+        resp = client.get("/api/admin/inter-warehouse-transfers?limit=50", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "transfers" in data
+        assert isinstance(data["transfers"], list)

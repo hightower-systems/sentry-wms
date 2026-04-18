@@ -503,15 +503,17 @@ class TestValidationIntegration:
         assert resp.status_code == 400
         assert resp.get_json()["error"] == "validation_error"
 
-    def test_no_json_body_returns_400(self, client, auth_headers):
+    def test_non_json_content_type_returns_415(self, client, auth_headers):
+        # V-016: validate_body rejects non-JSON Content-Type with 415 before
+        # attempting to parse the body.
         resp = client.post(
             "/api/picking/complete-batch",
             data="not json",
             content_type="text/plain",
             headers=auth_headers,
         )
-        assert resp.status_code == 400
-        assert resp.get_json()["error"] == "validation_error"
+        assert resp.status_code == 415
+        assert resp.get_json()["error"] == "unsupported_media_type"
 
     def test_validation_error_detail_structure(self, client):
         """Verify the details array contains the expected pydantic error fields."""

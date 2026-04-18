@@ -1,0 +1,131 @@
+name: Dependency Audit
+
+# Dependency Audit
+#
+# This workflow gates merges on dependency vulnerabilities. Two patterns
+# are used for explicitly-deferred advisories:
+#
+# 1. pip-audit: --ignore-vuln <GHSA> with inline comment naming the
+#    deferred issue. When the issue closes (dep is upgraded), remove
+#    the ignore line.
+#
+# 2. npm audit (dev deps): step-level continue-on-error: true. Dev-tree
+#    advisories are reported as warnings but do not block the merge.
+#    Production-tree advisories (--omit=dev) DO block the merge.
+#
+# When deferring a new advisory, file a v1.5 issue and reference it
+# in the inline comment. The ignore should never outlive the issue.
+#
+# Introduced by V-042 (#39). Nightly schedule catches newly-disclosed
+# advisories even when no code changed.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * *"
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.7.3
+
+      - name: Audit Python dependencies
+        # Fails on any advisory at or above high severity. --strict makes
+        # the command exit non-zero when vulnerabilities are found rather
+        # than only on tooling errors.
+        run: |
+          pip-audit \
+            --requirement api/requirements.txt \
+            --strict \
+            --vulnerability-service osv \
+            --ignore-vuln GHSA-r6ph-v2qm-q3c2 \
+            --ignore-vuln GHSA-m959-cc7f-wv43 \
+            --ignore-vuln GHSA-6w46-j5rx-g56g
+        # --ignore-vuln entries above: each acknowledges an advisory whose
+        # fix is explicitly deferred to v1.5. Remove the line when the
+        # linked issue closes.
+        #   GHSA-r6ph-v2qm-q3c2  cryptography 44.0.3 -> 46.0.5  (#59)
+        #   GHSA-m959-cc7f-wv43  cryptography 44.0.3 -> 46.0.6  (#59)
+        #   GHSA-6w46-j5rx-g56g  pytest 8.3.4 -> 9.0.3 (dev)    (#60)
+
+  npm-audit-admin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install admin dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit admin dependencies
+        run: npm audit --audit-level=high
+
+  npm-audit-mobile:
+    # Gating audit: production dependencies only. eas-cli and its
+    # transitive tree are devDependencies used at build time, not shipped
+    # on the device, so their advisories (tracked separately under the
+    # deferred v1.5 eas-cli upgrade) should not block merges here.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit mobile production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  npm-audit-mobile-dev:
+    # Informational audit: full tree including devDependencies. The
+    # advisories here all trace to eas-cli's transitive tree and are
+    # deferred to the eas-cli@0.52.0 upgrade (#61). Step-level
+    # continue-on-error keeps the step amber (vulns still print in the
+    # log) while the job reports green, so GitHub's commit-status UI
+    # does not show a red X for expected-deferred state. Remove
+    # continue-on-error when #61 is fixed.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit mobile full dependency tree (informational)
+        continue-on-error: true
+        run: npm audit --audit-level=high

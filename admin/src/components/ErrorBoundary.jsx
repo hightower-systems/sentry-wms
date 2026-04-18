@@ -1,4 +1,5 @@
 import React from 'react';
+import { logBoundaryError } from '../utils/safeLogging';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -11,7 +12,9 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error('ErrorBoundary caught:', error, errorInfo);
+    // V-020: scrub Bearer tokens, JWTs, and URL userinfo before logging.
+    // In production only a minimal error name + message is written.
+    logBoundaryError(error, errorInfo);
   }
 
   reset = () => {

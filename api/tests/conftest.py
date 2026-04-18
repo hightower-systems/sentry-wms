@@ -122,6 +122,19 @@ def _db_transaction(_seed_session_database):
     conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _clear_test_cookies(client):
+    # V-045: login now sets HttpOnly + CSRF cookies. The session-scoped test
+    # client persists cookies across tests, which would cause tests that
+    # expect 401 to accidentally authenticate via a leftover cookie. Clear
+    # before every test so each one starts without session state.
+    try:
+        client._cookies.clear()
+    except AttributeError:
+        pass
+    yield
+
+
 @pytest.fixture(scope="session")
 def auth_headers(client):
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})

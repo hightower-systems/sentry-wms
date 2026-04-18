@@ -28,6 +28,7 @@ from services.sync_state_service import (
     set_running_standalone,
     set_success_standalone,
 )
+from utils.log_sanitize import scrub_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,11 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 def _run_sync(self, connector_name: str, warehouse_id: int, sync_type: str, method_name: str):
     """Shared implementation for sync_orders / sync_items / sync_inventory."""
     try:
-        set_running_standalone(connector_name, warehouse_id, sync_type)
+        # V-102: set_running_standalone returns the run_id we must quote on
+        # completion. If the sync runs long enough to be taken over by a
+        # new run (V-012 RUNNING_TIMEOUT), our completion will no-op against
+        # the new run's state instead of clobbering it back to 'idle'.
+        run_id = set_running_standalone(connector_name, warehouse_id, sync_type)
     except DuplicateRunError as exc:
         # Another worker is already running this sync. Don't retry.
         logger.info("%s skipped: %s", sync_type, exc)
@@ -55,24 +60,41 @@ def _run_sync(self, connector_name: str, warehouse_id: int, sync_type: str, meth
         result = method(since=since)
 
         if result.success:
-            set_success_standalone(connector_name, warehouse_id, sync_type)
-            logger.info(
-                "%s complete: connector=%s warehouse=%d records=%d",
-                sync_type, connector_name, warehouse_id, result.records_synced,
-            )
+            applied = set_success_standalone(connector_name, warehouse_id, sync_type, run_id)
+            if applied:
+                logger.info(
+                    "%s complete: connector=%s warehouse=%d records=%d",
+                    sync_type, connector_name, warehouse_id, result.records_synced,
+                )
+            else:
+                logger.warning(
+                    "%s completed but state was taken over by a newer run; "
+                    "skipping success write: connector=%s warehouse=%d records=%d",
+                    sync_type, connector_name, warehouse_id, result.records_synced,
+                )
         else:
             error_msg = "; ".join(result.errors) if result.errors else "sync returned success=False"
-            set_error_standalone(connector_name, warehouse_id, sync_type, error_msg)
-            logger.warning(
-                "%s returned errors: connector=%s warehouse=%d errors=%s",
-                sync_type, connector_name, warehouse_id, error_msg,
-            )
+            applied = set_error_standalone(connector_name, warehouse_id, sync_type, error_msg, run_id)
+            if applied:
+                logger.warning(
+                    "%s returned errors: connector=%s warehouse=%d errors=%s",
+                    sync_type, connector_name, warehouse_id, error_msg,
+                )
+            else:
+                logger.warning(
+                    "%s errored but state was taken over by a newer run; "
+                    "skipping error write: connector=%s warehouse=%d errors=%s",
+                    sync_type, connector_name, warehouse_id, error_msg,
+                )
 
         return {"success": result.success, "records_synced": result.records_synced}
 
     except Exception as exc:
-        set_error_standalone(connector_name, warehouse_id, sync_type, str(exc))
-        logger.error("%s failed: connector=%s error=%s", sync_type, connector_name, str(exc))
+        # V-007: scrub URL userinfo / sensitive query values before the
+        # exception string hits sync_state.last_error_message or the log.
+        safe_error = scrub_secrets(exc)
+        set_error_standalone(connector_name, warehouse_id, sync_type, safe_error, run_id)
+        logger.error("%s failed: connector=%s error=%s", sync_type, connector_name, safe_error)
         raise self.retry(exc=exc)
 
 
@@ -104,7 +126,7 @@ def fulfillment_health_check(self, connector_name: str, warehouse_id: int):
     happen via push_fulfillment when orders ship.
     """
     try:
-        set_running_standalone(connector_name, warehouse_id, "fulfillment")
+        run_id = set_running_standalone(connector_name, warehouse_id, "fulfillment")
     except DuplicateRunError as exc:
         logger.info("fulfillment health check skipped: %s", exc)
         raise Ignore()
@@ -116,13 +138,20 @@ def fulfillment_health_check(self, connector_name: str, warehouse_id: int):
 
         result = connector.test_connection()
         if result.connected:
-            set_success_standalone(connector_name, warehouse_id, "fulfillment")
-            logger.info(
-                "fulfillment health check ok: connector=%s warehouse=%d",
-                connector_name, warehouse_id,
-            )
+            applied = set_success_standalone(connector_name, warehouse_id, "fulfillment", run_id)
+            if applied:
+                logger.info(
+                    "fulfillment health check ok: connector=%s warehouse=%d",
+                    connector_name, warehouse_id,
+                )
+            else:
+                logger.warning(
+                    "fulfillment health check ok but state was taken over; skipping write: "
+                    "connector=%s warehouse=%d",
+                    connector_name, warehouse_id,
+                )
         else:
-            set_error_standalone(connector_name, warehouse_id, "fulfillment", result.message)
+            set_error_standalone(connector_name, warehouse_id, "fulfillment", result.message, run_id)
             logger.warning(
                 "fulfillment health check failed: connector=%s message=%s",
                 connector_name, result.message,
@@ -131,8 +160,9 @@ def fulfillment_health_check(self, connector_name: str, warehouse_id: int):
         return {"success": result.connected, "message": result.message}
 
     except Exception as exc:
-        set_error_standalone(connector_name, warehouse_id, "fulfillment", str(exc))
-        logger.error("fulfillment health check failed: connector=%s error=%s", connector_name, str(exc))
+        safe_error = scrub_secrets(exc)
+        set_error_standalone(connector_name, warehouse_id, "fulfillment", safe_error, run_id)
+        logger.error("fulfillment health check failed: connector=%s error=%s", connector_name, safe_error)
         raise self.retry(exc=exc)
 
 
@@ -144,7 +174,7 @@ def push_fulfillment(self, connector_name: str, warehouse_id: int, order_id: str
     can monitor whether outbound fulfillment pushes are succeeding.
     """
     try:
-        set_running_standalone(connector_name, warehouse_id, "fulfillment")
+        run_id = set_running_standalone(connector_name, warehouse_id, "fulfillment")
     except DuplicateRunError as exc:
         logger.info("fulfillment skipped: %s", exc)
         raise Ignore()
@@ -157,14 +187,21 @@ def push_fulfillment(self, connector_name: str, warehouse_id: int, order_id: str
         result = connector.push_fulfillment(order_id=order_id, tracking=tracking, carrier=carrier)
 
         if result.success:
-            set_success_standalone(connector_name, warehouse_id, "fulfillment")
-            logger.info(
-                "push_fulfillment complete: connector=%s order=%s external_id=%s",
-                connector_name, order_id, result.external_id,
-            )
+            applied = set_success_standalone(connector_name, warehouse_id, "fulfillment", run_id)
+            if applied:
+                logger.info(
+                    "push_fulfillment complete: connector=%s order=%s external_id=%s",
+                    connector_name, order_id, result.external_id,
+                )
+            else:
+                logger.warning(
+                    "push_fulfillment succeeded but state was taken over; skipping write: "
+                    "connector=%s order=%s external_id=%s",
+                    connector_name, order_id, result.external_id,
+                )
         else:
             error_msg = result.error or "push returned success=False"
-            set_error_standalone(connector_name, warehouse_id, "fulfillment", error_msg)
+            set_error_standalone(connector_name, warehouse_id, "fulfillment", error_msg, run_id)
             logger.warning(
                 "push_fulfillment returned error: connector=%s order=%s error=%s",
                 connector_name, order_id, error_msg,
@@ -173,6 +210,7 @@ def push_fulfillment(self, connector_name: str, warehouse_id: int, order_id: str
         return {"success": result.success, "external_id": result.external_id}
 
     except Exception as exc:
-        set_error_standalone(connector_name, warehouse_id, "fulfillment", str(exc))
-        logger.error("push_fulfillment failed: connector=%s order=%s error=%s", connector_name, order_id, str(exc))
+        safe_error = scrub_secrets(exc)
+        set_error_standalone(connector_name, warehouse_id, "fulfillment", safe_error, run_id)
+        logger.error("push_fulfillment failed: connector=%s order=%s error=%s", connector_name, order_id, safe_error)
         raise self.retry(exc=exc)

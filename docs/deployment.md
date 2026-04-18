@@ -134,6 +134,24 @@ trigger and the `BEFORE UPDATE / BEFORE DELETE` guards, and exposes
 - Container runs as non-root user `appuser`
 - `debug=False` is hardcoded in `app.py`
 
+### LAN development access
+
+The API and admin ports are parametrized via `API_BIND_HOST` and
+`ADMIN_BIND_HOST`. Both default to `127.0.0.1`, which is the
+correct posture for production deployments behind a reverse proxy
+and for any cloud-hosted install (V-040). For LAN development
+where a phone or handheld scanner on the same network needs to
+reach the API directly, override either or both in your local
+`.env`:
+
+```
+API_BIND_HOST=0.0.0.0
+ADMIN_BIND_HOST=0.0.0.0
+```
+
+`.env` is gitignored, so the override stays on the dev machine
+and does not ship to production.
+
 ### Reverse Proxy (HTTPS)
 
 The API serves HTTP only. For HTTPS, put a reverse proxy in front:

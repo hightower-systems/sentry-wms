@@ -10,19 +10,38 @@ from sqlalchemy import text
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from schemas.auth import ChangePasswordRequest, LoginRequest
-from services.auth_service import authenticate_user, generate_token, validate_password
+from services.auth_service import authenticate_user, decode_token, generate_token, validate_password
+from services.cookie_auth import (
+    AUTH_COOKIE_NAME,
+    clear_auth_cookies,
+    csrf_token_matches,
+    generate_csrf_token,
+    set_auth_cookies,
+)
 from utils.validation import validate_body
 
 ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
 
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+# V-024: cap login_attempts.key at 64 chars so an attacker cannot bloat
+# the table by spraying long random usernames. Anything longer is SHA-256
+# hashed (hex digest = 64 chars) before it reaches the DB.
+LOGIN_ATTEMPT_KEY_MAX_LEN = 64
 
 auth_bp = Blueprint("auth", __name__)
 
 
+def _normalize_rate_limit_key(key: str) -> str:
+    if len(key) <= LOGIN_ATTEMPT_KEY_MAX_LEN:
+        return key
+    import hashlib
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def _check_rate_limit(db, key):
     """Check if a rate-limit key is locked out. Returns (locked, remaining_seconds)."""
+    key = _normalize_rate_limit_key(key)
     row = db.execute(
         text("SELECT attempts, locked_until FROM login_attempts WHERE key = :key"),
         {"key": key},
@@ -49,6 +68,7 @@ def _record_failure(db, key, allow_lockout):
     True when ``allow_lockout`` is also True and the key has crossed
     the threshold.
     """
+    key = _normalize_rate_limit_key(key)
     lockout_at = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
     db.execute(
         text("""
@@ -76,6 +96,7 @@ def _record_failure(db, key, allow_lockout):
 
 def _reset_attempts(db, key):
     """Clear attempts after successful login."""
+    key = _normalize_rate_limit_key(key)
     db.execute(
         text("DELETE FROM login_attempts WHERE key = :key"),
         {"key": key},
@@ -123,7 +144,42 @@ def login(validated):
     _reset_attempts(g.db, user_key)
     _reset_attempts(g.db, ip_key)
     token = generate_token(user)
-    return jsonify({"token": token, "user": user})
+    # V-045: dual-path auth. The token is returned in the body (mobile)
+    # and also set as HttpOnly + CSRF cookies (admin SPA).
+    csrf = generate_csrf_token()
+    response = jsonify({"token": token, "user": user})
+    set_auth_cookies(response, token, csrf)
+    return response
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    # V-100: the previous version cleared cookies on every POST, which
+    # meant an attacker-origin form submission could force a victim's
+    # browser to apply expired cookies and end the session. SameSite=Strict
+    # prevents the victim's auth cookie from being sent cross-origin but
+    # does not stop the response's Set-Cookie from being applied.
+    #
+    # Current shape:
+    #   - No auth cookie on the request -> 200 no-op, no Set-Cookie.
+    #     Cross-origin attacker (SameSite=Strict stripped the cookie) and
+    #     idempotent cleanup calls both land here.
+    #   - Valid auth cookie -> require CSRF match; clear cookies on match,
+    #     reject with 403 otherwise. A same-origin XSS can already hijack
+    #     the session directly; the CSRF gate here exists to block any
+    #     path that somehow exposes the auth cookie without the CSRF.
+    #   - Expired / invalid auth cookie -> clear cookies silently. The
+    #     session is already dead, so stale-cleanup keeps working without
+    #     demanding a CSRF token the client no longer has.
+    response = jsonify({"message": "logged out"})
+    auth_cookie = request.cookies.get(AUTH_COOKIE_NAME)
+    if not auth_cookie:
+        return response
+    payload = decode_token(auth_cookie)
+    if payload is not None and not csrf_token_matches():
+        return jsonify({"error": "CSRF token missing or invalid"}), 403
+    clear_auth_cookies(response)
+    return response
 
 
 @auth_bp.route("/me")
@@ -185,7 +241,10 @@ def refresh():
         "warehouse_ids": list(row.warehouse_ids) if row.warehouse_ids else [],
     }
     token = generate_token(user_dict)
-    return jsonify({"token": token})
+    csrf = generate_csrf_token()
+    response = jsonify({"token": token})
+    set_auth_cookies(response, token, csrf)
+    return response
 
 
 @auth_bp.route("/change-password", methods=["POST"])

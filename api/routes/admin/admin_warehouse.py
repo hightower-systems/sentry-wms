@@ -563,7 +563,7 @@ def list_inter_warehouse_transfers():
     rows = g.db.execute(
         text("""
             SELECT bt.transfer_id, bt.item_id, bt.from_bin_id, bt.to_bin_id,
-                   bt.quantity, bt.transferred_by, bt.transferred_at, bt.notes,
+                   bt.quantity, bt.transferred_by, bt.transferred_at,
                    i.sku,
                    fb.bin_code AS from_bin_code, fb.warehouse_id AS from_warehouse_id,
                    fw.warehouse_name AS from_warehouse_name,
@@ -599,7 +599,6 @@ def list_inter_warehouse_transfers():
                 "quantity": r.quantity,
                 "transferred_by": r.transferred_by,
                 "transferred_at": r.transferred_at.isoformat() if r.transferred_at else None,
-                "notes": r.notes,
             }
             for r in rows
         ]

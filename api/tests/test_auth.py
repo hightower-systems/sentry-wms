@@ -254,6 +254,101 @@ class TestWarehouseAuthorization:
         assert resp.status_code == 200
 
 
+class TestV103WarehouseIdSourceMismatch:
+    """V-103: the middleware collects warehouse_id from URL path, query, and
+    body. When more than one source supplies a value, they must agree; a
+    mismatch is a mass-assignment attempt and returns 400 before the
+    allow-list check runs. The URL path is authoritative because the handler
+    receives it via view_args."""
+
+    def _create_user_and_login(self, client, username, warehouse_ids):
+        _reset_lockout()
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        wids = "{" + ",".join(str(w) for w in warehouse_ids) + "}"
+        cur.execute(
+            """INSERT INTO users (username, password_hash, full_name, role,
+                   warehouse_id, warehouse_ids, allowed_functions)
+               VALUES (%s, '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
+                       'V-103 Test', 'PICKER', %s, %s, '{pick,receive,count}')""",
+            (username, warehouse_ids[0], wids),
+        )
+        cur.close()
+        resp = client.post("/api/auth/login", json={"username": username, "password": "admin"})
+        return {"Authorization": f"Bearer {resp.get_json()['token']}"}
+
+    def test_path_only_warehouse_id_is_honored(self, client):
+        # User assigned to warehouse 1 hits the path-only route for 1.
+        # Must not 403 (and is the pre-V-103 behavior preserved).
+        headers = self._create_user_and_login(client, "v103_path_ok", [1])
+        resp = client.get("/api/putaway/pending/1", headers=headers)
+        assert resp.status_code == 200
+
+    def test_path_warehouse_id_not_in_allowed_is_403(self, client):
+        # Path specifies warehouse 999; user has only [1]. The middleware
+        # reads the path value and blocks before the handler runs.
+        headers = self._create_user_and_login(client, "v103_path_block", [1])
+        resp = client.get("/api/putaway/pending/999", headers=headers)
+        assert resp.status_code == 403
+
+    def test_path_and_body_mismatch_is_400(self, client):
+        # The IDOR shape V-103 blocks: user has access to both 1 and 5,
+        # sends the body warehouse_id=1 while the path says 5. Handler
+        # would use 5; body satisfies the old allow-list check. Reject
+        # with 400 before either side can diverge.
+        headers = self._create_user_and_login(client, "v103_mismatch_body", [1, 5])
+        resp = client.get(
+            "/api/putaway/pending/5",
+            json={"warehouse_id": 1},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "mismatch" in data["error"].lower()
+        assert data["sources"] == {"path": 5, "body": 1}
+
+    def test_path_and_query_mismatch_is_400(self, client):
+        headers = self._create_user_and_login(client, "v103_mismatch_query", [1, 5])
+        resp = client.get(
+            "/api/putaway/pending/5?warehouse_id=1",
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["sources"] == {"path": 5, "query": 1}
+
+    def test_path_and_body_match_passes(self, client):
+        # Same value in path and body should be accepted, not flagged as
+        # a mismatch. (Client bug tolerance; handler uses path either way.)
+        headers = self._create_user_and_login(client, "v103_match", [1])
+        resp = client.get(
+            "/api/putaway/pending/1",
+            json={"warehouse_id": 1},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+    def test_admin_bypasses_mismatch_check(self, client, auth_headers):
+        # Admin is never warehouse-scoped; the mismatch check is skipped.
+        resp = client.get(
+            "/api/putaway/pending/1",
+            json={"warehouse_id": 999},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_body_only_still_uses_body_value(self, client):
+        # Routes without warehouse_id in the URL (e.g. cycle-count/create)
+        # continue to use the body value. Regression guard against V-103
+        # accidentally disabling the body path.
+        headers = self._create_user_and_login(client, "v103_body_only", [1])
+        resp = client.post(
+            "/api/inventory/cycle-count/create",
+            json={"warehouse_id": 999, "bin_ids": [1]},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestChangePassword:
     """L2: self-service password change."""
 

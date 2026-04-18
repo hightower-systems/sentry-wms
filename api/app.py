@@ -32,16 +32,52 @@ def create_app():
         "http://localhost:3000,http://localhost:5000,http://localhost:8081",
     ).split(",")
     resolved_origins = [o.strip() for o in cors_origins]
-    CORS(app, origins=resolved_origins)
+    # V-045: credentials must cross CORS for the admin SPA's HttpOnly cookie.
+    # Origins stay restricted (no wildcard), which is required for cookie auth.
+    CORS(app, origins=resolved_origins, supports_credentials=True)
+
+    # V-041: rate limiting. Default 300/min per authenticated user (or per IP
+    # if unauthenticated); sensitive routes override via @limiter.limit(...).
+    from services.rate_limit import init_limiter
+    init_limiter(app)
 
     # Security response headers
+    # V-110: fonts are now self-hosted under admin/public/fonts and
+    # served by the admin nginx container. Neither style-src nor
+    # font-src carry a Google origin, so the admin panel has no
+    # third-party asset dependency and a successful XSS cannot load
+    # an attacker-controlled stylesheet or font from any origin.
+    csp_policy = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "object-src 'none'"
+    )
+
     @app.after_request
     def set_security_headers(response):
+        from flask import request as _request
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "0"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = csp_policy
+        # V-051: HSTS only when the request was HTTPS-terminated. Setting it
+        # on plain HTTP would force browsers to refuse future HTTP connections
+        # to this host, which breaks warehouse-LAN deployments that run over
+        # HTTP (see V-048 accepted risk).
+        is_https = _request.is_secure or _request.headers.get("X-Forwarded-Proto") == "https"
+        if is_https:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         return response
 
     # Prevent stack trace leakage in production

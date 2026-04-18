@@ -18,13 +18,24 @@ The rejection raises ``BlockedDestinationError``, a subclass of
 other HTTP failures if desired. Connector authors should let it
 propagate to the admin UI, which will surface the clear error message.
 
-Note: this guard does NOT protect against DNS rebinding (where a
-hostname resolves to a public IP on first lookup and a private IP on
-the actual connection). Tracked in SECURITY_BACKLOG.md for v1.4.
+V-108: DNS rebinding defence. A hostname resolves once in the guard and
+a second time when ``requests`` opens the TCP connection. An attacker-
+controlled DNS server can return a public IP on the first lookup and
+an internal IP (metadata, Redis, Docker bridge) on the second, slipping
+past the guard. To close this window, ``assert_url_allowed`` now
+returns the validated IP, and callers wrap the actual request in
+``pinned_host(hostname, ip)`` -- a context manager that pins the
+hostname to the validated IP for the duration of the request by
+intercepting ``socket.getaddrinfo`` via a thread-local map. The pin
+only applies to hostnames that have been explicitly pinned; all other
+lookups pass through unchanged.
 """
 
 import ipaddress
 import socket
+import threading
+from contextlib import contextmanager
+from typing import Iterator
 from urllib.parse import urlsplit
 
 import requests
@@ -58,6 +69,60 @@ class BlockedDestinationError(requests.RequestException):
     """
 
 
+# V-108: thread-local map of hostname -> pinned IP. Populated by
+# pinned_host(), consulted by _pinned_getaddrinfo. Lookups for hosts
+# not in the map fall through to the original resolver unchanged.
+_DNS_PINS = threading.local()
+
+# Capture the unwrapped resolver before we install the pin-aware
+# wrapper. assert_url_allowed and the wrapper itself call this so DNS
+# pinning cannot feed itself recursively.
+_ORIGINAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _pinned_getaddrinfo(host, port, *args, **kwargs):
+    entries = getattr(_DNS_PINS, "entries", None)
+    if entries and host is not None:
+        pinned = entries.get(host.lower())
+        if pinned is not None:
+            host = pinned
+    return _ORIGINAL_GETADDRINFO(host, port, *args, **kwargs)
+
+
+# Install the wrapper once at module import. Callers anywhere in the
+# process that do socket.getaddrinfo(...) now go through the thread-
+# local map; when no pin is active for the requested host the call is
+# transparently forwarded to the original resolver.
+socket.getaddrinfo = _pinned_getaddrinfo
+
+
+@contextmanager
+def pinned_host(hostname: str, ip: str) -> Iterator[None]:
+    """Pin ``hostname`` to ``ip`` for the duration of the ``with`` block.
+
+    Any ``socket.getaddrinfo`` call that uses ``hostname`` inside the
+    block is rewritten to resolve ``ip`` instead. Nested pins are
+    supported: the inner pin overrides the outer and the previous
+    value (or absence) is restored on exit. Thread-local; two worker
+    threads with different pins do not interfere.
+    """
+    entries = getattr(_DNS_PINS, "entries", None)
+    if entries is None:
+        entries = {}
+        _DNS_PINS.entries = entries
+    key = hostname.lower()
+    had_prior = key in entries
+    prior = entries.get(key)
+    entries[key] = ip
+    try:
+        yield
+    finally:
+        if had_prior:
+            entries[key] = prior
+        else:
+            entries.pop(key, None)
+
+
 def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
     """Return True for any address the connector must not reach."""
     return (
@@ -70,11 +135,17 @@ def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
     )
 
 
-def assert_url_allowed(url: str) -> None:
-    """Validate that ``url`` points to a public destination.
+def assert_url_allowed(url: str) -> str:
+    """Validate ``url`` and return the IP the request must pin to.
 
-    Raises ``BlockedDestinationError`` on any violation. Called by
-    ``BaseConnector.make_request`` before every HTTP call.
+    For hostnames, resolves once, validates every returned address, and
+    returns the first non-blocked address as a string. For IP literals,
+    validates and returns the literal. Callers must wrap the actual
+    HTTP call in ``pinned_host(hostname, returned_ip)`` to close the
+    DNS-rebinding window (V-108); ``BaseConnector.make_request`` does
+    this automatically.
+
+    Raises ``BlockedDestinationError`` on any violation.
     """
     parts = urlsplit(url)
     scheme = (parts.scheme or "").lower()
@@ -102,10 +173,15 @@ def assert_url_allowed(url: str) -> None:
             raise BlockedDestinationError(
                 f"Blocked: destination {hostname} is a private or internal address"
             )
-        return
+        # IP literals need no DNS pin: the request will connect to this
+        # exact address, no second resolution happens.
+        return hostname
 
-    # Otherwise resolve and check every address family returned. A single
-    # private result blocks the whole URL.
+    # Resolve and check every address family returned. A single private
+    # result blocks the whole URL. socket.getaddrinfo resolves through
+    # _pinned_getaddrinfo; at this point no pin is active for hostname
+    # (pinned_host is only entered after this function returns), so
+    # behavior matches the original resolver.
     try:
         infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
@@ -113,6 +189,7 @@ def assert_url_allowed(url: str) -> None:
             f"Blocked: cannot resolve hostname {hostname!r}: {exc}"
         )
 
+    safe_ip: str | None = None
     for _family, _type, _proto, _canon, sockaddr in infos:
         ip_str = sockaddr[0]
         # IPv6 sockaddr can include a scope id like 'fe80::1%lo0' -- strip it
@@ -126,3 +203,11 @@ def assert_url_allowed(url: str) -> None:
             raise BlockedDestinationError(
                 f"Blocked: {hostname!r} resolves to {ip_str}, which is a private or internal address"
             )
+        if safe_ip is None:
+            safe_ip = ip_str
+
+    if safe_ip is None:
+        raise BlockedDestinationError(
+            f"Blocked: no usable address returned for {hostname!r}"
+        )
+    return safe_ip

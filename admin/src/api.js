@@ -1,16 +1,25 @@
 const API_BASE = '/api';
 
+function getCsrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)sentry_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem('sentry_token');
+  const method = (options.method || 'GET').toUpperCase();
+  const needsCsrf = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+  const csrfToken = needsCsrf ? getCsrfToken() : null;
   const headers = {
     'Content-Type': 'application/json',
-    ...(token && { Authorization: `Bearer ${token}` }),
+    ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
     ...options.headers,
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  if (res.status === 401 && !path.startsWith('/auth/login')) {
-    localStorage.removeItem('sentry_token');
-    localStorage.removeItem('sentry_user');
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+  if (res.status === 401 && !path.startsWith('/auth/login') && !path.startsWith('/auth/me')) {
     window.location.href = '/login';
     return;
   }

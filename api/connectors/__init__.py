@@ -47,6 +47,9 @@ class ConnectorRegistry:
         Raises:
             TypeError: If cls is not a subclass of BaseConnector or has
                        unimplemented abstract methods.
+            ValueError: If a connector is already registered under the
+                        same name. V-010: silently overwriting was a
+                        supply-chain foothold (a second import wins).
         """
         if not isinstance(cls, type) or not issubclass(cls, BaseConnector):
             raise TypeError(f"{cls} is not a subclass of BaseConnector")
@@ -58,6 +61,13 @@ class ConnectorRegistry:
             missing = ", ".join(sorted(abstract))
             raise TypeError(
                 f"Cannot register {cls.__name__}: missing required methods: {missing}"
+            )
+
+        if name in self._connectors:
+            existing = self._connectors[name].__name__
+            raise ValueError(
+                f"Connector name {name!r} is already registered to {existing}; "
+                f"cannot re-register to {cls.__name__}"
             )
 
         self._connectors[name] = cls

@@ -68,15 +68,21 @@ export default function Users() {
 
   async function save() {
     setError('');
+    // UpdateUserRequest does not accept `username` (the user_id is in the
+    // URL path, and V-017 extras=forbid rejects unknown fields). Only
+    // include it on the create path where CreateUserRequest expects it.
     const body = {
-      username: form.username,
       full_name: form.full_name,
       role: form.role,
       warehouse_ids: form.warehouse_ids || [],
       allowed_functions: form.allowed_functions || [],
     };
-    if (form.password) body.password = form.password;
-    if (!editId) body.password = form.password;
+    if (!editId) {
+      body.username = form.username;
+      body.password = form.password;
+    } else if (form.password) {
+      body.password = form.password;
+    }
     const res = editId
       ? await api.put(`/admin/users/${editId}`, body)
       : await api.post('/admin/users', body);

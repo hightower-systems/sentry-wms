@@ -8,16 +8,38 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from services.auth_service import decode_token
+from services.cookie_auth import (
+    AUTH_COOKIE_NAME,
+    CSRF_PROTECTED_METHODS,
+    csrf_token_matches,
+)
+
+
+def _extract_token():
+    """Return (token, source) where source is 'header' or 'cookie', or (None, None)."""
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header.split(" ", 1)[1], "header"
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        return cookie_token, "cookie"
+    return None, None
 
 
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        token, source = _extract_token()
+        if not token:
             return jsonify({"error": "Unauthorized"}), 401
 
-        token = auth_header.split(" ", 1)[1]
+        # V-045: cookie-auth callers must prove they can read the CSRF cookie
+        # on mutating requests (double-submit). Bearer-header callers are
+        # exempt because bearer tokens don't auto-attach cross-origin.
+        if source == "cookie" and request.method in CSRF_PROTECTED_METHODS:
+            if not csrf_token_matches():
+                return jsonify({"error": "CSRF token missing or invalid"}), 403
+
         payload = decode_token(token)
         if payload is None:
             return jsonify({"error": "Token expired"}), 401
@@ -54,17 +76,48 @@ def require_auth(f):
 
         g.current_user = payload
 
-        # Warehouse authorization: non-admin users can only access assigned warehouses
+        # Warehouse authorization: non-admin users can only access assigned
+        # warehouses.
+        #
+        # V-033 added reading warehouse_id from URL path parameters. V-103
+        # hardens that against source-mismatch smuggling: the handler's
+        # function argument comes from view_args, so an attacker who sets
+        # warehouse_id in the body to an allowed value while targeting a
+        # different warehouse in the path would previously slip past the
+        # middleware (body took priority) and still hit the path value in
+        # the handler. The middleware now collects every source the caller
+        # supplied and rejects mismatches with 400 before the handler runs.
+        # If all sources agree, the common value is used for the allow-list
+        # check. If no source is present, no check runs (the route is
+        # warehouse-agnostic).
         if payload.get("role") != "ADMIN":
             allowed = payload.get("warehouse_ids") or []
-            req_wid = None
+
+            candidates: list[tuple[str, object]] = []
+            if request.view_args and request.view_args.get("warehouse_id") is not None:
+                candidates.append(("path", request.view_args["warehouse_id"]))
+            query_wid_raw = request.args.get("warehouse_id")
+            if query_wid_raw is not None:
+                candidates.append(("query", query_wid_raw))
             if request.is_json:
                 body = request.get_json(silent=True)
-                if body:
-                    req_wid = body.get("warehouse_id")
-            if req_wid is None:
-                req_wid = request.args.get("warehouse_id", type=int)
-            if req_wid is not None and int(req_wid) not in allowed:
+                if body and body.get("warehouse_id") is not None:
+                    candidates.append(("body", body["warehouse_id"]))
+
+            req_wid_int: int | None = None
+            if candidates:
+                try:
+                    normalized = {src: int(v) for src, v in candidates}
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Invalid warehouse_id"}), 400
+                if len(set(normalized.values())) > 1:
+                    return jsonify({
+                        "error": "warehouse_id mismatch across request",
+                        "sources": normalized,
+                    }), 400
+                req_wid_int = next(iter(normalized.values()))
+
+            if req_wid_int is not None and req_wid_int not in allowed:
                 return jsonify({"error": "Access denied for this warehouse"}), 403
 
         return f(*args, **kwargs)
