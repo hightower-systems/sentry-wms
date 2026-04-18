@@ -13,6 +13,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 
+import { clearAllAuthFromStores } from './authStorageClear';
 import { migrateAsyncStorageToSecureStore } from './authStorageMigration';
 
 export const AUTH_STORAGE_KEYS = [
@@ -39,7 +40,10 @@ export async function deleteAuthItem(key) {
 }
 
 export async function clearAllAuth() {
-  await Promise.all(AUTH_STORAGE_KEYS.map((k) => deleteAuthItem(k)));
+  // V-104: clearAllAuthFromStores (in authStorageClear.js) is the pure
+  // form suitable for unit tests with in-memory mocks. Here we bind it
+  // to the real AsyncStorage + SecureStore backends.
+  return clearAllAuthFromStores(AUTH_STORAGE_KEYS, AsyncStorage, SecureStore);
 }
 
 export async function runAuthStorageMigration() {
