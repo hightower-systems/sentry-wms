@@ -44,6 +44,18 @@ export default function AppNavigator() {
   // bypass is blocked because the flag survives in SecureStore until the
   // server-side column flips to false and we mirror that via
   // completePasswordChange.
+  //
+  // ChangePassword is only registered in the forced-mode branch. It is
+  // not voluntarily accessible from the mobile app in v1.4.1 (no Settings
+  // entry for it). When must_change_password flips false, removing the
+  // route from the config is what lets native-stack fall through to the
+  // initial route (Home) instead of preserving a stuck ChangePassword
+  // state with its spinner still showing.
+  //
+  // When mobile adds a voluntary password-change flow (v1.5+), this will
+  // need revisiting -- likely a manual navigation reset() call after
+  // completePasswordChange() or a different navigator structure entirely.
+  // See issue #67 for the source-of-truth refactor that touches this area.
   const forced = !!user?.must_change_password;
 
   return (
@@ -59,7 +71,6 @@ export default function AppNavigator() {
           ) : (
             <>
               <Stack.Screen name="Home" component={HomeScreen} />
-              <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
               <Stack.Screen name="Receive" component={ReceiveScreen} />
               <Stack.Screen name="PutAway" component={PutAwayScreen} />
               <Stack.Screen name="PickScan" component={PickScanScreen} />
