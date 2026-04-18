@@ -190,6 +190,53 @@ class TestV003_AdminDockerfileProduction:
         assert (REPO_ROOT / "docker-compose.dev.yml").exists()
 
 
+class TestV111_AdminNginxHsts:
+    """V-111: nginx must emit Strict-Transport-Security when the connection
+    was TLS-terminated (by nginx directly, or by an upstream proxy that set
+    X-Forwarded-Proto). Must NOT emit over plain HTTP: V-048 accepted-risk
+    LAN deployments run cleartext and HSTS would brick them."""
+
+    def test_nginx_adds_hsts_header(self):
+        nginx_conf = _read("admin/nginx.conf")
+        assert "Strict-Transport-Security" in nginx_conf, (
+            "nginx.conf must emit Strict-Transport-Security over HTTPS"
+        )
+
+    def test_nginx_hsts_is_conditional_not_unconditional_literal(self):
+        # If HSTS were emitted unconditionally with a literal max-age, this
+        # would pass: "max-age=" appears in the conf. The real guard is that
+        # the add_header uses a variable whose value comes from a map keyed
+        # on $scheme / $http_x_forwarded_proto.
+        nginx_conf = _read("admin/nginx.conf")
+        assert re.search(
+            r"add_header\s+Strict-Transport-Security\s+\$", nginx_conf
+        ), "HSTS must be driven by a variable, not an unconditional literal"
+
+    def test_nginx_hsts_gated_on_https(self):
+        nginx_conf = _read("admin/nginx.conf")
+        # Map on $scheme must have an "https" -> max-age=... entry.
+        assert re.search(
+            r"map\s+\$scheme\s+\$\w+\s*\{[^}]*\"https\"\s*\"max-age=",
+            nginx_conf,
+            re.DOTALL,
+        ), "nginx.conf must map $scheme=https to an HSTS header value"
+
+    def test_nginx_hsts_respects_x_forwarded_proto(self):
+        nginx_conf = _read("admin/nginx.conf")
+        # Must ALSO honor X-Forwarded-Proto: https from an upstream TLS
+        # terminator (mirrors api/app.py).
+        assert re.search(
+            r"map\s+\$http_x_forwarded_proto\s+\$\w+\s*\{[^}]*\"https\"\s*\"max-age=",
+            nginx_conf,
+            re.DOTALL,
+        ), "nginx.conf must map X-Forwarded-Proto=https to HSTS so proxied TLS terminations still trigger the header"
+
+    def test_nginx_hsts_uses_one_year_includesubdomains(self):
+        nginx_conf = _read("admin/nginx.conf")
+        assert "max-age=31536000" in nginx_conf, "HSTS max-age must be 1 year"
+        assert "includeSubDomains" in nginx_conf
+
+
 # ---------------------------------------------------------------------------
 # V-004 -- Redis broker must require a password
 # ---------------------------------------------------------------------------
