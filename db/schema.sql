@@ -464,7 +464,8 @@ CREATE TABLE users (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_login TIMESTAMPTZ,
-    password_changed_at TIMESTAMPTZ
+    password_changed_at TIMESTAMPTZ,
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- ============================================================
