@@ -60,9 +60,8 @@ else
   # Overwrite placeholder admin password with the resolved one + set forced-change flag
   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v admin_pw="$ADMIN_PW" -v must_change="$MUST_CHANGE" <<'UPDATE_PW'
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-UPDATE users
-   SET password_hash = crypt(:'admin_pw', gen_salt('bf')),
-       must_change_password = :'must_change'::boolean
+UPDATE users SET password_hash = crypt(:'admin_pw', gen_salt('bf')),
+                 must_change_password = :'must_change'::boolean
  WHERE username = 'admin';
 UPDATE_PW
   echo "Full seed complete."
