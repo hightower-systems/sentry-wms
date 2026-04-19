@@ -67,6 +67,6 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Current Version
 
-v1.4.0 -- Security backlog cleanup. HttpOnly cookie + CSRF for admin auth, SecureStore on mobile, strict Content-Security-Policy, Flask-Limiter rate limiting, self-hosted fonts, and dependency audit in CI. 647 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.0 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.0).
+v1.4.1 -- Patch release. Forced password change on first login eliminates the "grep logs for the random admin password" onboarding paper-cut, mobile HomeScreen + LoginScreen version display fixed, and a forced-mode navigator stuck-spinner bug resolved. 690 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.1 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.1).
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).
