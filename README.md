@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.4.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-647%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.4.1-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-690%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.4.0 - Security backlog cleanup**
+**v1.4.1 - Forced password change + mobile version fix**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -304,6 +304,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | **v1.2.0** | **Pydantic validation schemas, React error boundaries, standardized error format** | ✅ **Released** |
 | **v1.3.0** | **Connector framework (Celery + Redis + credential vault + sync health + rate limiter), external security audit with 80 findings triaged, 4 Critical + 12 High fixes landed, audit-log tamper resistance, SSRF allowlist, inventory-race hardening** | ✅ **Released** |
 | **v1.4.0** | **Security backlog cleanup - HttpOnly cookie + CSRF for admin auth (V-045), mobile SecureStore migration (V-047), strict Content-Security-Policy (V-050), Flask-Limiter rate limiting (V-041), `pip-audit` + `npm audit` in CI (V-042), DNS-rebinding pin (V-108), self-hosted fonts (V-110), and all 9 v1.4 audit findings (V-100 through V-111) closed** | ✅ **Released** |
+| **v1.4.1** | **Patch - forced password change on first login eliminates the "grep logs for random admin password" onboarding paper-cut (#69), mobile HomeScreen + LoginScreen version display bumped from stale v1.2.0 (#68), forced-mode navigator stuck-spinner fix** | ✅ **Released** |
 | v2.0.0 | First-party ERP + commerce connectors (NetSuite, QuickBooks, Shopify, Fabric) on top of the v1.3 connector framework | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -316,4 +317,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.4.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.4.1

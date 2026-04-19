@@ -79,6 +79,9 @@ export function AuthProvider({ children }) {
     const resp = await client.post('/api/auth/login', { username, password });
     const { token, user: userData } = resp.data;
     await setAuthItem('jwt_token', token);
+    // userData already carries must_change_password from the backend; we
+    // store the whole dict so the flag survives a force-kill + reopen and
+    // the navigator can enforce forced-mode on rehydrate.
     await setAuthItem('user_data', JSON.stringify(userData));
     await setAuthItem('login_timestamp', String(Date.now()));
     setUser(userData);
@@ -90,8 +93,32 @@ export function AuthProvider({ children }) {
     setWarehouseId(newWarehouseId);
   };
 
+  // Called by ChangePasswordScreen after a successful forced password
+  // change. Backend has already cleared must_change_password; we mirror
+  // that in state + SecureStore so the navigator exits forced mode.
+  const completePasswordChange = useCallback(async () => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, must_change_password: false };
+      // Write-through to SecureStore so a resume after this returns the
+      // cleared flag, not the stale forced state.
+      setAuthItem('user_data', JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, warehouseId, isLoading, login, logout, switchWarehouse }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        warehouseId,
+        isLoading,
+        login,
+        logout,
+        switchWarehouse,
+        completePasswordChange,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

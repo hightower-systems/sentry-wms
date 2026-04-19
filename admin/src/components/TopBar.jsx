@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../auth.jsx';
 import { useWarehouse } from '../warehouse.jsx';
 
-export default function TopBar() {
+export default function TopBar({ forced = false }) {
   const { user, logout } = useAuth();
   const { warehouses, warehouseId, warehouse, setWarehouseId } = useWarehouse();
   const [showMenu, setShowMenu] = useState(false);
@@ -50,7 +50,7 @@ export default function TopBar() {
         </svg>
         Sentry WMS
       </div>
-      <div className="topbar-breadcrumb" ref={whRef} style={{ position: 'relative' }}>
+      {!forced && <div className="topbar-breadcrumb" ref={whRef} style={{ position: 'relative' }}>
         <span
           className="topbar-wh-picker"
           onClick={() => setShowWhPicker(!showWhPicker)}
@@ -78,10 +78,10 @@ export default function TopBar() {
             })}
           </div>
         )}
-      </div>
-      <div className="topbar-search">
+      </div>}
+      {!forced && <div className="topbar-search">
         <input type="text" placeholder="Search items, bins, orders..." />
-      </div>
+      </div>}
       <div className="topbar-user" ref={menuRef} style={{ position: 'relative' }}>
         <div className="topbar-avatar" onClick={() => setShowMenu(!showMenu)} title={user?.full_name || user?.username}>
           {initials}

@@ -25,6 +25,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True))
     password_changed_at = Column(DateTime(timezone=True))
+    must_change_password = Column(Boolean, nullable=False, default=False)
 
     def to_dict(self):
         return {
@@ -36,6 +37,7 @@ class User(Base):
             "warehouse_ids": list(self.warehouse_ids) if self.warehouse_ids else [],
             "allowed_functions": list(self.allowed_functions) if self.allowed_functions else [],
             "is_active": self.is_active,
+            "must_change_password": bool(self.must_change_password),
         }
 
     def check_password(self, password):

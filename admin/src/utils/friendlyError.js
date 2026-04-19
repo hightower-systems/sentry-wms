@@ -23,6 +23,11 @@ const KNOWN_ERROR_MESSAGES = {
   'Access denied for this warehouse': 'You do not have access to that warehouse.',
   'Current password is incorrect': 'Current password is incorrect.',
   'User not found': 'Account not found.',
+  "Password cannot be 'admin'": "Password cannot be 'admin'.",
+  'Password must be at least 8 characters': 'Password must be at least 8 characters.',
+  'Password must contain at least one letter': 'Password must contain at least one letter.',
+  'Password must contain at least one digit': 'Password must contain at least one digit.',
+  password_change_required: 'You must change your password before continuing.',
 };
 
 export function friendlyError(payload, fallback = 'Something went wrong. Please try again.') {
