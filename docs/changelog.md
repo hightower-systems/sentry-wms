@@ -6,6 +6,49 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.4.1 -- Forced Password Change + Mobile Version Fix
+
+*2026-04-18.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.1).
+
+Patch release bundling two bug fixes deferred from v1.4.0.
+
+Highlights:
+
+- **Forced password change on first login (#69)** -- fresh installs
+  seed admin as `admin/admin` with a `must_change_password` flag. Auth
+  middleware blocks every route except `/api/auth/me`,
+  `/api/auth/change-password`, and `/api/auth/logout` until the admin
+  changes the password. Eliminates the "grep logs for the random
+  password" onboarding paper-cut that shipped from v1.0 through
+  v1.4.0.
+- **Mobile version display fix (#68)** -- HomeScreen and LoginScreen
+  had been hardcoding `v1.2.0` for two releases. Now read the current
+  version. Issue #67 tracks the v1.5 refactor that eliminates this
+  class of bug permanently via build-time injection.
+- **Forced-mode navigator fix** -- mobile `ChangePasswordScreen` save
+  spinner stuck bug resolved. React Navigation native-stack was
+  preserving the route when `must_change_password` flipped false;
+  removing the screen from the non-forced branch lets native-stack
+  fall through to Home.
+
+Security:
+
+- `validate_password` rejects `admin` as the new password
+  (case-insensitive, whitespace-stripped).
+- Mobile force-kill-and-reopen bypass closed: the flag persists
+  inside the SecureStore-backed user dict, so a relaunch rehydrates
+  forced mode.
+- Distinct `audit_log` action `forced_password_change_completed`
+  separates onboarding completions from voluntary rotations.
+
+Test counts: 690 backend, 42 admin, 24 mobile. All CI green.
+
+Operator notes: fresh installs are prompted to set a new password on
+first login. Existing installs are unaffected (migration 019 defaults
+the column to FALSE).
+
+---
+
 ## v1.4.0 -- Security Backlog Cleanup
 
 *2026-04-18.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.0).
