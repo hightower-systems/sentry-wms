@@ -2,6 +2,37 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.4.1] - 2026-04-18
+
+Patch release bundling two bug fixes deferred from v1.4.0.
+
+### Added
+- **Forced password change on first login.** Fresh installs seed admin as `admin/admin` with a `must_change_password` flag set. Auth middleware blocks every endpoint except `/api/auth/me`, `/api/auth/change-password`, and `/api/auth/logout` until the admin changes the password. Eliminates the "docker compose up, then grep logs for the random password" onboarding paper-cut carried from v1.0 through v1.4.0. (#69)
+- **Migration 019** adds `must_change_password BOOLEAN NOT NULL DEFAULT FALSE` on the `users` table. Existing users get the default FALSE on ALTER, so pre-existing deployments are never force-flagged by this migration.
+- **Distinct audit_log action** `forced_password_change_completed` for the first-time flow, separate from voluntary `password_change` on subsequent rotations. Greppable apart from normal rotations.
+- **Admin panel change-password page** (new in `admin/src/pages/ChangePassword.jsx`). Router guard redirects to `/change-password` whenever `must_change_password` is true; brand-red banner, hidden Cancel button, and a sidebar-less layout enforce the forced-mode UI. The page also serves voluntary changes (Cancel visible, no banner, full shell).
+- **Mobile `ChangePasswordScreen`** with the matching banner, Android hardware back-handler and iOS swipe-back both disabled, and a "Log out" escape. `AppNavigator` registers the screen only in the forced-mode branch so the rest of the app is literally unreachable while the flag is set.
+
+### Fixed
+- **Mobile HomeScreen and LoginScreen version display.** Both hardcoded `v1.2.0` and were never bumped during v1.3.0 or v1.4.0. Now read `v1.4.1`. Issue #67 tracks the v1.5 refactor that eliminates this class of bug permanently via build-time injection. (#68)
+- **Forced-mode navigator stuck spinner.** React Navigation native-stack was preserving the `ChangePassword` route across the `must_change_password` flip because the screen was registered in both the forced and non-forced branches. The non-forced branch no longer registers it, so the route ceases to exist when the flag clears and native-stack falls through to Home. (#69)
+
+### Security
+- **`admin` rejected as a new password** (case-insensitive, whitespace-stripped). `validate_password` refuses `admin`, `ADMIN`, `Admin`, `aDmIn`, ` admin `, `\tadmin\n`, etc. Prevents "changing" the seeded default back to itself.
+- **Middleware exception list is exactly three endpoints.** Anything else returns 403 `password_change_required` while the flag is set. Matched by Flask endpoint (blueprint.view_fn), not URL path, so query strings and method variants cannot slip past.
+- **Force-kill-and-reopen bypass closed on mobile.** `must_change_password` lives inside the persisted `user_data` dict in SecureStore, so a relaunch rehydrates the forced state and the navigator re-renders `ChangePasswordScreen`. `completePasswordChange` write-throughs the cleared flag to SecureStore so a resume after a successful change lands on Home.
+
+### Tests
+- Backend: 25 new tests (`api/tests/test_forced_password_change.py`), 690 total passing.
+- Admin: 10 new tests (`admin/src/test/forced-change-flow.test.jsx`), 42 total passing.
+- Mobile: 11 new tests (`mobile/src/auth/__tests__/forcedChangePersistence.test.js`), 24 total passing. React Navigation and hardware-back behaviour verified manually on a Chainway C6000 since mobile vitest has no RN runtime.
+
+### Notes for operators
+- **Fresh installs:** log in with `admin/admin`; you will be prompted to set a new password before any other route becomes accessible.
+- **Existing installs:** no change in behaviour. Migration 019 sets the column to FALSE for all existing rows; your admin user flows through login exactly as before.
+- **Dev / demo workflow:** `docker compose down -v && docker compose up -d` resets to `admin/admin` plus the forced-change flow.
+- **`ADMIN_PASSWORD` env override** still bypasses the forced flow for CI, automation, and deterministic dev environments. When set, the provided password ships with `must_change_password = FALSE` and the legacy banner.
+
 ## [v1.4.0] - 2026-04-18
 
 Pure security and hardening release. No new features. Closes the remaining High-severity items from the v1.3.0 audit backlog, every finding from a fresh audit of the v1.4 work (V-100 through V-111), and the most impactful Medium / Low items.
