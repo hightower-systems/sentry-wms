@@ -5,7 +5,7 @@ import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
-const ZONE_TYPES = ['STORAGE', 'RECEIVING', 'STAGING', 'SHIPPING', 'QUALITY', 'DAMAGE'];
+const ZONE_TYPES = ['RECEIVING', 'STORAGE', 'PICKING', 'STAGING', 'SHIPPING'];
 
 export default function Zones() {
   const { warehouseId } = useWarehouse();
@@ -41,9 +41,9 @@ export default function Zones() {
 
   async function save() {
     setError('');
-    const body = { zone_code: form.zone_code, zone_name: form.zone_name, zone_type: form.zone_type, is_active: form.is_active };
+    const body = { zone_code: form.zone_code, zone_name: form.zone_name, zone_type: form.zone_type };
     const res = editId
-      ? await api.put(`/admin/zones/${editId}`, body)
+      ? await api.put(`/admin/zones/${editId}`, { ...body, is_active: !!form.is_active })
       : await api.post('/admin/zones', { ...body, warehouse_id: warehouseId });
     if (res?.ok) {
       setShowModal(false);
