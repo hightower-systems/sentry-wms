@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
+import { useDirtyFormGuard } from '../hooks/useDirtyFormGuard.js';
 
 export default function Settings() {
   const { warehouseId } = useWarehouse();
@@ -28,7 +29,9 @@ export default function Settings() {
 
   const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
 
-  // Warn on browser navigation away with unsaved changes
+  // Warn on browser navigation away with unsaved changes (close, reload,
+  // URL change outside the SPA). beforeunload handles the out-of-SPA
+  // cases; useDirtyFormGuard below handles in-SPA link clicks.
   useEffect(() => {
     function handleBeforeUnload(e) {
       if (hasUnsavedChanges) {
@@ -39,6 +42,10 @@ export default function Settings() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
+
+  // v1.4.2 #94: intra-app guard. Prompts the operator when clicking any
+  // sidebar link while draftSettings differ from savedSettings.
+  useDirtyFormGuard(hasUnsavedChanges);
 
   useEffect(() => {
     if (!warehouseId) return;
