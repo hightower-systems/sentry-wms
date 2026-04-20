@@ -149,9 +149,9 @@ export default function Users() {
     { key: 'warehouse_ids', label: 'Warehouses', render: (r) => warehouseCodes(r.warehouse_ids) },
     { key: 'actions', label: '', render: (r) => (
       <div style={{ display: 'flex', gap: 4 }}>
-        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Edit</button>
+        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }} aria-label="Edit" title="Edit">&#9998;</button>
         {r.user_id !== currentUser?.user_id && (
-          <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deleteUser(r.user_id); }}>Delete</button>
+          <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deleteUser(r.user_id); }} aria-label="Delete" title="Delete">&#128465;</button>
         )}
       </div>
     )},

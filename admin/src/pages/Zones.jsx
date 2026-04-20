@@ -14,7 +14,7 @@ export default function Zones() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => { if (warehouseId) loadZones(); }, [warehouseId]);
 
@@ -57,15 +57,16 @@ export default function Zones() {
 
   async function deleteZone() {
     setError('');
-    const res = await api.delete(`/admin/zones/${editId}`);
+    const target = deleteTarget;
+    if (!target) return;
+    const res = await api.delete(`/admin/zones/${target.zone_id}`);
     if (res?.ok) {
-      setConfirmDelete(false);
-      setShowModal(false);
+      setDeleteTarget(null);
       loadZones();
     } else {
       const data = await res?.json();
       setError(data?.error || 'Failed to delete zone');
-      setConfirmDelete(false);
+      setDeleteTarget(null);
     }
   }
 
@@ -75,7 +76,10 @@ export default function Zones() {
     { key: 'zone_type', label: 'Type' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
     { key: 'actions', label: '', render: (r) => (
-      <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Edit</button>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }} aria-label="Edit" title="Edit">&#9998;</button>
+        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget(r); }} aria-label="Delete" title="Delete">&#128465;</button>
+      </div>
     )},
   ];
 
@@ -92,9 +96,6 @@ export default function Zones() {
           onClose={() => { setShowModal(false); setError(''); }}
           footer={
             <>
-              {editId && (
-                <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>Delete</button>
-              )}
               <button className="btn" onClick={() => { setShowModal(false); setError(''); }}>Cancel</button>
               <button className="btn btn-primary" onClick={save}>Save</button>
             </>
@@ -119,13 +120,13 @@ export default function Zones() {
         </Modal>
       )}
 
-      {confirmDelete && (
+      {deleteTarget && (
         <Modal
-          title={`Delete zone ${form.zone_code || ''}?`}
-          onClose={() => setConfirmDelete(false)}
+          title={`Delete zone ${deleteTarget.zone_code || ''}?`}
+          onClose={() => setDeleteTarget(null)}
           footer={
             <>
-              <button className="btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+              <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
               <button className="btn btn-danger" onClick={deleteZone}>Delete</button>
             </>
           }
@@ -134,6 +135,7 @@ export default function Zones() {
             This permanently removes the zone. Bins assigned to it must be
             reassigned or deleted first.
           </p>
+          {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
         </Modal>
       )}
     </div>

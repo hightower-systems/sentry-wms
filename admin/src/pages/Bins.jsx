@@ -17,7 +17,7 @@ export default function Bins() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId]);
 
@@ -49,18 +49,25 @@ export default function Bins() {
     }
   }
 
+  function openEditFromRow(r) {
+    setSelected(r);
+    setForm(r);
+    setEditing(true);
+    setError('');
+  }
+
   async function deleteBin() {
     setError('');
-    const res = await api.delete(`/admin/bins/${selected.bin_id}`);
+    const target = deleteTarget;
+    if (!target) return;
+    const res = await api.delete(`/admin/bins/${target.bin_id}`);
     if (res?.ok) {
-      setConfirmDelete(false);
-      setSelected(null);
-      setDetail(null);
+      setDeleteTarget(null);
       loadBins();
     } else {
       const data = await res?.json();
       setError(data?.error || 'Failed to delete');
-      setConfirmDelete(false);
+      setDeleteTarget(null);
     }
   }
 
@@ -94,6 +101,12 @@ export default function Bins() {
     { key: 'aisle', label: 'Aisle' },
     { key: 'pick_sequence', label: 'Pick Seq' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
+    { key: 'actions', label: '', render: (r) => (
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEditFromRow(r); }} aria-label="Edit" title="Edit">&#9998;</button>
+        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget(r); }} aria-label="Delete" title="Delete">&#128465;</button>
+      </div>
+    )},
   ];
 
   const invCols = [
@@ -155,12 +168,9 @@ export default function Bins() {
       <DataTable columns={columns} data={bins} onRowClick={viewBin} />
 
       {selected && detail && !editing && (
-        <Modal title={`Bin ${detail.bin_code}`} onClose={() => { setSelected(null); setDetail(null); setConfirmDelete(false); setError(''); }}
+        <Modal title={`Bin ${detail.bin_code}`} onClose={() => { setSelected(null); setDetail(null); setError(''); }}
           footer={
-            <>
-              <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>Delete</button>
-              <button className="btn" onClick={() => { setEditing(true); setForm(detail); setError(''); }}>Edit</button>
-            </>
+            <button className="btn" onClick={() => { setEditing(true); setForm(detail); setError(''); }}>Edit</button>
           }
         >
           <div className="detail-grid">
@@ -182,21 +192,22 @@ export default function Bins() {
         </Modal>
       )}
 
-      {confirmDelete && detail && (
+      {deleteTarget && (
         <Modal
-          title={`Delete bin ${detail.bin_code}?`}
-          onClose={() => setConfirmDelete(false)}
+          title={`Delete bin ${deleteTarget.bin_code}?`}
+          onClose={() => setDeleteTarget(null)}
           footer={
             <>
-              <button className="btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+              <button className="btn" onClick={() => setDeleteTarget(null)}>Cancel</button>
               <button className="btn btn-danger" onClick={deleteBin}>Delete</button>
             </>
           }
         >
           <p style={{ fontSize: 13 }}>
-            This permanently removes bin <span className="mono">{detail.bin_code}</span>. Inventory with
+            This permanently removes bin <span className="mono">{deleteTarget.bin_code}</span>. Inventory with
             quantity on hand and preferred-bin references must be cleared first.
           </p>
+          {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
         </Modal>
       )}
 
