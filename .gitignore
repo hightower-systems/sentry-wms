@@ -30,6 +30,14 @@ dist/
 build/
 *.egg
 
+# v1.4.2 #73 artifact: api/Dockerfile bakes this at image build time
+# (RUN grep ... > /app/BUILD_VERSION) for the check_build_version()
+# startup guard. It should never be committed -- the file is baked
+# per-image and can leak onto the host via the dev bind mount. If it
+# does leak with a stale version, the guard sys.exit(2)s the dev
+# container on every restart after a version bump.
+api/BUILD_VERSION
+
 # Expo / React Native
 mobile/.expo/web/
 mobile/android/

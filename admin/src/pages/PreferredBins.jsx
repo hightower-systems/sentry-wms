@@ -178,7 +178,7 @@ export default function PreferredBins() {
             <select className="form-select" value={addForm.bin_id} onChange={(e) => setAddForm({ ...addForm, bin_id: e.target.value })}>
               <option value="">Select bin...</option>
               {bins.map((b) => (
-                <option key={b.id} value={b.id}>{b.bin_code} - {b.zone_name || ''}</option>
+                <option key={b.bin_id} value={b.bin_id}>{b.bin_code} - {b.zone_name || ''}</option>
               ))}
             </select>
           </div>

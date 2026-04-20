@@ -105,6 +105,12 @@ export default function Adjustments() {
       return;
     }
 
+    const reason = (form.reason || '').trim();
+    if (!reason) {
+      setError('Reason is required for audit traceability.');
+      return;
+    }
+
     const qty = parseInt(form.quantity, 10);
     if (isNaN(qty) || qty <= 0) {
       setError('Quantity must be a positive number.');
@@ -119,7 +125,7 @@ export default function Adjustments() {
         item_id: form.item_id,
         adjustment_type: form.adjustment_type.toLowerCase(),
         quantity: qty,
-        reason: form.reason || '',
+        reason,
       });
 
       if (res?.ok) {

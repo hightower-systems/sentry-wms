@@ -9,6 +9,7 @@ export default function Inventory() {
   const [data, setData] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
@@ -24,6 +25,11 @@ export default function Inventory() {
       setPagination({ page: json.page, pages: json.pages, total: json.total, per_page: json.per_page });
     });
   }, [page, search, warehouseId]);
+
+  function commitSearch() {
+    setSearch(searchInput);
+    setPage(1);
+  }
 
   function handleSort(key) {
     if (sortKey === key) {
@@ -64,9 +70,11 @@ export default function Inventory() {
       <div className="filter-bar">
         <input
           className="form-input"
-          placeholder="Search by SKU or item name..."
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          placeholder="Search by SKU or item name (press Enter)"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') commitSearch(); }}
+          onBlur={commitSearch}
         />
       </div>
       <DataTable

@@ -303,6 +303,34 @@ class TestPurchaseOrders:
         resp = client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["message"] == "Purchase order closed"
+        assert resp.get_json()["status"] == "CLOSED"
+
+    def test_close_already_closed_returns_409(self, client, auth_headers):
+        """Issue #88: state-machine guard. Re-closing a CLOSED PO now
+        returns 409 instead of silently re-writing the same status."""
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        assert resp.status_code == 409
+        assert "already CLOSED" in resp.get_json()["error"]
+
+    def test_reopen_closed_purchase_order(self, client, auth_headers):
+        """Issue #88: reopen transitions CLOSED -> OPEN."""
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.post("/api/admin/purchase-orders/1/reopen", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["message"] == "Purchase order reopened"
+        assert resp.get_json()["status"] == "OPEN"
+
+    def test_reopen_rejects_non_closed_po(self, client, auth_headers):
+        """Issue #88: only CLOSED POs can be reopened. An OPEN PO
+        reopen request returns 409."""
+        resp = client.post("/api/admin/purchase-orders/1/reopen", headers=auth_headers)
+        assert resp.status_code == 409
+        assert "CLOSED" in resp.get_json()["error"]
+
+    def test_reopen_missing_po_returns_404(self, client, auth_headers):
+        resp = client.post("/api/admin/purchase-orders/99999/reopen", headers=auth_headers)
+        assert resp.status_code == 404
 
 
 # ── Sales Orders ──────────────────────────────────────────────────────────────
@@ -381,6 +409,15 @@ class TestSalesOrders:
 
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         assert resp.status_code == 400
+
+    def test_cancel_already_cancelled_fails(self, client, auth_headers):
+        """Issue #90: admin UI only shows the Cancel button for OPEN SOs,
+        but guard the backend against a double-cancel anyway (the status
+        check rejects a CANCELLED order with 400)."""
+        client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
+        resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
+        assert resp.status_code == 400
+        assert "Can only cancel" in resp.get_json()["error"]
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -560,6 +597,67 @@ class TestAuditLog:
         resp = client.get("/api/admin/audit-log?action_type=TRANSFER", headers=auth_headers)
         data = resp.get_json()
         assert all(e["action_type"] == "TRANSFER" for e in data["entries"])
+
+    def test_audit_log_sort_by_created_at_desc_default(self, client, auth_headers):
+        """Issue #95: default sort is created_at DESC (newest first)."""
+        for _ in range(3):
+            client.post("/api/transfers/move", json={
+                "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+            }, headers=auth_headers)
+            client.post("/api/transfers/move", json={
+                "item_id": 1, "from_bin_id": 4, "to_bin_id": 3, "quantity": 1,
+            }, headers=auth_headers)
+
+        resp = client.get("/api/admin/audit-log", headers=auth_headers)
+        assert resp.status_code == 200
+        entries = resp.get_json()["entries"]
+        assert len(entries) >= 2
+        ts = [e["created_at"] for e in entries]
+        assert ts == sorted(ts, reverse=True)
+
+    def test_audit_log_sort_by_created_at_asc(self, client, auth_headers):
+        for _ in range(2):
+            client.post("/api/transfers/move", json={
+                "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+            }, headers=auth_headers)
+
+        resp = client.get(
+            "/api/admin/audit-log?sort_by=created_at&sort_direction=asc",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        ts = [e["created_at"] for e in resp.get_json()["entries"]]
+        assert ts == sorted(ts)
+
+    def test_audit_log_sort_by_action_type(self, client, auth_headers):
+        # Seed with both PUTAWAY and TRANSFER entries so the enum sort shows
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get(
+            "/api/admin/audit-log?sort_by=action_type&sort_direction=asc",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        actions = [e["action_type"] for e in resp.get_json()["entries"]]
+        assert actions == sorted(actions)
+
+    def test_audit_log_invalid_sort_by_falls_back_to_created_at(self, client, auth_headers):
+        """Whitelist guards against SQL injection: an unknown or hostile
+        sort_by value is replaced with the default, not passed through."""
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get(
+            "/api/admin/audit-log?sort_by=DROP_TABLE&sort_direction=asc",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        # No SQL error; falls back to created_at. Just verify the request
+        # succeeded and we got at least one entry.
+        assert resp.get_json()["total"] >= 1
 
 
 # ── Inventory Overview ────────────────────────────────────────────────────────
@@ -1131,3 +1229,135 @@ class TestInterWarehouseTransfersList:
         data = resp.get_json()
         assert "transfers" in data
         assert isinstance(data["transfers"], list)
+
+
+class TestZoneDelete:
+    """Issue #86: DELETE /api/admin/zones/{id} must 409 when bins remain."""
+
+    def test_delete_empty_zone_succeeds(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/zones",
+            json={
+                "zone_code": "ZDELTEST",
+                "zone_name": "Zone Delete Test",
+                "zone_type": "STORAGE",
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        zone_id = resp.get_json()["zone_id"]
+
+        resp = client.delete(f"/api/admin/zones/{zone_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert "deleted" in resp.get_json()["message"].lower()
+
+    def test_delete_zone_with_bins_returns_409(self, client, auth_headers):
+        """Zone 1 in the demo seed is the Receiving zone with at least
+        one bin attached."""
+        resp = client.delete("/api/admin/zones/1", headers=auth_headers)
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert "bin(s) are assigned" in body["error"]
+        assert "Reassign or delete the bins first" in body["error"]
+
+    def test_delete_missing_zone_returns_404(self, client, auth_headers):
+        resp = client.delete("/api/admin/zones/99999", headers=auth_headers)
+        assert resp.status_code == 404
+
+
+class TestBinDelete:
+    """Issue #85 follow-up: DELETE /api/admin/bins/{id} with confirmation
+    dialog on the frontend and a 409 guard when the bin still has
+    inventory or is referenced by preferred-bin mappings."""
+
+    def test_delete_empty_bin_succeeds(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/bins",
+            json={
+                "bin_code": "DELTEST-1",
+                "bin_barcode": "DELTEST-1",
+                "bin_type": "Pickable",
+                "zone_id": 2,
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        bin_id = resp.get_json()["bin_id"]
+
+        resp = client.delete(f"/api/admin/bins/{bin_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert "deleted" in resp.get_json()["message"].lower()
+
+        resp = client.get(f"/api/admin/bins/{bin_id}", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_delete_bin_with_inventory_returns_409(self, client, auth_headers):
+        """Bin 3 in the demo seed has inventory rows with quantity_on_hand > 0."""
+        resp = client.delete("/api/admin/bins/3", headers=auth_headers)
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert "inventory record" in body["error"].lower()
+        assert "quantity on hand" in body["error"].lower()
+
+    def test_delete_bin_with_preferred_mapping_returns_409(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/bins",
+            json={
+                "bin_code": "DELTEST-PREF",
+                "bin_barcode": "DELTEST-PREF",
+                "bin_type": "Pickable",
+                "zone_id": 2,
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        bin_id = resp.get_json()["bin_id"]
+
+        client.post(
+            "/api/admin/preferred-bins",
+            json={"item_id": 5, "bin_id": bin_id, "priority": 1},
+            headers=auth_headers,
+        )
+
+        resp = client.delete(f"/api/admin/bins/{bin_id}", headers=auth_headers)
+        assert resp.status_code == 409
+        assert "preferred-bin mapping" in resp.get_json()["error"].lower()
+
+    def test_delete_missing_bin_returns_404(self, client, auth_headers):
+        resp = client.delete("/api/admin/bins/99999", headers=auth_headers)
+        assert resp.status_code == 404
+
+
+class TestInventorySearchQ:
+    """Issue #82: /admin/inventory must honour the `q` query parameter
+    so the admin panel's SKU / item-name search actually filters rows."""
+
+    def test_q_matches_sku(self, client, auth_headers):
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=TST-005", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(r["sku"] == "TST-005" for r in data["inventory"])
+
+    def test_q_matches_item_name_case_insensitive(self, client, auth_headers):
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=fly%20line", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all("fly line" in r["item_name"].lower() for r in data["inventory"])
+
+    def test_q_with_no_matches_returns_empty(self, client, auth_headers):
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=no-such-item-zzz", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 0
+        assert data["inventory"] == []
+
+    def test_q_whitespace_only_ignored(self, client, auth_headers):
+        """A user who types spaces and hits Enter should get the full
+        list, not an empty filter. strip() on the server defends this."""
+        baseline = client.get("/api/admin/inventory?warehouse_id=1", headers=auth_headers).get_json()["total"]
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=%20%20%20", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["total"] == baseline

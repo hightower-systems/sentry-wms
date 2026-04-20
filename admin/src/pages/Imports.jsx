@@ -2,23 +2,32 @@ import { useState, useRef } from 'react';
 import { api } from '../api.js';
 import PageHeader from '../components/PageHeader.jsx';
 
-const CSV_TEMPLATES = {
-  items: `sku,name,description,upc,default_bin,quantity
-WIDGET-001,Blue Widget,Standard blue widget,012345678901,A-01-01-01,100
-WIDGET-002,Red Widget,Standard red widget,012345678902,A-01-01-02,50
-GADGET-001,Mini Gadget,Compact gadget device,012345678903,B-02-01-01,200`,
-  'purchase-orders': `po_number,vendor,sku,quantity,expected_date
-PO-1001,Acme Supply Co,WIDGET-001,100,2026-05-01
-PO-1001,Acme Supply Co,WIDGET-002,50,2026-05-01
-PO-1002,Global Parts Inc,GADGET-001,200,2026-05-15`,
-  'sales-orders': `so_number,customer,customer_phone,customer_address,sku,quantity
-SO-5001,John Smith,555-0101,123 Main St,WIDGET-001,2
-SO-5001,John Smith,555-0101,123 Main St,GADGET-001,1
-SO-5002,Jane Doe,555-0102,456 Oak Ave,WIDGET-002,3`,
-  bins: `bin_code,zone,aisle,bin_type,pick_sequence,description
-C-01-01-01,STORAGE,C,Pickable,100,Shelf C Row 1 Level 1
-C-01-02-01,STORAGE,C,Pickable,101,Shelf C Row 2 Level 1
-D-01-01-01,PICKING,D,Pickable,200,Pick zone D`,
+// Every template must include every field the corresponding import
+// endpoint treats as required OR meaningfully useful. Issue #91: the
+// prior templates were missing warehouse_id on PO/SO (always required
+// by the import helper) and several column-scope fields on Bins/Items.
+// Operators who downloaded a template, filled it, and imported without
+// editing the column list got row-level "Missing required field"
+// errors. Keeping the templates in lockstep with the pydantic schemas
+// in api/schemas/csv_import.py is the only way to close that loop.
+// Exported for alignment tests in admin/src/test/imports.test.jsx.
+export const CSV_TEMPLATES = {
+  items: `sku,name,description,category,upc,default_bin,weight,quantity
+WIDGET-001,Blue Widget,Standard blue widget,Widgets,012345678901,A-01-01-01,0.50,100
+WIDGET-002,Red Widget,Standard red widget,Widgets,012345678902,A-01-01-02,0.50,50
+GADGET-001,Mini Gadget,Compact gadget device,Gadgets,012345678903,B-02-01-01,0.25,200`,
+  'purchase-orders': `po_number,warehouse_id,vendor,sku,quantity,expected_date
+PO-1001,1,Acme Supply Co,WIDGET-001,100,2026-05-01
+PO-1001,1,Acme Supply Co,WIDGET-002,50,2026-05-01
+PO-1002,1,Global Parts Inc,GADGET-001,200,2026-05-15`,
+  'sales-orders': `so_number,warehouse_id,customer,customer_phone,customer_address,sku,quantity
+SO-5001,1,John Smith,555-0101,123 Main St,WIDGET-001,2
+SO-5001,1,John Smith,555-0101,123 Main St,GADGET-001,1
+SO-5002,1,Jane Doe,555-0102,456 Oak Ave,WIDGET-002,3`,
+  bins: `bin_code,bin_barcode,zone,warehouse_id,aisle,bin_type,pick_sequence,putaway_sequence,description
+C-01-01-01,C-01-01-01,STORAGE,1,C,Pickable,100,100,Shelf C Row 1 Level 1
+C-01-02-01,C-01-02-01,STORAGE,1,C,Pickable,101,101,Shelf C Row 2 Level 1
+D-01-01-01,D-01-01-01,PICKING,1,D,Pickable,200,200,Pick zone D`,
 };
 
 function downloadTemplate(type) {

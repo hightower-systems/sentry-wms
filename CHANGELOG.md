@@ -2,6 +2,74 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.4.2] - Unreleased
+
+Admin panel patch release. Headline is an operator safeguard against upgrades-without-rebuild; everything else is either a real bug reported externally by Fruxh from a production deployment or surfaced during an internal admin bug bash on 2026-04-19 plus the pre-merge gate on 2026-04-20. Zero mobile code changes; a v1.4.3 will follow for mobile-side reports.
+
+### Fixed -- Deployment / Operations
+- **CRITICAL: Upgrade path fails with `ModuleNotFoundError: flask_limiter` when the Docker image is not rebuilt.** v1.4.0 added Flask-Limiter (V-041); users upgrading from v1.3.x with cached Docker images were running v1.3-era containers against v1.4 code, and the worker crashed on `from flask_limiter import Limiter`. The API now bakes the source `__version__` into the image at build time and checks it against the code version at startup. If they drift, the container logs a clear "run docker compose build" message and exits 2 instead of crashing a worker with a dependency error. `docs/deployment.md` gains an "Upgrading" section spelling out the correct `git pull && docker compose build && docker compose up -d` procedure. (Closes #73)
+
+### Fixed -- Admin Panel: Form Validation (V-017 cluster)
+Seven admin create / edit forms returned `validation_error` on submit because V-017's `extra="forbid"` rejected fields the frontend was sending but the pydantic schemas did not declare. Each form fixed independently; a consolidated integration test file (`api/tests/test_admin_payload_alignment.py`) now locks the payload shape for every fixed endpoint so a future drift surfaces in CI before a user.
+- **Bin create payload alignment** -- `barcode` renamed to `bin_barcode`, stale `rack` / `shelf` / `position` / `is_active` fields dropped from the POST body, `pick_sequence` defaults to 0 when empty. (Closes #74)
+- **Zone create payload alignment** -- `is_active` stripped (belongs on `UpdateZoneRequest`, not `CreateZoneRequest`); `ZONE_TYPES` dropdown list corrected to match the backend validator (dropped `QUALITY` / `DAMAGE`, added `PICKING`). (Closes #75)
+- **PreferredBin create payload alignment** -- bin dropdown bound to `b.bin_id` instead of a non-existent `b.id`, so the submitted `bin_id` is a real integer instead of `null`. (Closes #76)
+- **InventoryAdjustment create payload alignment** -- reason is required client-side now; the backend schema declares `reason: str = Field(..., min_length=1)` for audit traceability. (Closes #77)
+- **Inter-Warehouse Transfer create payload alignment** -- four field names renamed from `source_*` / `destination_*` to `from_*` / `to_*` to match `InterWarehouseTransferRequest`. (Closes #78)
+- **Manual PO create payload alignment** -- `vendor_address` folded into `notes` (the PO table has no vendor_address column), PO lines use `quantity_ordered` instead of `quantity_expected`. (Closes #79)
+- **Manual SO create payload alignment** -- `warehouse_id` falls back to the current warehouse context on first open (prior null-on-first-attempt bug), SO lines use `quantity_ordered`. Fallback also applied to the manual PO path. (Closes #80)
+- **Zone edit payload alignment and EDIT-endpoint audit** -- zone edit was tripping on a `zone.id` vs `zone.zone_id` URL-construction bug; fixed, and every other admin PUT endpoint audited for the same pattern. (Closes #81)
+- **Bin create Zone dropdown commits the selected zone_id** -- pre-merge gate finding; the `.map()` that feeds the zone `<select>` inside the Bin form bound key / value to `z.id` instead of `z.zone_id`, so no selected zone ever reached the POST. Same `.id` vs `.<entity>_id` pattern the #81 audit flagged; single remaining instance now closed. Regression test asserts the POST body carries a numeric `zone_id`. (Closes #99)
+
+### Fixed -- Admin Panel: Data Management
+- **Inventory search bar wired to fire on Enter.** Backend GET `/api/admin/inventory` gains the `q` query parameter the frontend was already sending (ILIKE match on SKU or item name, whitespace-only input ignored). Frontend input binds to a separate `searchInput` buffer and only commits on Enter or blur. (Closes #82)
+- **Cycle Count bin selection state isolation.** Checkbox `key` / `checked` / `toggle` bound to `bin.bin_id` instead of the non-existent `bin.id`; picking one bin no longer highlighted every bin, and picking a second no longer unselected every bin. (Closes #83)
+- **Bin detail view opens on row click + delete with confirmation.** Row click was building `/api/admin/bins/${bin.id}` and 404ing because the list endpoint returns `bin_id`; fixed. New `DELETE /api/admin/bins/{id}` endpoint with a 409 guard when inventory-on-hand or preferred-bin references remain. (Closes #85)
+- **Zone edit modal includes delete button with confirmation.** New `DELETE /api/admin/zones/{id}`; 409 with `"Zone cannot be deleted because N bin(s) are assigned to it. Reassign or delete the bins first."` when any bin still references the zone. (Closes #86)
+- **Purchase Orders list rows gain an edit affordance.** PO edit modal is bound to the header fields `UpdatePurchaseOrderRequest` accepts; lines are read-only after PO create to preserve the procurement record. (Closes #87)
+- **Close / Reopen Purchase Order from edit modal.** PO records are permanent procurement history; delete is replaced with reversible state transitions. `POST /purchase-orders/{id}/close` tightened to 409 on already-CLOSED; new `POST /purchase-orders/{id}/reopen` reverses a close. Edit modal footer swaps button text based on current state. (Closes #88)
+- **Sales Orders admin list page** (new `admin/src/pages/SalesOrders.jsx`). SOs previously only appeared inside Picking / Packing / Shipping workflow views, each filtered to a single status; now there is a dedicated admin list with a status filter, detail modal, and edit modal (header fields while status is OPEN, read-only afterwards). (Closes #89)
+- **Cancel Sales Order from edit modal.** One-way terminal transition; Cancel Order button visible only on OPEN orders. Preserves existing inventory-release behaviour for ALLOCATED / PICKING cancellations via the existing endpoint. (Closes #90)
+- **Import CSV templates include all required fields.** PO / SO templates now carry `warehouse_id`; Items template gains `category` and `weight`; Bins template gains `bin_barcode`, `warehouse_id`, `putaway_sequence`. Alignment tests lock template headers against `api/schemas/csv_import.py`. (Closes #91)
+- **Create PO / SO modals reset on Cancel.** Click Cancel (or the X corner) then reopen; the form starts empty instead of carrying stale fields from the previous attempt. (Closes #92)
+- **PO / SO manual entry accepts SKU instead of Item ID.** Operators memorize SKUs, not autoincrement integers. Native `<datalist>` autocomplete sources SKUs from `/api/admin/items`; unknown SKU surfaces as `"Unknown SKU: <value>"` before the POST. (Closes #93)
+- **Audit Log column headers trigger sort.** Whitelisted `sort_by` (`created_at`, `action_type`, `user_id`, `entity_type`) with `sort_direction=asc|desc` accepted on the backend; injection-safe. Frontend resets to page 1 on each new sort. (Closes #95)
+- **DataTable CSV export serializes status columns correctly.** Any column whose `render` returned a React element (e.g. `<StatusTag>`) was coercing to the literal string `[object Object]` in exported CSVs. DataTable now prefers an explicit `csvValue(row)`, falls back to a primitive render result, and otherwise uses the raw `row[col.key]`. (Closes #84)
+- **Admin list pages use consistent pencil / trash row actions.** Every admin list page (Items, Warehouses, Zones, Users, Bins, Purchase Orders, Sales Orders) now surfaces edit via a `&#9998;` pencil icon. Items, Warehouses, Zones, Users, and Bins also expose delete via a `&#128465;` trash icon (Users preserves the self-delete guard). PO / SO are pencil-only; Close and Cancel remain state transitions in the edit modal per the #88 / #90 design. Duplicate Delete buttons inside edit modal footers were removed for single-source-of-truth. (Closes #102)
+
+### Fixed -- Admin Panel: UX
+- **Settings page stops crashing (P0 regression caught at the pre-merge gate).** `useDirtyFormGuard` initially shipped with `useBlocker` from react-router, which requires a data-router setup the admin panel does not run under; the hook threw "useBlocker must be used within a data router" on every Settings mount and the ErrorBoundary caught it. The hook now uses `beforeunload` only. (Closes #94, #100)
+- **Settings page warns on browser close / refresh when it has unsaved changes.** This is the actual behaviour that ships in v1.4.2 -- the `beforeunload` listener fires on close, reload, or URL-bar navigation. Intra-SPA sidebar-click guarding was attempted via `useBlocker`, found to require a router migration out of v1.4.2 scope, and is deferred to v1.5 for proper design (#101).
+- **change-password redirects to /login with a success banner.** Fruxh reported first-time setup appeared to fail with "Your session is out of sync." The password change had already succeeded server-side, but the frontend refreshed `/auth/me` with the now-invalidated token, hit 401, left `must_change_password=true` in context, and the router guard bounced the operator back to `/change-password`. The frontend now reuses the existing `logout()` helper, writes a flash message to `sessionStorage`, and navigates to `/login`, which renders the banner and lets the operator sign in with the new password cleanly. (Closes #98)
+
+### Build / CI
+- **Lockfile version drift check** (new `.github/workflows/lockfile-check.yml`). Fails CI whenever `admin/` or `mobile/` `package.json` and `package-lock.json` disagree on the top-level project version. Prevents recurrence of the v1.4.1 "lockfiles stuck at 1.4.0" bug this release fixes. (Closes #96)
+- **admin/package-lock.json and mobile/package-lock.json regenerated** to match `package.json` v1.4.1. They had been stuck at `1.4.0` since the v1.4.0 release because 818617a bumped the manifests but not the lockfiles.
+- **api/BUILD_VERSION gitignored** so the file the #73 startup guard reads from a prod image cannot accidentally leak into a dev host via the bind mount (observed once during v1.4.2 work; would have tripped the guard on every dev restart after a version bump).
+
+### Security
+Three bugs reported directly by external user Fruxh from a production deployment:
+- **#72** -- the flask_limiter upgrade crash; closed by the #73 headline fix and the new "Upgrading" docs section.
+- **#71** -- the full V-017 `validation_error` cluster across Bin / Zone / PreferredBin / Transfer create forms (Fruxh hit four of the seven; the internal bug bash surfaced the other three); closed alongside the #74-#81 cluster plus #85 (bin detail). Also the DataTable CSV export [object Object] bug (#84) which Fruxh reported separately on PO exports.
+- **#98** -- the first-time-setup "Your session is out of sync" false failure; closed by the `/login` redirect + flash banner.
+
+All three close on v1.4.2 merge via their respective commits' `Closes` keyword.
+
+### Thanks
+Thanks to **Fruxh** for filing three external bug reports (#71, #72, #98) from a production v1.4.1 deployment, with clear reproductions and a screenshot. Those reports drove v1.4.2's priorities and shaped the Phase 1 / Phase 2 split.
+
+### Tests
+- Backend: 734 passing (up from 690 at v1.4.1). New coverage: V-017 payload alignment for every fixed form, bin delete, zone delete, PO close / reopen state machine, SO double-cancel guard, audit log sort whitelist, inventory `q` parameter, #73 build-version check.
+- Admin: 58 passing (up from 42). New test files: `bins-zone-dropdown.test.jsx`, `DataTable.csv-export.test.jsx`, `imports.test.jsx`, `settings-router-mount.test.jsx`, `useDirtyFormGuard.test.jsx` (rewritten against the non-useBlocker hook), `forced-change-flow.test.jsx` gains a post-change redirect suite.
+- Mobile: 24 passing, unchanged (v1.4.2 has no mobile code changes).
+- New CI workflow: Lockfile Version Check runs alongside Tests and Dependency Audit on every push and PR.
+
+### Notes for operators
+- **Upgrading from v1.3 or v1.4.0 / v1.4.1:** run `git pull && docker compose down && docker compose build && docker compose up -d`. If you skip the build step, the API exits with code 2 on startup and logs the correct remediation command (the #73 guard).
+- **Fresh installs:** unchanged from v1.4.1. The forced-password-change flow still applies. Post-change now redirects to `/login` with a success banner instead of trying to refresh the session with an already-invalidated token.
+- **No mobile APK ships with v1.4.2.** Existing v1.4.1 APKs on Chainway C6000 devices continue to work; the v1.4.2 tag on GitHub does not attach a new APK. A v1.4.3 is planned for mobile-side reports.
+- **Settings unsaved-changes guard** currently only covers browser-level exits (close tab, reload). Clicking a sidebar link with unsaved draft settings discards them silently; proper design for an intra-SPA guard is captured in #101 and will ship in v1.5.
+
 ## [v1.4.1] - 2026-04-18
 
 Patch release bundling two bug fixes deferred from v1.4.0.

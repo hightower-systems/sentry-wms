@@ -68,6 +68,25 @@ api container for infrastructure-config assertions; run on the host with
 
 ---
 
+## Upgrading
+
+When upgrading Sentry WMS, you MUST rebuild Docker images after pulling new code. Python or JavaScript dependencies may have changed, and cached images will not include new dependencies.
+
+Correct upgrade procedure:
+
+```bash
+git pull
+docker compose down
+docker compose build
+docker compose up -d
+```
+
+If you see `ModuleNotFoundError` or similar errors after upgrading, you skipped the build step.
+
+Starting in v1.4.2, `sentry-api` detects this condition at startup: if the Docker image's baked-in version does not match the source code version, the container logs a clear upgrade-procedure message and exits with code 2 rather than crashing a worker with a dependency error.
+
+---
+
 ## Production
 
 ### Required Environment Variables
@@ -219,7 +238,7 @@ Download the APK from the [GitHub Releases](https://github.com/hightower-systems
 Install via ADB:
 
 ```bash
-adb install sentry-wms-v1.4.1.apk
+adb install sentry-wms-v1.4.2.apk
 ```
 
 Or transfer the APK to the device and open it from the file manager.

@@ -132,7 +132,10 @@ export default function Items() {
     { key: 'weight_lbs', label: 'Weight', render: (r) => r.weight_lbs ? `${r.weight_lbs} lb` : '-' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
     { key: 'actions', label: '', render: (r) => (
-      <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }} title="Edit">&#9998;</button>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }} aria-label="Edit" title="Edit">&#9998;</button>
+        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); deleteItem(r.id || r.item_id); }} aria-label="Delete" title="Delete">&#128465;</button>
+      </div>
     )},
   ];
 
@@ -198,12 +201,9 @@ export default function Items() {
             <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
               <div style={{ display: 'flex', gap: 4 }}>
                 {editId && (
-                  <>
-                    <button className="btn btn-danger btn-sm" onClick={() => deleteItem(editId)}>Delete</button>
-                    <button className="btn btn-sm" onClick={() => toggleArchive(form)}>
-                      {form.is_active ? 'Archive' : 'Restore'}
-                    </button>
-                  </>
+                  <button className="btn btn-sm" onClick={() => toggleArchive(form)}>
+                    {form.is_active ? 'Archive' : 'Restore'}
+                  </button>
                 )}
               </div>
               <div style={{ display: 'flex', gap: 4 }}>

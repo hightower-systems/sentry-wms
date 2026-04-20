@@ -108,11 +108,11 @@ export default function CycleCounts() {
           </p>
           <div style={{ maxHeight: 300, overflow: 'auto' }}>
             {bins.map((bin) => (
-              <label key={bin.id} style={{ display: 'flex', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
+              <label key={bin.bin_id} style={{ display: 'flex', gap: 8, padding: '4px 0', fontSize: 13, cursor: 'pointer' }}>
                 <input
                   type="checkbox"
-                  checked={selectedBins.includes(bin.id)}
-                  onChange={() => toggleBin(bin.id)}
+                  checked={selectedBins.includes(bin.bin_id)}
+                  onChange={() => toggleBin(bin.bin_id)}
                 />
                 <span className="mono">{bin.bin_code}</span>
                 <span style={{ color: 'var(--text-secondary)' }}>{bin.zone_name || ''}</span>

@@ -103,10 +103,10 @@ export default function InterWarehouseTransfers() {
     setSubmitting(true);
     try {
       const body = {
-        source_warehouse_id: Number(form.source_warehouse_id),
-        source_bin_id: Number(form.source_bin_id),
-        destination_warehouse_id: Number(form.destination_warehouse_id),
-        destination_bin_id: Number(form.destination_bin_id),
+        from_warehouse_id: Number(form.source_warehouse_id),
+        from_bin_id: Number(form.source_bin_id),
+        to_warehouse_id: Number(form.destination_warehouse_id),
+        to_bin_id: Number(form.destination_bin_id),
         item_id: Number(form.item_id),
         quantity: Number(form.quantity),
       };

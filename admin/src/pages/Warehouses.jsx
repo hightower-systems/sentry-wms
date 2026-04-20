@@ -71,9 +71,9 @@ export default function Warehouses() {
     { key: 'address', label: 'Address' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
     { key: 'actions', label: '', render: (r) => (
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Edit</button>
-        <button className="btn btn-sm" style={{ color: 'var(--copper)' }} onClick={(e) => { e.stopPropagation(); setConfirmDelete(r); }}>Delete</button>
+      <div style={{ display: 'flex', gap: 4 }}>
+        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(r); }} aria-label="Edit" title="Edit">&#9998;</button>
+        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setConfirmDelete(r); }} aria-label="Delete" title="Delete">&#128465;</button>
       </div>
     )},
   ];

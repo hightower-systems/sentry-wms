@@ -5,7 +5,7 @@ import { useAuth } from '../auth.jsx';
 import { friendlyError } from '../utils/friendlyError.js';
 
 export default function ChangePassword() {
-  const { user, refreshUser } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -37,11 +37,26 @@ export default function ChangePassword() {
       return;
     }
 
-    // Re-fetch /auth/me so the must_change_password flag in our context
-    // picks up its new FALSE value. The router guard will then stop
-    // redirecting here.
-    await refreshUser();
-    navigate('/', { replace: true });
+    // v1.4.2 #98: /auth/change-password intentionally invalidates the
+    // session token server-side. Calling refreshUser() (/auth/me) with
+    // the now-dead token 401s and leaves the stale must_change_password
+    // flag in context; the router guard then bounces the operator back
+    // to /change-password and the screen appears twice. Reuse logout()
+    // to clear local auth state (one function owns auth reset) and send
+    // the operator to /login with a success message. sessionStorage
+    // carries the message so it survives the AuthProvider state flip
+    // that logout() triggers; Login reads + clears it on mount.
+    try {
+      sessionStorage.setItem(
+        'login_flash_message',
+        'Password changed. Please sign in with your new password.',
+      );
+    } catch {
+      // Private mode or disabled storage: operator still gets a
+      // working /login page, just without the confirmation banner.
+    }
+    await logout();
+    navigate('/login', { replace: true });
   }
 
   return (
