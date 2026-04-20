@@ -33,7 +33,7 @@ export default function Zones() {
   }
 
   function openEdit(zone) {
-    setEditId(zone.id);
+    setEditId(zone.zone_id);
     setForm(zone);
     setError('');
     setShowModal(true);
