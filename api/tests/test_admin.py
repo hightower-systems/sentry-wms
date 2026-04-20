@@ -1133,6 +1133,40 @@ class TestInterWarehouseTransfersList:
         assert isinstance(data["transfers"], list)
 
 
+class TestZoneDelete:
+    """Issue #86: DELETE /api/admin/zones/{id} must 409 when bins remain."""
+
+    def test_delete_empty_zone_succeeds(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/zones",
+            json={
+                "zone_code": "ZDELTEST",
+                "zone_name": "Zone Delete Test",
+                "zone_type": "STORAGE",
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        zone_id = resp.get_json()["zone_id"]
+
+        resp = client.delete(f"/api/admin/zones/{zone_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert "deleted" in resp.get_json()["message"].lower()
+
+    def test_delete_zone_with_bins_returns_409(self, client, auth_headers):
+        """Zone 1 in the demo seed is the Receiving zone with at least
+        one bin attached."""
+        resp = client.delete("/api/admin/zones/1", headers=auth_headers)
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert "bin(s) are assigned" in body["error"]
+        assert "Reassign or delete the bins first" in body["error"]
+
+    def test_delete_missing_zone_returns_404(self, client, auth_headers):
+        resp = client.delete("/api/admin/zones/99999", headers=auth_headers)
+        assert resp.status_code == 404
+
+
 class TestBinDelete:
     """Issue #85 follow-up: DELETE /api/admin/bins/{id} with confirmation
     dialog on the frontend and a 409 guard when the bin still has

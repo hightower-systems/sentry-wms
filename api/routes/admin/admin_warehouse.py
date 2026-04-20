@@ -260,6 +260,33 @@ def update_zone(zone_id, validated):
                     "zone_name": row.zone_name, "zone_type": row.zone_type, "is_active": row.is_active})
 
 
+@admin_bp.route("/zones/<int:zone_id>", methods=["DELETE"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def delete_zone(zone_id):
+    existing = g.db.execute(
+        text("SELECT zone_id, zone_code FROM zones WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    ).fetchone()
+    if not existing:
+        return jsonify({"error": "Zone not found"}), 404
+
+    bin_count = g.db.execute(
+        text("SELECT COUNT(*) FROM bins WHERE zone_id = :zid"),
+        {"zid": zone_id},
+    ).scalar()
+    if bin_count:
+        return jsonify({
+            "error": f"Zone cannot be deleted because {bin_count} bin(s) are assigned to it. "
+                     "Reassign or delete the bins first."
+        }), 409
+
+    g.db.execute(text("DELETE FROM zones WHERE zone_id = :zid"), {"zid": zone_id})
+    g.db.commit()
+    return jsonify({"message": "Zone deleted"})
+
+
 # ── Bins ──────────────────────────────────────────────────────────────────────
 
 @admin_bp.route("/bins", methods=["GET"])

@@ -14,6 +14,7 @@ export default function Zones() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => { if (warehouseId) loadZones(); }, [warehouseId]);
 
@@ -54,6 +55,20 @@ export default function Zones() {
     }
   }
 
+  async function deleteZone() {
+    setError('');
+    const res = await api.delete(`/admin/zones/${editId}`);
+    if (res?.ok) {
+      setConfirmDelete(false);
+      setShowModal(false);
+      loadZones();
+    } else {
+      const data = await res?.json();
+      setError(data?.error || 'Failed to delete zone');
+      setConfirmDelete(false);
+    }
+  }
+
   const columns = [
     { key: 'zone_code', label: 'Zone Code', mono: true },
     { key: 'zone_name', label: 'Zone Name' },
@@ -74,10 +89,13 @@ export default function Zones() {
       {showModal && (
         <Modal
           title={editId ? 'Edit Zone' : 'New Zone'}
-          onClose={() => setShowModal(false)}
+          onClose={() => { setShowModal(false); setError(''); }}
           footer={
             <>
-              <button className="btn" onClick={() => setShowModal(false)}>Cancel</button>
+              {editId && (
+                <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>Delete</button>
+              )}
+              <button className="btn" onClick={() => { setShowModal(false); setError(''); }}>Cancel</button>
               <button className="btn btn-primary" onClick={save}>Save</button>
             </>
           }
@@ -98,6 +116,24 @@ export default function Zones() {
               {ZONE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <Modal
+          title={`Delete zone ${form.zone_code || ''}?`}
+          onClose={() => setConfirmDelete(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={deleteZone}>Delete</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13 }}>
+            This permanently removes the zone. Bins assigned to it must be
+            reassigned or deleted first.
+          </p>
         </Modal>
       )}
     </div>
