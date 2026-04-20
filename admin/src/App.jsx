@@ -10,6 +10,7 @@ import CycleCounts from './pages/CycleCounts.jsx';
 import CycleCountApproval from './pages/CycleCountApproval.jsx';
 import Receiving from './pages/Receiving.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
+import SalesOrders from './pages/SalesOrders.jsx';
 import PutAway from './pages/PutAway.jsx';
 import Picking from './pages/Picking.jsx';
 import Packing from './pages/Packing.jsx';
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/receiving" element={<ErrorBoundary fallbackMessage="Could not load receiving."><Receiving /></ErrorBoundary>} />
         <Route path="/purchase-orders" element={<ErrorBoundary fallbackMessage="Could not load purchase orders."><PurchaseOrders /></ErrorBoundary>} />
         <Route path="/putaway" element={<ErrorBoundary fallbackMessage="Could not load put-away."><PutAway /></ErrorBoundary>} />
+        <Route path="/sales-orders" element={<ErrorBoundary fallbackMessage="Could not load sales orders."><SalesOrders /></ErrorBoundary>} />
         <Route path="/picking" element={<ErrorBoundary fallbackMessage="Could not load picking."><Picking /></ErrorBoundary>} />
         <Route path="/packing" element={<ErrorBoundary fallbackMessage="Could not load packing."><Packing /></ErrorBoundary>} />
         <Route path="/shipping" element={<ErrorBoundary fallbackMessage="Could not load shipping."><Shipping /></ErrorBoundary>} />

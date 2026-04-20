@@ -24,6 +24,7 @@ const NAV = [
   {
     label: 'Outbound',
     items: [
+      { to: '/sales-orders', label: 'Sales Orders' },
       { to: '/picking', label: 'Picking' },
       { to: '/packing', label: 'Packing' },
       { to: '/shipping', label: 'Shipping' },
