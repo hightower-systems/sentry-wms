@@ -11,7 +11,7 @@ export default function Settings() {
   const [editingWh, setEditingWh] = useState(false);
   const [showPO, setShowPO] = useState(false);
   const [showSO, setShowSO] = useState(false);
-  const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: null, lines: [{ item_id: '', quantity_expected: '' }] });
+  const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: null, lines: [{ item_id: '', quantity_ordered: '' }] });
   const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: null, lines: [{ item_id: '', quantity: '' }] });
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
@@ -117,7 +117,7 @@ export default function Settings() {
   }
 
   // PO lines
-  function addPOLine() { setPoForm({ ...poForm, lines: [...poForm.lines, { item_id: '', quantity_expected: '' }] }); }
+  function addPOLine() { setPoForm({ ...poForm, lines: [...poForm.lines, { item_id: '', quantity_ordered: '' }] }); }
   function updatePOLine(i, key, val) {
     const lines = [...poForm.lines];
     lines[i] = { ...lines[i], [key]: val };
@@ -126,12 +126,20 @@ export default function Settings() {
 
   async function createPO() {
     setFormError(''); setFormSuccess('');
-    const body = { ...poForm, lines: poForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity_expected: Number(l.quantity_expected), quantity_ordered: Number(l.quantity_expected) })) };
+    const body = {
+      po_number: poForm.po_number,
+      warehouse_id: poForm.warehouse_id,
+      vendor_name: poForm.vendor_name || null,
+      notes: poForm.vendor_address ? `Vendor address: ${poForm.vendor_address}` : null,
+      lines: poForm.lines
+        .filter((l) => l.item_id)
+        .map((l) => ({ item_id: Number(l.item_id), quantity_ordered: Number(l.quantity_ordered) })),
+    };
     const res = await api.post('/admin/purchase-orders', body);
     if (res?.ok) {
       setFormSuccess('PO created');
       setShowPO(false);
-      setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_expected: '' }] });
+      setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
     } else {
       const data = await res?.json();
       setFormError(data?.error || 'Failed to create PO');
@@ -342,7 +350,7 @@ export default function Settings() {
                   <input className="form-input" type="number" placeholder="Item ID" value={line.item_id} onChange={(e) => updatePOLine(i, 'item_id', e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <input className="form-input" type="number" placeholder="Qty expected" value={line.quantity_expected} onChange={(e) => updatePOLine(i, 'quantity_expected', e.target.value)} />
+                  <input className="form-input" type="number" placeholder="Qty ordered" value={line.quantity_ordered} onChange={(e) => updatePOLine(i, 'quantity_ordered', e.target.value)} />
                 </div>
               </div>
             ))}
