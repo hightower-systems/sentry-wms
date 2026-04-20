@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../auth.jsx';
 import { WarehouseProvider } from '../warehouse.jsx';
@@ -200,5 +200,98 @@ describe('Cancel button visibility toggles with the flag', () => {
     ).toBeInTheDocument();
     // And no banner.
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+
+// v1.4.2 #98 (Fruxh): /auth/change-password intentionally invalidates
+// the server-side session token. The previous flow re-fetched /auth/me
+// immediately after, hit 401, left must_change_password=true in the
+// client state, and the router guard bounced the operator back to
+// /change-password. Fruxh reported this as "First-time setup password
+// change returns API error." The fix redirects to /login with a
+// success banner instead of refreshing /auth/me with a dead token.
+//
+// The existing tests in this file always mocked /auth/me as returning
+// ADMIN_FORCED on every call; they never exercised the post-change
+// 401 case, which is exactly why CI missed this.
+
+function mockPostChangeAuthFlow() {
+  let meCalls = 0;
+  return vi.fn().mockImplementation((input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const method = (init && init.method) || 'GET';
+
+    if (url.includes('/api/auth/me') && method === 'GET') {
+      meCalls += 1;
+      // First call: the AuthProvider bootstrap, user is still forced.
+      // Subsequent calls: token is dead, backend 401s.
+      if (meCalls === 1) {
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          json: async () => ADMIN_FORCED,
+        });
+      }
+      return Promise.resolve({ status: 401, ok: false, json: async () => ({ error: 'unauthorized' }) });
+    }
+
+    if (url.includes('/api/auth/change-password') && method === 'POST') {
+      return Promise.resolve({
+        status: 200,
+        ok: true,
+        json: async () => ({ message: 'Password changed' }),
+      });
+    }
+
+    // /api/auth/logout after password change: token is dead, so the
+    // real backend responds 401. Best-effort call, result is ignored
+    // by the logout() finally block.
+    if (url.includes('/api/auth/logout') && method === 'POST') {
+      return Promise.resolve({ status: 401, ok: false, json: async () => ({}) });
+    }
+
+    return Promise.resolve({ status: 200, ok: true, json: async () => ({}) });
+  });
+}
+
+describe('post-change redirect (issue #98, Fruxh-reported)', () => {
+  it('redirects to /login with a success banner when the token is invalidated', async () => {
+    vi.stubGlobal('fetch', mockPostChangeAuthFlow());
+
+    mount('/change-password');
+
+    // Wait for the forced-mode screen to land.
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Change Password/i })).toBeInTheDocument();
+    });
+
+    // Fill the three password fields and submit. The labels are not
+    // associated via htmlFor, so target by role + order (current, new,
+    // confirm).
+    const passwordInputs = document.querySelectorAll('input[type="password"]');
+    fireEvent.change(passwordInputs[0], { target: { value: 'admin' } });
+    fireEvent.change(passwordInputs[1], { target: { value: 'NewPass123' } });
+    fireEvent.change(passwordInputs[2], { target: { value: 'NewPass123' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Change password/i }));
+
+    // Post-fix expected behaviour:
+    //   - operator lands on /login
+    //   - success banner tells them the password change took and to
+    //     sign in again
+    // Pre-fix behaviour:
+    //   - operator stays on /change-password because the router guard
+    //     saw must_change_password=true from the stale context
+    //   - no "Please sign in" text
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Please sign in with your new password/i)).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+
+    // And the forced-mode banner from /change-password is gone.
+    expect(screen.queryByText(/First-time setup/i)).toBeNull();
   });
 });
