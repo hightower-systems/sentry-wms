@@ -6,6 +6,55 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.4.2 -- Admin Panel Patch
+
+*2026-04-20.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.2).
+
+Admin panel patch release. Operator safeguard against upgrades-without-rebuild, the V-017 `validation_error` cluster closed on seven admin create/edit forms, admin list page CRUD affordances and UI consistency across every page, plus a bundle of Fruxh-reported fixes from external deployments. Zero mobile code changes; v1.4.3 will follow for mobile-side reports.
+
+Highlights:
+
+- **Upgrade-without-rebuild detection (#73)** -- v1.4.0 added Flask-Limiter;
+  v1.3.x operators who ran `git pull && docker compose up` without
+  rebuilding crashed on `ModuleNotFoundError: flask_limiter`. The API
+  now bakes the source `__version__` into the image at build time and
+  fail-fast exits 2 with a clear remediation message when the code
+  and image versions disagree. `docs/deployment.md` gains an
+  "Upgrading" section.
+- **V-017 validation_error cluster (#74-#81, #99)** -- Bin, Zone,
+  PreferredBin, Inventory Adjustment, Inter-Warehouse Transfer,
+  manual PO, manual SO create, Zone edit, plus the pre-merge
+  Bin-create Zone-dropdown fix. Consolidated alignment tests lock
+  every form's payload shape against the backend schema.
+- **Admin list page CRUD affordances (#85 #86 #87 #88 #89 #90)** -- Bin
+  row click opens a detail view with delete; Zone edit gains a delete
+  button with 409-guard when bins are assigned; new dedicated Sales
+  Orders admin list page; Close / Reopen PO and Cancel SO as
+  reversible / one-way state transitions (not deletes).
+- **UI consistency pass (#102)** -- pencil (&#9998;) and trash
+  (&#128465;) row actions across every admin list page. PO / SO
+  show pencil only; Close / Cancel remain state transitions in the
+  edit modal.
+
+Fruxh-reported from a production v1.4.1 deployment:
+
+- `#72` flask_limiter upgrade crash -- closed by #73.
+- `#71` validation_error cluster across four admin create forms --
+  closed alongside #74-#81 and #85.
+- `#98` First-time-setup "Your session is out of sync" false failure
+  -- closed by the redirect-to-login fix.
+
+Test counts: 734 backend, 58 admin, 24 mobile. All CI workflows
+(Tests, Dependency Audit, Lockfile Version Check, Deploy Docs) green
+on the merge commit.
+
+Operator notes: upgrades MUST rebuild Docker images.
+`git pull && docker compose down && docker compose build && docker compose up -d`
+is the correct procedure. Skipping the build step now exits 2 at
+startup with the remediation command in the logs.
+
+---
+
 ## v1.4.1 -- Forced Password Change + Mobile Version Fix
 
 *2026-04-18.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.1).
