@@ -12,7 +12,7 @@ export default function Settings() {
   const [showPO, setShowPO] = useState(false);
   const [showSO, setShowSO] = useState(false);
   const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: null, lines: [{ item_id: '', quantity_ordered: '' }] });
-  const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: null, lines: [{ item_id: '', quantity: '' }] });
+  const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: null, lines: [{ item_id: '', quantity_ordered: '' }] });
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
@@ -128,7 +128,7 @@ export default function Settings() {
     setFormError(''); setFormSuccess('');
     const body = {
       po_number: poForm.po_number,
-      warehouse_id: poForm.warehouse_id,
+      warehouse_id: poForm.warehouse_id || warehouseId,
       vendor_name: poForm.vendor_name || null,
       notes: poForm.vendor_address ? `Vendor address: ${poForm.vendor_address}` : null,
       lines: poForm.lines
@@ -147,7 +147,7 @@ export default function Settings() {
   }
 
   // SO lines
-  function addSOLine() { setSoForm({ ...soForm, lines: [...soForm.lines, { item_id: '', quantity: '' }] }); }
+  function addSOLine() { setSoForm({ ...soForm, lines: [...soForm.lines, { item_id: '', quantity_ordered: '' }] }); }
   function updateSOLine(i, key, val) {
     const lines = [...soForm.lines];
     lines[i] = { ...lines[i], [key]: val };
@@ -159,18 +159,20 @@ export default function Settings() {
     const shipAddress = [soForm.address_line_1, soForm.address_line_2, soForm.city, soForm.state, soForm.zip].filter(Boolean).join(', ');
     const body = {
       so_number: soForm.order_number,
-      customer_name: soForm.customer_name,
-      customer_phone: soForm.phone,
-      customer_address: shipAddress,
-      ship_address: shipAddress,
-      warehouse_id: soForm.warehouse_id,
-      lines: soForm.lines.filter((l) => l.item_id).map((l) => ({ item_id: Number(l.item_id), quantity: Number(l.quantity), quantity_ordered: Number(l.quantity) })),
+      customer_name: soForm.customer_name || null,
+      customer_phone: soForm.phone || null,
+      customer_address: shipAddress || null,
+      ship_address: shipAddress || null,
+      warehouse_id: soForm.warehouse_id || warehouseId,
+      lines: soForm.lines
+        .filter((l) => l.item_id)
+        .map((l) => ({ item_id: Number(l.item_id), quantity_ordered: Number(l.quantity_ordered) })),
     };
     const res = await api.post('/admin/sales-orders', body);
     if (res?.ok) {
       setFormSuccess('SO created');
       setShowSO(false);
-      setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity: '' }] });
+      setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
     } else {
       const data = await res?.json();
       setFormError(data?.error || 'Failed to create SO');
@@ -413,7 +415,7 @@ export default function Settings() {
                   <input className="form-input" type="number" placeholder="Item ID" value={line.item_id} onChange={(e) => updateSOLine(i, 'item_id', e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <input className="form-input" type="number" placeholder="Quantity" value={line.quantity} onChange={(e) => updateSOLine(i, 'quantity', e.target.value)} />
+                  <input className="form-input" type="number" placeholder="Quantity" value={line.quantity_ordered} onChange={(e) => updateSOLine(i, 'quantity_ordered', e.target.value)} />
                 </div>
               </div>
             ))}
