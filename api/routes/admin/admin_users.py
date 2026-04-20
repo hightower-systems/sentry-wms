@@ -254,6 +254,20 @@ def list_audit_log():
     total = g.db.execute(text(f"SELECT COUNT(*) FROM audit_log al {where_sql}"), params).scalar()
     pages = max(1, math.ceil(total / per_page))
 
+    # v1.4.2 #95: sortable column headers. Whitelist prevents SQL
+    # injection via an operator-supplied sort_by value and also caps
+    # the sort axes to the ones that meaningfully make sense on an
+    # audit log (timestamp / action / user / entity type).
+    SORT_COLUMNS = {
+        "created_at": "al.created_at",
+        "action_type": "al.action_type",
+        "user_id": "al.user_id",
+        "entity_type": "al.entity_type",
+    }
+    sort_by_arg = request.args.get("sort_by", "created_at")
+    sort_col = SORT_COLUMNS.get(sort_by_arg, "al.created_at")
+    sort_dir = "ASC" if request.args.get("sort_direction", "desc").lower() == "asc" else "DESC"
+
     params["limit"] = per_page
     params["offset"] = (page - 1) * per_page
     rows = g.db.execute(
@@ -271,7 +285,7 @@ def list_audit_log():
             FROM audit_log al
             LEFT JOIN warehouses w ON w.warehouse_id = al.warehouse_id
             {where_sql}
-            ORDER BY al.created_at DESC LIMIT :limit OFFSET :offset
+            ORDER BY {sort_col} {sort_dir}, al.log_id DESC LIMIT :limit OFFSET :offset
         """),
         params,
     ).fetchall()

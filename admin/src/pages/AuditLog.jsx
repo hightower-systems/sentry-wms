@@ -10,8 +10,10 @@ export default function AuditLog() {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ action_type: '', user_id: '', start_date: '', end_date: '' });
   const [selected, setSelected] = useState(null);
+  const [sortKey, setSortKey] = useState('created_at');
+  const [sortDir, setSortDir] = useState('desc');
 
-  useEffect(() => { loadLogs(); }, [page, filters]);
+  useEffect(() => { loadLogs(); }, [page, filters, sortKey, sortDir]);
 
   async function loadLogs() {
     const params = new URLSearchParams({ page, per_page: 50 });
@@ -19,6 +21,8 @@ export default function AuditLog() {
     if (filters.user_id) params.set('user_id', filters.user_id);
     if (filters.start_date) params.set('start_date', filters.start_date);
     if (filters.end_date) params.set('end_date', filters.end_date);
+    params.set('sort_by', sortKey);
+    params.set('sort_direction', sortDir);
     const res = await api.get(`/admin/audit-log?${params}`);
     if (res?.ok) {
       const data = await res.json();
@@ -29,6 +33,16 @@ export default function AuditLog() {
 
   function updateFilter(key, value) {
     setFilters((prev) => ({ ...prev, [key]: value }));
+    setPage(1);
+  }
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
     setPage(1);
   }
 
@@ -48,10 +62,10 @@ export default function AuditLog() {
   }
 
   const columns = [
-    { key: 'created_at', label: 'Timestamp', mono: true, render: (r) => new Date(r.created_at).toLocaleString() },
-    { key: 'action_type', label: 'Action' },
-    { key: 'entity_type', label: 'Entity', render: (r) => r.entity_name ? `${r.entity_type}: ${r.entity_name}` : r.entity_type },
-    { key: 'username', label: 'User' },
+    { key: 'created_at', label: 'Timestamp', mono: true, sortable: true, render: (r) => new Date(r.created_at).toLocaleString() },
+    { key: 'action_type', label: 'Action', sortable: true },
+    { key: 'entity_type', label: 'Entity', sortable: true, render: (r) => r.entity_name ? `${r.entity_type}: ${r.entity_name}` : r.entity_type },
+    { key: 'user_id', label: 'User', render: (r) => r.username || r.user_id, sortable: true },
     { key: 'details', label: 'Details', render: formatDetails },
   ];
 
@@ -64,7 +78,17 @@ export default function AuditLog() {
         <input className="form-input" type="date" value={filters.start_date} onChange={(e) => updateFilter('start_date', e.target.value)} />
         <input className="form-input" type="date" value={filters.end_date} onChange={(e) => updateFilter('end_date', e.target.value)} />
       </div>
-      <DataTable columns={columns} data={logs} pagination={pagination} onPageChange={setPage} emptyMessage="No audit log entries" onRowClick={setSelected} />
+      <DataTable
+        columns={columns}
+        data={logs}
+        pagination={pagination}
+        onPageChange={setPage}
+        emptyMessage="No audit log entries"
+        onRowClick={setSelected}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
+      />
 
       {selected && (
         <Modal title="Audit Log Detail" onClose={() => setSelected(null)}>

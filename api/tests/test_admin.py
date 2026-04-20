@@ -598,6 +598,67 @@ class TestAuditLog:
         data = resp.get_json()
         assert all(e["action_type"] == "TRANSFER" for e in data["entries"])
 
+    def test_audit_log_sort_by_created_at_desc_default(self, client, auth_headers):
+        """Issue #95: default sort is created_at DESC (newest first)."""
+        for _ in range(3):
+            client.post("/api/transfers/move", json={
+                "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+            }, headers=auth_headers)
+            client.post("/api/transfers/move", json={
+                "item_id": 1, "from_bin_id": 4, "to_bin_id": 3, "quantity": 1,
+            }, headers=auth_headers)
+
+        resp = client.get("/api/admin/audit-log", headers=auth_headers)
+        assert resp.status_code == 200
+        entries = resp.get_json()["entries"]
+        assert len(entries) >= 2
+        ts = [e["created_at"] for e in entries]
+        assert ts == sorted(ts, reverse=True)
+
+    def test_audit_log_sort_by_created_at_asc(self, client, auth_headers):
+        for _ in range(2):
+            client.post("/api/transfers/move", json={
+                "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+            }, headers=auth_headers)
+
+        resp = client.get(
+            "/api/admin/audit-log?sort_by=created_at&sort_direction=asc",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        ts = [e["created_at"] for e in resp.get_json()["entries"]]
+        assert ts == sorted(ts)
+
+    def test_audit_log_sort_by_action_type(self, client, auth_headers):
+        # Seed with both PUTAWAY and TRANSFER entries so the enum sort shows
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get(
+            "/api/admin/audit-log?sort_by=action_type&sort_direction=asc",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        actions = [e["action_type"] for e in resp.get_json()["entries"]]
+        assert actions == sorted(actions)
+
+    def test_audit_log_invalid_sort_by_falls_back_to_created_at(self, client, auth_headers):
+        """Whitelist guards against SQL injection: an unknown or hostile
+        sort_by value is replaced with the default, not passed through."""
+        client.post("/api/transfers/move", json={
+            "item_id": 1, "from_bin_id": 3, "to_bin_id": 4, "quantity": 1,
+        }, headers=auth_headers)
+
+        resp = client.get(
+            "/api/admin/audit-log?sort_by=DROP_TABLE&sort_direction=asc",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        # No SQL error; falls back to created_at. Just verify the request
+        # succeeded and we got at least one entry.
+        assert resp.get_json()["total"] >= 1
+
 
 # ── Inventory Overview ────────────────────────────────────────────────────────
 
