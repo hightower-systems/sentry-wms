@@ -1,94 +1,72 @@
 /**
- * v1.4.2 #94: smoke test for the unsaved-changes hook.
+ * v1.4.2 #100: hook is now beforeunload-only (the useBlocker variant
+ * from #94 required a data router the admin does not run under and
+ * crashed Settings on mount). These tests verify the surviving
+ * contract:
  *
- * A full simulation of navigation interception would need a
- * MemoryRouter with concurrent routes + a click event on a Link; that
- * apparatus is more weight than the hook is worth. What this file
- * locks down is the shape:
+ *   - the hook attaches a beforeunload listener on mount
+ *   - the listener calls preventDefault + sets returnValue when
+ *     isDirty is true
+ *   - the listener is a no-op when isDirty is false
+ *   - the listener is removed on unmount (no stale leak)
  *
- *   - Hook imports and runs without error inside a router context
- *     (it depends on react-router's `useBlocker`).
- *   - When isDirty = true and the blocker reports a blocked state,
- *     the hook calls window.confirm with the supplied message.
- *   - confirm() returning true -> blocker.proceed() fires.
- *   - confirm() returning false -> blocker.reset() fires.
- *
- * The hook is the only layer of logic on top of useBlocker, so
- * verifying those four conditions is enough.
+ * No router mocks are needed -- the hook no longer imports
+ * react-router-dom.
  */
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-
-// Mock useBlocker: we drive the returned blocker object from the tests
-// rather than triggering actual router navigation.
-const blockerState = { current: { state: 'unblocked', proceed: vi.fn(), reset: vi.fn() } };
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom');
-  return {
-    ...actual,
-    useBlocker: (shouldBlock) => {
-      // Match the real hook's signature: called with a function that the
-      // hook will invoke when navigation happens. We do not re-invoke it
-      // here; the blocker object we return is driven by blockerState.
-      blockerState.lastShouldBlock = shouldBlock;
-      return blockerState.current;
-    },
-  };
-});
 
 import { useDirtyFormGuard } from '../hooks/useDirtyFormGuard.js';
 
 function TestComponent({ isDirty }) {
-  useDirtyFormGuard(isDirty, 'TEST MESSAGE');
+  useDirtyFormGuard(isDirty);
   return null;
-}
-
-function renderWithRouter(ui) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
 
 describe('useDirtyFormGuard', () => {
   beforeEach(() => {
-    blockerState.current = { state: 'unblocked', proceed: vi.fn(), reset: vi.fn() };
     vi.restoreAllMocks();
   });
 
-  it('mounts without error inside a router context', () => {
-    expect(() => renderWithRouter(<TestComponent isDirty={false} />)).not.toThrow();
+  it('mounts without error and attaches a beforeunload listener', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    render(<TestComponent isDirty={false} />);
+    expect(addSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
   });
 
-  it('does not call confirm when the blocker is not blocked', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    renderWithRouter(<TestComponent isDirty />);
-    expect(confirmSpy).not.toHaveBeenCalled();
+  it('the beforeunload handler is a no-op when isDirty is false', () => {
+    const handlers = [];
+    vi.spyOn(window, 'addEventListener').mockImplementation((ev, fn) => {
+      if (ev === 'beforeunload') handlers.push(fn);
+    });
+    render(<TestComponent isDirty={false} />);
+
+    const event = { preventDefault: vi.fn(), returnValue: undefined };
+    handlers[0](event);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.returnValue).toBeUndefined();
   });
 
-  it('calls confirm with the supplied message when the blocker flips to blocked', () => {
-    blockerState.current = {
-      state: 'blocked',
-      proceed: vi.fn(),
-      reset: vi.fn(),
-    };
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    renderWithRouter(<TestComponent isDirty />);
-    expect(confirmSpy).toHaveBeenCalledWith('TEST MESSAGE');
-    expect(blockerState.current.proceed).toHaveBeenCalled();
-    expect(blockerState.current.reset).not.toHaveBeenCalled();
+  it('prevents default and sets returnValue when isDirty is true', () => {
+    const handlers = [];
+    vi.spyOn(window, 'addEventListener').mockImplementation((ev, fn) => {
+      if (ev === 'beforeunload') handlers.push(fn);
+    });
+    render(<TestComponent isDirty />);
+
+    const event = { preventDefault: vi.fn(), returnValue: undefined };
+    handlers[0](event);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.returnValue).toBe('');
   });
 
-  it('calls blocker.reset when the operator cancels the confirm dialog', () => {
-    blockerState.current = {
-      state: 'blocked',
-      proceed: vi.fn(),
-      reset: vi.fn(),
-    };
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
-    renderWithRouter(<TestComponent isDirty />);
-    expect(blockerState.current.reset).toHaveBeenCalled();
-    expect(blockerState.current.proceed).not.toHaveBeenCalled();
+  it('removes the listener on unmount (no stale leak)', () => {
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    const { unmount } = render(<TestComponent isDirty />);
+    unmount();
+    expect(removeSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
   });
 });

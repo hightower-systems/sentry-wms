@@ -29,22 +29,9 @@ export default function Settings() {
 
   const hasUnsavedChanges = JSON.stringify(savedSettings) !== JSON.stringify(draftSettings);
 
-  // Warn on browser navigation away with unsaved changes (close, reload,
-  // URL change outside the SPA). beforeunload handles the out-of-SPA
-  // cases; useDirtyFormGuard below handles in-SPA link clicks.
-  useEffect(() => {
-    function handleBeforeUnload(e) {
-      if (hasUnsavedChanges) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasUnsavedChanges]);
-
-  // v1.4.2 #94: intra-app guard. Prompts the operator when clicking any
-  // sidebar link while draftSettings differ from savedSettings.
+  // v1.4.2 #100: browser-level warning only. Hook owns the
+  // beforeunload listener. Intra-SPA sidebar clicks are NOT guarded;
+  // deferred to v1.5 along with the rest of the design question.
   useDirtyFormGuard(hasUnsavedChanges);
 
   useEffect(() => {

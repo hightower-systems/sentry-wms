@@ -8,6 +8,7 @@ Admin panel patch release. The headline fix is an operator safeguard against upg
 
 ### Fixed
 - **CRITICAL: Upgrade path fails with `ModuleNotFoundError: flask_limiter` when the Docker image is not rebuilt.** v1.4.0 added Flask-Limiter (V-041); users upgrading from v1.3.x with cached Docker images were running v1.3-era containers against v1.4 code, and the worker crashed on `from flask_limiter import Limiter`. The API now bakes the source `__version__` into the image at build time and checks it against the code version at startup. If they drift, the container logs a clear "run docker compose build" message and exits 2 instead of crashing a worker with a dependency error. `docs/deployment.md` gains an "Upgrading" section spelling out the correct `git pull && docker compose build && docker compose up -d` procedure. (Closes #73, related: Fruxh #72)
+- **Settings page warns on browser close/refresh when it has unsaved changes.** `useDirtyFormGuard` hook installs a `beforeunload` listener so closing the tab or reloading with a dirty draft prompts the operator. An earlier attempt at this fix (#94) also tried to guard intra-SPA sidebar navigation via react-router's `useBlocker`; that API requires a data-router setup the admin panel does not run under, and the hook crashed on every Settings mount. The v1.4.2 hotfix reverts to browser-level only, matching the pre-#94 baseline. Intra-SPA guarding (sidebar click while dirty) is deferred to v1.5 for proper design (#101). (Closes #94, #100)
 
 
 
