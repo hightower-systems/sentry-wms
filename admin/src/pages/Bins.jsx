@@ -49,9 +49,16 @@ export default function Bins() {
 
   async function saveBin() {
     setError('');
-    const body = { bin_code: form.bin_code, barcode: form.barcode, bin_type: form.bin_type, zone_id: form.zone_id, aisle: form.aisle, rack: form.rack, shelf: form.shelf, position: form.position, pick_sequence: form.pick_sequence ? Number(form.pick_sequence) : null, is_active: form.is_active };
+    const body = {
+      bin_code: form.bin_code,
+      bin_barcode: form.bin_barcode,
+      bin_type: form.bin_type,
+      zone_id: form.zone_id ? Number(form.zone_id) : null,
+      aisle: form.aisle || null,
+      pick_sequence: form.pick_sequence !== '' && form.pick_sequence != null ? Number(form.pick_sequence) : 0,
+    };
     const res = editing
-      ? await api.put(`/admin/bins/${selected.id}`, body)
+      ? await api.put(`/admin/bins/${selected.id}`, { ...body, is_active: !!form.is_active })
       : await api.post('/admin/bins', { ...body, warehouse_id: warehouseId });
     if (res?.ok) {
       setSelected(null); setDetail(null); setShowCreate(false); setEditing(false);
@@ -90,7 +97,7 @@ export default function Bins() {
           </div>
           <div className="form-group">
             <label>Barcode</label>
-            <input className="form-input" value={form.barcode || ''} onChange={(e) => setForm({ ...form, barcode: e.target.value })} />
+            <input className="form-input" value={form.bin_barcode || ''} onChange={(e) => setForm({ ...form, bin_barcode: e.target.value })} />
           </div>
         </div>
         <div className="form-row">
