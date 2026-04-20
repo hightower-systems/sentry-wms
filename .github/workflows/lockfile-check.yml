@@ -1,0 +1,38 @@
+name: Lockfile Version Check
+
+on: [push, pull_request]
+
+# v1.4.2 #96: v1.4.1 shipped with admin/ and mobile/ package-lock.json
+# stuck at version "1.3.0" despite package.json having been bumped to
+# "1.4.1" during the v1.4.0 release. This job fails CI whenever the
+# two drift again, so the bug cannot recur silently across a release.
+
+jobs:
+  lockfile-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify admin/package.json and admin/package-lock.json versions match
+        run: |
+          PKG=$(grep -m1 '"version"' admin/package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+          LOCK=$(grep -m1 '"version"' admin/package-lock.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+          echo "admin/package.json version:      $PKG"
+          echo "admin/package-lock.json version: $LOCK"
+          if [ "$PKG" != "$LOCK" ]; then
+            echo "::error::admin/package.json ($PKG) and admin/package-lock.json ($LOCK) disagree."
+            echo "Run 'cd admin && npm install' to regenerate the lockfile, then commit."
+            exit 1
+          fi
+
+      - name: Verify mobile/package.json and mobile/package-lock.json versions match
+        run: |
+          PKG=$(grep -m1 '"version"' mobile/package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+          LOCK=$(grep -m1 '"version"' mobile/package-lock.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+          echo "mobile/package.json version:      $PKG"
+          echo "mobile/package-lock.json version: $LOCK"
+          if [ "$PKG" != "$LOCK" ]; then
+            echo "::error::mobile/package.json ($PKG) and mobile/package-lock.json ($LOCK) disagree."
+            echo "Run 'cd mobile && npm install' to regenerate the lockfile, then commit."
+            exit 1
+          fi
