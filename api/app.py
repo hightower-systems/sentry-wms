@@ -2,7 +2,10 @@
 Sentry WMS - Flask API Entry Point
 """
 
+import logging
 import os
+import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask
@@ -10,8 +13,44 @@ from flask_cors import CORS
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+
+def check_build_version(build_file_path="/app/BUILD_VERSION"):
+    """v1.4.2 #73: detect upgrade-without-rebuild.
+
+    The Dockerfile writes the source `__version__` into /app/BUILD_VERSION
+    at image build time. If a later `git pull` bumps the code version but
+    the operator skips `docker compose build`, the container runs the old
+    image (with old dependencies) against the new code. Fail fast with a
+    clear message rather than letting a ModuleNotFoundError crash a worker.
+    """
+    from version import __version__ as code_version
+
+    build_file = Path(build_file_path)
+    if not build_file.exists():
+        logger.warning(
+            "No %s found. Skipping version check. "
+            "Expected in development, may indicate stale image in production.",
+            build_file_path,
+        )
+        return
+
+    build_version = build_file.read_text().strip()
+    if build_version != code_version:
+        logger.critical(
+            "Docker image version (%s) does not match code version (%s). "
+            "This means you upgraded the code without rebuilding the Docker image. "
+            "Run: docker compose down && docker compose build && docker compose up -d",
+            build_version,
+            code_version,
+        )
+        sys.exit(2)
+
 
 def create_app():
+    check_build_version()
+
     app = Flask(__name__)
 
     # Config

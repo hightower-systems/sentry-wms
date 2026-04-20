@@ -2,7 +2,14 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
-## [v1.4.1] - 2026-04-18
+## [v1.4.2] - Unreleased
+
+Admin panel patch release. The headline fix is an operator safeguard against upgrades-without-rebuild; everything else is a real bug reported externally by Fruxh or surfaced by an internal admin bug bash on 2026-04-19.
+
+### Fixed
+- **CRITICAL: Upgrade path fails with `ModuleNotFoundError: flask_limiter` when the Docker image is not rebuilt.** v1.4.0 added Flask-Limiter (V-041); users upgrading from v1.3.x with cached Docker images were running v1.3-era containers against v1.4 code, and the worker crashed on `from flask_limiter import Limiter`. The API now bakes the source `__version__` into the image at build time and checks it against the code version at startup. If they drift, the container logs a clear "run docker compose build" message and exits 2 instead of crashing a worker with a dependency error. `docs/deployment.md` gains an "Upgrading" section spelling out the correct `git pull && docker compose build && docker compose up -d` procedure. (Closes #73, related: Fruxh #72)
+
+
 
 Patch release bundling two bug fixes deferred from v1.4.0.
 
