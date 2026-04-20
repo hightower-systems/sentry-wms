@@ -67,6 +67,6 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Current Version
 
-v1.4.1 -- Patch release. Forced password change on first login eliminates the "grep logs for the random admin password" onboarding paper-cut, mobile HomeScreen + LoginScreen version display fixed, and a forced-mode navigator stuck-spinner bug resolved. 690 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.1 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.1).
+v1.4.2 -- Admin panel patch release. Upgrade-without-rebuild safeguard, the V-017 validation_error cluster on seven admin create/edit forms, PO/SO close and cancel state transitions, pencil/trash icon consistency across every admin list page, and a bundle of Fruxh-reported fixes from external deployments. 734 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.2 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.2).
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).
