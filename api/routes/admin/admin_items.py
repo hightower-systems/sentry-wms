@@ -286,16 +286,23 @@ def list_inventory():
     where_clauses, params = [], {}
     warehouse_id = request.args.get("warehouse_id", type=int)
     item_id = request.args.get("item_id", type=int)
+    search = (request.args.get("q") or "").strip()
     if warehouse_id:
         where_clauses.append("inv.warehouse_id = :wid")
         params["wid"] = warehouse_id
     if item_id:
         where_clauses.append("inv.item_id = :iid")
         params["iid"] = item_id
+    if search:
+        # Join items so the SKU/name search can reach them. The main
+        # SELECT below also joins items and bins for display.
+        where_clauses.append("(i.sku ILIKE :search OR i.item_name ILIKE :search)")
+        params["search"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    count_join = "JOIN items i ON i.item_id = inv.item_id" if search else ""
     total = g.db.execute(
-        text(f"SELECT COUNT(*) FROM inventory inv {where_sql}"), params
+        text(f"SELECT COUNT(*) FROM inventory inv {count_join} {where_sql}"), params
     ).scalar()
     pages = max(1, math.ceil(total / per_page))
 

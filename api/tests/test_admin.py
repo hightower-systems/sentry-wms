@@ -1131,3 +1131,37 @@ class TestInterWarehouseTransfersList:
         data = resp.get_json()
         assert "transfers" in data
         assert isinstance(data["transfers"], list)
+
+
+class TestInventorySearchQ:
+    """Issue #82: /admin/inventory must honour the `q` query parameter
+    so the admin panel's SKU / item-name search actually filters rows."""
+
+    def test_q_matches_sku(self, client, auth_headers):
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=TST-005", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(r["sku"] == "TST-005" for r in data["inventory"])
+
+    def test_q_matches_item_name_case_insensitive(self, client, auth_headers):
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=fly%20line", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all("fly line" in r["item_name"].lower() for r in data["inventory"])
+
+    def test_q_with_no_matches_returns_empty(self, client, auth_headers):
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=no-such-item-zzz", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 0
+        assert data["inventory"] == []
+
+    def test_q_whitespace_only_ignored(self, client, auth_headers):
+        """A user who types spaces and hits Enter should get the full
+        list, not an empty filter. strip() on the server defends this."""
+        baseline = client.get("/api/admin/inventory?warehouse_id=1", headers=auth_headers).get_json()["total"]
+        resp = client.get("/api/admin/inventory?warehouse_id=1&q=%20%20%20", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["total"] == baseline
