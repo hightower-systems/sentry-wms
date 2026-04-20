@@ -435,6 +435,41 @@ def update_bin(bin_id, validated):
     })
 
 
+@admin_bp.route("/bins/<int:bin_id>", methods=["DELETE"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def delete_bin(bin_id):
+    existing = g.db.execute(text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid"), {"bid": bin_id}).fetchone()
+    if not existing:
+        return jsonify({"error": "Bin not found"}), 404
+
+    inv = g.db.execute(
+        text("SELECT COUNT(*) FROM inventory WHERE bin_id = :bid AND quantity_on_hand > 0"),
+        {"bid": bin_id},
+    ).scalar()
+    if inv:
+        return jsonify({
+            "error": f"Bin cannot be deleted because {inv} inventory record(s) remain with quantity on hand. "
+                     "Move or adjust the inventory to zero first."
+        }), 409
+
+    pref = g.db.execute(
+        text("SELECT COUNT(*) FROM preferred_bins WHERE bin_id = :bid"),
+        {"bid": bin_id},
+    ).scalar()
+    if pref:
+        return jsonify({
+            "error": f"Bin cannot be deleted because {pref} preferred-bin mapping(s) reference it. "
+                     "Remove them from the Preferred Bins page first."
+        }), 409
+
+    g.db.execute(text("DELETE FROM inventory WHERE bin_id = :bid"), {"bid": bin_id})
+    g.db.execute(text("DELETE FROM bins WHERE bin_id = :bid"), {"bid": bin_id})
+    g.db.commit()
+    return jsonify({"message": "Bin deleted"})
+
+
 # ── Inter-Warehouse Transfers ────────────────────────────────────────────────
 
 @admin_bp.route("/inter-warehouse-transfer", methods=["POST"])

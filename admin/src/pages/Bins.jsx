@@ -17,6 +17,7 @@ export default function Bins() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId]);
 
@@ -39,11 +40,27 @@ export default function Bins() {
   async function viewBin(bin) {
     setSelected(bin);
     setEditing(false);
-    const res = await api.get(`/admin/bins/${bin.id}`);
+    const res = await api.get(`/admin/bins/${bin.bin_id}`);
     if (res?.ok) {
       const data = await res.json();
-      setDetail(data);
-      setForm(data);
+      const flat = { ...(data.bin || {}), inventory: data.inventory || [] };
+      setDetail(flat);
+      setForm(flat);
+    }
+  }
+
+  async function deleteBin() {
+    setError('');
+    const res = await api.delete(`/admin/bins/${selected.bin_id}`);
+    if (res?.ok) {
+      setConfirmDelete(false);
+      setSelected(null);
+      setDetail(null);
+      loadBins();
+    } else {
+      const data = await res?.json();
+      setError(data?.error || 'Failed to delete');
+      setConfirmDelete(false);
     }
   }
 
@@ -58,7 +75,7 @@ export default function Bins() {
       pick_sequence: form.pick_sequence !== '' && form.pick_sequence != null ? Number(form.pick_sequence) : 0,
     };
     const res = editing
-      ? await api.put(`/admin/bins/${selected.id}`, { ...body, is_active: !!form.is_active })
+      ? await api.put(`/admin/bins/${selected.bin_id}`, { ...body, is_active: !!form.is_active })
       : await api.post('/admin/bins', { ...body, warehouse_id: warehouseId });
     if (res?.ok) {
       setSelected(null); setDetail(null); setShowCreate(false); setEditing(false);
@@ -71,7 +88,7 @@ export default function Bins() {
 
   const columns = [
     { key: 'bin_code', label: 'Bin Code', mono: true },
-    { key: 'barcode', label: 'Barcode', mono: true },
+    { key: 'bin_barcode', label: 'Barcode', mono: true },
     { key: 'bin_type', label: 'Type' },
     { key: 'zone_name', label: 'Zone' },
     { key: 'aisle', label: 'Aisle' },
@@ -138,12 +155,17 @@ export default function Bins() {
       <DataTable columns={columns} data={bins} onRowClick={viewBin} />
 
       {selected && detail && !editing && (
-        <Modal title={`Bin ${detail.bin_code}`} onClose={() => { setSelected(null); setDetail(null); }}
-          footer={<button className="btn" onClick={() => { setEditing(true); setForm(detail); setError(''); }}>Edit</button>}
+        <Modal title={`Bin ${detail.bin_code}`} onClose={() => { setSelected(null); setDetail(null); setConfirmDelete(false); setError(''); }}
+          footer={
+            <>
+              <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>Delete</button>
+              <button className="btn" onClick={() => { setEditing(true); setForm(detail); setError(''); }}>Edit</button>
+            </>
+          }
         >
           <div className="detail-grid">
             <span className="detail-label">Code</span><span className="mono">{detail.bin_code}</span>
-            <span className="detail-label">Barcode</span><span className="mono">{detail.barcode}</span>
+            <span className="detail-label">Barcode</span><span className="mono">{detail.bin_barcode}</span>
             <span className="detail-label">Type</span><span>{detail.bin_type}</span>
             <span className="detail-label">Zone</span><span>{detail.zone_name || '-'}</span>
             <span className="detail-label">Aisle</span><span>{detail.aisle || '-'}</span>
@@ -156,6 +178,25 @@ export default function Bins() {
               <DataTable columns={invCols} data={detail.inventory} />
             </>
           )}
+          {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
+        </Modal>
+      )}
+
+      {confirmDelete && detail && (
+        <Modal
+          title={`Delete bin ${detail.bin_code}?`}
+          onClose={() => setConfirmDelete(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={deleteBin}>Delete</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13 }}>
+            This permanently removes bin <span className="mono">{detail.bin_code}</span>. Inventory with
+            quantity on hand and preferred-bin references must be cleared first.
+          </p>
         </Modal>
       )}
 

@@ -1133,6 +1133,70 @@ class TestInterWarehouseTransfersList:
         assert isinstance(data["transfers"], list)
 
 
+class TestBinDelete:
+    """Issue #85 follow-up: DELETE /api/admin/bins/{id} with confirmation
+    dialog on the frontend and a 409 guard when the bin still has
+    inventory or is referenced by preferred-bin mappings."""
+
+    def test_delete_empty_bin_succeeds(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/bins",
+            json={
+                "bin_code": "DELTEST-1",
+                "bin_barcode": "DELTEST-1",
+                "bin_type": "Pickable",
+                "zone_id": 2,
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        bin_id = resp.get_json()["bin_id"]
+
+        resp = client.delete(f"/api/admin/bins/{bin_id}", headers=auth_headers)
+        assert resp.status_code == 200
+        assert "deleted" in resp.get_json()["message"].lower()
+
+        resp = client.get(f"/api/admin/bins/{bin_id}", headers=auth_headers)
+        assert resp.status_code == 404
+
+    def test_delete_bin_with_inventory_returns_409(self, client, auth_headers):
+        """Bin 3 in the demo seed has inventory rows with quantity_on_hand > 0."""
+        resp = client.delete("/api/admin/bins/3", headers=auth_headers)
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert "inventory record" in body["error"].lower()
+        assert "quantity on hand" in body["error"].lower()
+
+    def test_delete_bin_with_preferred_mapping_returns_409(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/bins",
+            json={
+                "bin_code": "DELTEST-PREF",
+                "bin_barcode": "DELTEST-PREF",
+                "bin_type": "Pickable",
+                "zone_id": 2,
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        bin_id = resp.get_json()["bin_id"]
+
+        client.post(
+            "/api/admin/preferred-bins",
+            json={"item_id": 5, "bin_id": bin_id, "priority": 1},
+            headers=auth_headers,
+        )
+
+        resp = client.delete(f"/api/admin/bins/{bin_id}", headers=auth_headers)
+        assert resp.status_code == 409
+        assert "preferred-bin mapping" in resp.get_json()["error"].lower()
+
+    def test_delete_missing_bin_returns_404(self, client, auth_headers):
+        resp = client.delete("/api/admin/bins/99999", headers=auth_headers)
+        assert resp.status_code == 404
+
+
 class TestInventorySearchQ:
     """Issue #82: /admin/inventory must honour the `q` query parameter
     so the admin panel's SKU / item-name search actually filters rows."""
