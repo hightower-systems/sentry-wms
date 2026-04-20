@@ -11,8 +11,10 @@ export default function Settings() {
   const [editingWh, setEditingWh] = useState(false);
   const [showPO, setShowPO] = useState(false);
   const [showSO, setShowSO] = useState(false);
-  const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: null, lines: [{ item_id: '', quantity_ordered: '' }] });
-  const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: null, lines: [{ item_id: '', quantity_ordered: '' }] });
+  const [poForm, setPoForm] = useState({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: null, lines: [{ sku: '', quantity_ordered: '' }] });
+  const [soForm, setSoForm] = useState({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: null, lines: [{ sku: '', quantity_ordered: '' }] });
+  const [itemsBySku, setItemsBySku] = useState(new Map());
+  const [itemsLoaded, setItemsLoaded] = useState(false);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
@@ -116,24 +118,58 @@ export default function Settings() {
     }
   }
 
+  // v1.4.2 #93: cache SKU -> item_id lookup so the PO/SO manual-entry
+  // lines can accept an SKU (what operators memorize) instead of a
+  // raw item_id (a database autoincrement). Loaded lazily when either
+  // modal opens so Settings' first paint does not fetch /admin/items.
+  async function ensureItemsLoaded() {
+    if (itemsLoaded) return;
+    const res = await api.get('/admin/items?per_page=1000&active=true');
+    if (res?.ok) {
+      const data = await res.json();
+      const map = new Map();
+      for (const it of data.items || []) {
+        if (it.sku) map.set(String(it.sku).trim().toLowerCase(), it.item_id);
+      }
+      setItemsBySku(map);
+      setItemsLoaded(true);
+    }
+  }
+
+  function resolveSku(sku) {
+    return itemsBySku.get(String(sku || '').trim().toLowerCase());
+  }
+
+  function openPoModal() {
+    setShowPO(true);
+    setFormError('');
+    ensureItemsLoaded();
+  }
+
+  function openSoModal() {
+    setShowSO(true);
+    setFormError('');
+    ensureItemsLoaded();
+  }
+
   // v1.4.2 #92: reset modal state on every Cancel/close. Without this,
   // a second "Create PO" click reopens the modal with stale fields
   // from the previous attempt -- either data that was already
   // submitted or a half-filled form the user abandoned.
   function closePoModal() {
     setShowPO(false);
-    setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
+    setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ sku: '', quantity_ordered: '' }] });
     setFormError('');
   }
 
   function closeSoModal() {
     setShowSO(false);
-    setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
+    setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ sku: '', quantity_ordered: '' }] });
     setFormError('');
   }
 
   // PO lines
-  function addPOLine() { setPoForm({ ...poForm, lines: [...poForm.lines, { item_id: '', quantity_ordered: '' }] }); }
+  function addPOLine() { setPoForm({ ...poForm, lines: [...poForm.lines, { sku: '', quantity_ordered: '' }] }); }
   function updatePOLine(i, key, val) {
     const lines = [...poForm.lines];
     lines[i] = { ...lines[i], [key]: val };
@@ -142,20 +178,27 @@ export default function Settings() {
 
   async function createPO() {
     setFormError(''); setFormSuccess('');
+    const resolved = [];
+    for (const l of poForm.lines.filter((x) => x.sku)) {
+      const itemId = resolveSku(l.sku);
+      if (!itemId) {
+        setFormError(`Unknown SKU: ${l.sku}`);
+        return;
+      }
+      resolved.push({ item_id: itemId, quantity_ordered: Number(l.quantity_ordered) });
+    }
     const body = {
       po_number: poForm.po_number,
       warehouse_id: poForm.warehouse_id || warehouseId,
       vendor_name: poForm.vendor_name || null,
       notes: poForm.vendor_address ? `Vendor address: ${poForm.vendor_address}` : null,
-      lines: poForm.lines
-        .filter((l) => l.item_id)
-        .map((l) => ({ item_id: Number(l.item_id), quantity_ordered: Number(l.quantity_ordered) })),
+      lines: resolved,
     };
     const res = await api.post('/admin/purchase-orders', body);
     if (res?.ok) {
       setFormSuccess('PO created');
       setShowPO(false);
-      setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
+      setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ sku: '', quantity_ordered: '' }] });
     } else {
       const data = await res?.json();
       setFormError(data?.error || 'Failed to create PO');
@@ -163,7 +206,7 @@ export default function Settings() {
   }
 
   // SO lines
-  function addSOLine() { setSoForm({ ...soForm, lines: [...soForm.lines, { item_id: '', quantity_ordered: '' }] }); }
+  function addSOLine() { setSoForm({ ...soForm, lines: [...soForm.lines, { sku: '', quantity_ordered: '' }] }); }
   function updateSOLine(i, key, val) {
     const lines = [...soForm.lines];
     lines[i] = { ...lines[i], [key]: val };
@@ -173,6 +216,15 @@ export default function Settings() {
   async function createSO() {
     setFormError(''); setFormSuccess('');
     const shipAddress = [soForm.address_line_1, soForm.address_line_2, soForm.city, soForm.state, soForm.zip].filter(Boolean).join(', ');
+    const resolved = [];
+    for (const l of soForm.lines.filter((x) => x.sku)) {
+      const itemId = resolveSku(l.sku);
+      if (!itemId) {
+        setFormError(`Unknown SKU: ${l.sku}`);
+        return;
+      }
+      resolved.push({ item_id: itemId, quantity_ordered: Number(l.quantity_ordered) });
+    }
     const body = {
       so_number: soForm.order_number,
       customer_name: soForm.customer_name || null,
@@ -180,15 +232,13 @@ export default function Settings() {
       customer_address: shipAddress || null,
       ship_address: shipAddress || null,
       warehouse_id: soForm.warehouse_id || warehouseId,
-      lines: soForm.lines
-        .filter((l) => l.item_id)
-        .map((l) => ({ item_id: Number(l.item_id), quantity_ordered: Number(l.quantity_ordered) })),
+      lines: resolved,
     };
     const res = await api.post('/admin/sales-orders', body);
     if (res?.ok) {
       setFormSuccess('SO created');
       setShowSO(false);
-      setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
+      setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ sku: '', quantity_ordered: '' }] });
     } else {
       const data = await res?.json();
       setFormError(data?.error || 'Failed to create SO');
@@ -199,6 +249,14 @@ export default function Settings() {
 
   return (
     <div>
+      {/* v1.4.2 #93: shared SKU datalist for the PO + SO manual-entry
+          line inputs. Lives outside the modals so the <input list>
+          reference resolves whether either modal is open. */}
+      <datalist id="settings-sku-datalist">
+        {Array.from(itemsBySku.keys()).map((k) => (
+          <option key={k} value={k.toUpperCase()} />
+        ))}
+      </datalist>
       <PageHeader title="Settings" />
 
       {formSuccess && <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--success-bg)', color: 'var(--success)', borderRadius: 'var(--radius)', fontSize: 13 }}>{formSuccess}</div>}
@@ -239,8 +297,8 @@ export default function Settings() {
         <h3>Manual Entry</h3>
         <p className="settings-note">For standalone deployments or testing only. In production, POs and SOs come from your ERP.</p>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => { setShowPO(true); setFormError(''); }}>Create Purchase Order</button>
-          <button className="btn" onClick={() => { setShowSO(true); setFormError(''); }}>Create Sales Order</button>
+          <button className="btn" onClick={openPoModal}>Create Purchase Order</button>
+          <button className="btn" onClick={openSoModal}>Create Sales Order</button>
         </div>
       </div>
 
@@ -365,7 +423,7 @@ export default function Settings() {
             {poForm.lines.map((line, i) => (
               <div className="form-row" key={i} style={{ marginBottom: 8 }}>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <input className="form-input" type="number" placeholder="Item ID" value={line.item_id} onChange={(e) => updatePOLine(i, 'item_id', e.target.value)} />
+                  <input className="form-input" list="settings-sku-datalist" placeholder="SKU" value={line.sku} onChange={(e) => updatePOLine(i, 'sku', e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <input className="form-input" type="number" placeholder="Qty ordered" value={line.quantity_ordered} onChange={(e) => updatePOLine(i, 'quantity_ordered', e.target.value)} />
@@ -428,7 +486,7 @@ export default function Settings() {
             {soForm.lines.map((line, i) => (
               <div className="form-row" key={i} style={{ marginBottom: 8 }}>
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <input className="form-input" type="number" placeholder="Item ID" value={line.item_id} onChange={(e) => updateSOLine(i, 'item_id', e.target.value)} />
+                  <input className="form-input" list="settings-sku-datalist" placeholder="SKU" value={line.sku} onChange={(e) => updateSOLine(i, 'sku', e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <input className="form-input" type="number" placeholder="Quantity" value={line.quantity_ordered} onChange={(e) => updateSOLine(i, 'quantity_ordered', e.target.value)} />
