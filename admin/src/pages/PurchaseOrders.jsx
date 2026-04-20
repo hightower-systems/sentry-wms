@@ -17,6 +17,7 @@ export default function PurchaseOrders() {
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editError, setEditError] = useState('');
+  const [confirmClose, setConfirmClose] = useState(false);
 
   useEffect(() => { loadOrders(); }, [page, statusFilter]);
 
@@ -74,6 +75,32 @@ export default function PurchaseOrders() {
     } else {
       const data = await res?.json();
       setEditError(data?.error || 'Failed to save');
+    }
+  }
+
+  async function closePO() {
+    setEditError('');
+    const res = await api.post(`/admin/purchase-orders/${editing.po_id}/close`, {});
+    if (res?.ok) {
+      setConfirmClose(false);
+      setEditing(null);
+      loadOrders();
+    } else {
+      const data = await res?.json();
+      setEditError(data?.error || 'Failed to close');
+      setConfirmClose(false);
+    }
+  }
+
+  async function reopenPO() {
+    setEditError('');
+    const res = await api.post(`/admin/purchase-orders/${editing.po_id}/reopen`, {});
+    if (res?.ok) {
+      setEditing(null);
+      loadOrders();
+    } else {
+      const data = await res?.json();
+      setEditError(data?.error || 'Failed to reopen');
     }
   }
 
@@ -158,11 +185,16 @@ export default function PurchaseOrders() {
       {editing && (
         <Modal
           title={`Edit PO ${editing.po_number}`}
-          onClose={() => setEditing(null)}
+          onClose={() => { setEditing(null); setConfirmClose(false); }}
           footer={
             <>
+              {editing.status === 'CLOSED' ? (
+                <button className="btn" onClick={reopenPO}>Reopen Purchase Order</button>
+              ) : (
+                <button className="btn btn-danger" onClick={() => setConfirmClose(true)}>Close Purchase Order</button>
+              )}
               <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveEdit}>Save</button>
+              <button className="btn btn-primary" onClick={saveEdit} disabled={editing.status === 'CLOSED'}>Save</button>
             </>
           }
         >
@@ -189,6 +221,24 @@ export default function PurchaseOrders() {
             <label>Notes</label>
             <textarea className="form-input" rows={3} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
           </div>
+        </Modal>
+      )}
+
+      {confirmClose && editing && (
+        <Modal
+          title={`Close PO ${editing.po_number}?`}
+          onClose={() => setConfirmClose(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmClose(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={closePO}>Close Purchase Order</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13 }}>
+            Close this PO? It will no longer appear in active receiving lists. This
+            can be reversed by reopening.
+          </p>
         </Modal>
       )}
     </div>

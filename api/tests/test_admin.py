@@ -303,6 +303,34 @@ class TestPurchaseOrders:
         resp = client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["message"] == "Purchase order closed"
+        assert resp.get_json()["status"] == "CLOSED"
+
+    def test_close_already_closed_returns_409(self, client, auth_headers):
+        """Issue #88: state-machine guard. Re-closing a CLOSED PO now
+        returns 409 instead of silently re-writing the same status."""
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        assert resp.status_code == 409
+        assert "already CLOSED" in resp.get_json()["error"]
+
+    def test_reopen_closed_purchase_order(self, client, auth_headers):
+        """Issue #88: reopen transitions CLOSED -> OPEN."""
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.post("/api/admin/purchase-orders/1/reopen", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["message"] == "Purchase order reopened"
+        assert resp.get_json()["status"] == "OPEN"
+
+    def test_reopen_rejects_non_closed_po(self, client, auth_headers):
+        """Issue #88: only CLOSED POs can be reopened. An OPEN PO
+        reopen request returns 409."""
+        resp = client.post("/api/admin/purchase-orders/1/reopen", headers=auth_headers)
+        assert resp.status_code == 409
+        assert "CLOSED" in resp.get_json()["error"]
+
+    def test_reopen_missing_po_returns_404(self, client, auth_headers):
+        resp = client.post("/api/admin/purchase-orders/99999/reopen", headers=auth_headers)
+        assert resp.status_code == 404
 
 
 # ── Sales Orders ──────────────────────────────────────────────────────────────

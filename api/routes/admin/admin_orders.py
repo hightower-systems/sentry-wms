@@ -203,13 +203,45 @@ def update_purchase_order(po_id, validated):
 @require_role("ADMIN")
 @with_db
 def close_purchase_order(po_id):
-    po = g.db.execute(text("SELECT po_id FROM purchase_orders WHERE po_id = :pid"), {"pid": po_id}).fetchone()
+    po = g.db.execute(
+        text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).fetchone()
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
+    if po.status == PO_CLOSED:
+        return jsonify({"error": "Purchase order is already CLOSED"}), 409
 
-    g.db.execute(text("UPDATE purchase_orders SET status = :status WHERE po_id = :pid"), {"pid": po_id, "status": PO_CLOSED})
+    g.db.execute(
+        text("UPDATE purchase_orders SET status = :status WHERE po_id = :pid"),
+        {"pid": po_id, "status": PO_CLOSED},
+    )
     g.db.commit()
-    return jsonify({"message": "Purchase order closed"})
+    return jsonify({"message": "Purchase order closed", "status": PO_CLOSED})
+
+
+@admin_bp.route("/purchase-orders/<int:po_id>/reopen", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def reopen_purchase_order(po_id):
+    po = g.db.execute(
+        text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).fetchone()
+    if not po:
+        return jsonify({"error": "Purchase order not found"}), 404
+    if po.status != PO_CLOSED:
+        return jsonify({
+            "error": f"Only CLOSED purchase orders can be reopened. Current status: {po.status}"
+        }), 409
+
+    g.db.execute(
+        text("UPDATE purchase_orders SET status = :status WHERE po_id = :pid"),
+        {"pid": po_id, "status": PO_OPEN},
+    )
+    g.db.commit()
+    return jsonify({"message": "Purchase order reopened", "status": PO_OPEN})
 
 
 # ── Sales Orders ──────────────────────────────────────────────────────────────
