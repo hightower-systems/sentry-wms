@@ -410,6 +410,15 @@ class TestSalesOrders:
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         assert resp.status_code == 400
 
+    def test_cancel_already_cancelled_fails(self, client, auth_headers):
+        """Issue #90: admin UI only shows the Cancel button for OPEN SOs,
+        but guard the backend against a double-cancel anyway (the status
+        check rejects a CANCELLED order with 400)."""
+        client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
+        resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
+        assert resp.status_code == 400
+        assert "Can only cancel" in resp.get_json()["error"]
+
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 

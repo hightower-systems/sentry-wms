@@ -17,6 +17,7 @@ export default function SalesOrders() {
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editError, setEditError] = useState('');
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   useEffect(() => { loadOrders(); }, [page, statusFilter]);
 
@@ -69,6 +70,20 @@ export default function SalesOrders() {
     } else {
       const data = await res?.json();
       setEditError(data?.error || 'Failed to save');
+    }
+  }
+
+  async function cancelSO() {
+    setEditError('');
+    const res = await api.post(`/admin/sales-orders/${editing.so_id}/cancel`, {});
+    if (res?.ok) {
+      setConfirmCancel(false);
+      setEditing(null);
+      loadOrders();
+    } else {
+      const data = await res?.json();
+      setEditError(data?.error || 'Failed to cancel order');
+      setConfirmCancel(false);
     }
   }
 
@@ -152,9 +167,12 @@ export default function SalesOrders() {
       {editing && (
         <Modal
           title={`Edit SO ${editing.so_number}`}
-          onClose={() => setEditing(null)}
+          onClose={() => { setEditing(null); setConfirmCancel(false); }}
           footer={
             <>
+              {editing.status === 'OPEN' && (
+                <button className="btn btn-danger" onClick={() => setConfirmCancel(true)}>Cancel Order</button>
+              )}
               <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
               <button className="btn btn-primary" onClick={saveEdit} disabled={editing.status !== 'OPEN'}>Save</button>
             </>
@@ -194,6 +212,24 @@ export default function SalesOrders() {
             <label>Ship Address</label>
             <textarea className="form-input" rows={2} value={editForm.ship_address} onChange={(e) => setEditForm({ ...editForm, ship_address: e.target.value })} />
           </div>
+        </Modal>
+      )}
+
+      {confirmCancel && editing && (
+        <Modal
+          title={`Cancel order ${editing.so_number}?`}
+          onClose={() => setConfirmCancel(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmCancel(false)}>Keep Order</button>
+              <button className="btn btn-danger" onClick={cancelSO}>Cancel Order</button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13 }}>
+            Cancel this order? It will no longer appear in picking/shipping queues.
+            This action cannot be undone from the UI.
+          </p>
         </Modal>
       )}
     </div>
