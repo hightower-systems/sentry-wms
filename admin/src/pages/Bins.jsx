@@ -129,7 +129,7 @@ export default function Bins() {
             <label>Zone</label>
             <select className="form-select" value={form.zone_id || ''} onChange={(e) => setForm({ ...form, zone_id: Number(e.target.value) })}>
               <option value="">Select zone</option>
-              {zones.map((z) => <option key={z.id} value={z.id}>{z.zone_code} - {z.zone_name}</option>)}
+              {zones.map((z) => <option key={z.zone_id} value={z.zone_id}>{z.zone_code} - {z.zone_name}</option>)}
             </select>
           </div>
         </div>
