@@ -116,6 +116,22 @@ export default function Settings() {
     }
   }
 
+  // v1.4.2 #92: reset modal state on every Cancel/close. Without this,
+  // a second "Create PO" click reopens the modal with stale fields
+  // from the previous attempt -- either data that was already
+  // submitted or a half-filled form the user abandoned.
+  function closePoModal() {
+    setShowPO(false);
+    setPoForm({ po_number: '', vendor_name: '', vendor_address: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
+    setFormError('');
+  }
+
+  function closeSoModal() {
+    setShowSO(false);
+    setSoForm({ order_number: '', customer_name: '', address_line_1: '', address_line_2: '', city: '', state: '', zip: '', phone: '', warehouse_id: warehouseId, lines: [{ item_id: '', quantity_ordered: '' }] });
+    setFormError('');
+  }
+
   // PO lines
   function addPOLine() { setPoForm({ ...poForm, lines: [...poForm.lines, { item_id: '', quantity_ordered: '' }] }); }
   function updatePOLine(i, key, val) {
@@ -323,8 +339,8 @@ export default function Settings() {
 
       {/* PO Modal */}
       {showPO && (
-        <Modal title="Create Purchase Order" onClose={() => setShowPO(false)}
-          footer={<><button className="btn" onClick={() => setShowPO(false)}>Cancel</button><button className="btn btn-primary" onClick={createPO}>Create PO</button></>}
+        <Modal title="Create Purchase Order" onClose={closePoModal}
+          footer={<><button className="btn" onClick={closePoModal}>Cancel</button><button className="btn btn-primary" onClick={createPO}>Create PO</button></>}
         >
           {formError && <div className="form-error" style={{ marginBottom: 12 }}>{formError}</div>}
           <div className="form-row">
@@ -362,8 +378,8 @@ export default function Settings() {
 
       {/* SO Modal */}
       {showSO && (
-        <Modal title="Create Sales Order" onClose={() => setShowSO(false)}
-          footer={<><button className="btn" onClick={() => setShowSO(false)}>Cancel</button><button className="btn btn-primary" onClick={createSO}>Create SO</button></>}
+        <Modal title="Create Sales Order" onClose={closeSoModal}
+          footer={<><button className="btn" onClick={closeSoModal}>Cancel</button><button className="btn btn-primary" onClick={createSO}>Create SO</button></>}
         >
           {formError && <div className="form-error" style={{ marginBottom: 12 }}>{formError}</div>}
           <div className="form-row">
