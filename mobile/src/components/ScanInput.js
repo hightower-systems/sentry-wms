@@ -8,6 +8,10 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
   const [value, setValue] = useState('');
   const bufferRef = useRef('');
   const [processing, setProcessing] = useState(false);
+  // True only while the user is manually typing. Keeps the soft keyboard
+  // hidden during auto-focus and the 1-second refocus loop (hardware scan
+  // flow), while still letting a tap open the keyboard for manual fallback.
+  const [softInput, setSoftInput] = useState(false);
   const scanSettings = useScanSettingsContext();
 
   // Register this ScanInput's onScan as the active intent handler
@@ -60,6 +64,8 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
 
     setValue('');
     bufferRef.current = '';
+    // Drop out of manual-entry mode so the post-submit refocus stays silent.
+    setSoftInput(false);
     if (!trimmed || !onScan || scanInFlightRef.current) {
       setTimeout(() => inputRef.current?.focus(), 50);
       return;
@@ -72,6 +78,21 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
       setProcessing(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     });
+  };
+
+  const handlePressIn = () => {
+    if (softInput) return;
+    setSoftInput(true);
+    // Force a focus cycle so the updated showSoftInputOnFocus prop applies
+    // and the keyboard actually opens on this tap.
+    setTimeout(() => {
+      inputRef.current?.blur();
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }, 0);
+  };
+
+  const handleBlur = () => {
+    setSoftInput(false);
   };
 
   const handleChangeText = (text) => {
@@ -102,12 +123,15 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
             e.stopPropagation?.();
           }
         }}
+        onPressIn={handlePressIn}
+        onBlur={handleBlur}
         editable={!disabled && !processing}
         autoFocus={autoFocus && !disabled}
         autoCapitalize="characters"
         autoCorrect={false}
         blurOnSubmit={false}
         returnKeyType="done"
+        showSoftInputOnFocus={softInput}
         selectTextOnFocus
       />
     </View>
