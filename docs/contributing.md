@@ -11,7 +11,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-This starts PostgreSQL, the Flask API, and the React admin panel. The API runs on port 5000, admin on port 3000.
+This starts PostgreSQL, the Flask API, and the React admin panel. The API runs on port 5000, admin on port 8080 (nginx-served production build). Add the `docker-compose.dev.yml` overlay to get the Vite dev-server on port 3000 with hot reload.
 
 For mobile development:
 

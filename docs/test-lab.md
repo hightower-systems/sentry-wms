@@ -26,17 +26,13 @@ docker compose up -d
 
 This resets the database and loads demo data (20 items, 16 bins, 5 POs, 20 SOs).
 
-### 2. Get the Admin Password
+### 2. Log In to Admin Panel
 
-```bash
-docker compose logs api | grep "Admin password"
-```
+Open `http://<server-ip>:8080` in a browser. Fresh installs seed the admin user as `admin` / `admin`; you are forced to change the password on first login.
 
-### 3. Log In to Admin Panel
+If you set `ADMIN_PASSWORD` in your `.env`, the seed uses that value instead and skips the forced-change flow -- `docker compose logs db | grep "Admin password"` prints it for you.
 
-Open `http://<server-ip>:3000` in a browser. Log in with username `admin` and the password from the logs.
-
-### 4. Install the Mobile App
+### 3. Install the Mobile App
 
 Either sideload the APK via `adb install` or use Expo Go for development:
 

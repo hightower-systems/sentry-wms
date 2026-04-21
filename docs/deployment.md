@@ -38,15 +38,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 The overlay replaces the nginx admin with the Vite dev-server on port 3000
 and mounts `./api` and `./admin` into their containers for live reload.
 
-### Finding the Admin Password
+### Admin Login
 
-On first run, the seed script generates a random admin password:
+Fresh installs seed the admin user as `admin` / `admin` with `must_change_password=true`. Auth middleware blocks every endpoint except change-password and logout until you set a new password from the first-login screen.
+
+To skip the forced change (CI, deterministic dev environments), set `ADMIN_PASSWORD` in your `.env`. The seed uses that value directly and prints it on startup:
 
 ```bash
 docker compose logs db | grep "Admin password"
 ```
-
-Set `ADMIN_PASSWORD` in your `.env` to override the auto-generated password.
 
 ### Demo Data
 

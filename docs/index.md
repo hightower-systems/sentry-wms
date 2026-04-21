@@ -44,7 +44,7 @@ docker compose up -d
 - Admin panel: [http://localhost:8080](http://localhost:8080)
 - Health check: [http://localhost:5000/api/health](http://localhost:5000/api/health)
 
-The admin password is printed in the docker logs on first run:
+Fresh installs seed the admin user as `admin` / `admin` with a forced password change on first login. Set `ADMIN_PASSWORD` in your `.env` to skip the forced-change flow; the seed prints that value in the logs:
 
 ```bash
 docker compose logs db | grep "Admin password"

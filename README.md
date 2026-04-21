@@ -70,7 +70,7 @@ docker compose up -d
 # API is now running at http://localhost:5000
 # Admin panel is now running at http://localhost:8080
 # Health check: http://localhost:5000/api/health
-# Admin password is printed in docker logs on first run
+# Admin login is admin/admin on fresh installs (forced password change on first login)
 
 # For local development with Vite dev-server and hot reload:
 # docker compose -f docker-compose.yml -f docker-compose.dev.yml up
