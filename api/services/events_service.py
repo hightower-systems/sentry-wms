@@ -29,6 +29,7 @@ import os
 import uuid
 from typing import Optional
 
+from flask import g, has_request_context
 from sqlalchemy import text
 
 from services.events_schema_registry import get_validator
@@ -100,4 +101,35 @@ def _as_str(value):
     """Normalise a uuid.UUID or str input to the string form Postgres expects."""
     if isinstance(value, uuid.UUID):
         return str(value)
+    return value
+
+
+def get_user_external_id(db, username: str) -> Optional[str]:
+    """Look up ``users.external_id`` by username, cached per-request in ``g``.
+
+    Plan section 1.7.1: "Username-to-UUID lookups happen inside the emit
+    helper, cached per request in ``g`` to avoid repeated queries for
+    the same username." A receive_items call that receives 10 items
+    from the same picker pays one lookup, not ten.
+
+    Returns ``None`` if the username is not in ``users``; emit sites
+    should surface that as a code bug (every action has a known actor).
+    """
+    if username is None:
+        return None
+    cache_attr = "_user_external_id_cache"
+    cache = {}
+    if has_request_context():
+        cache = getattr(g, cache_attr, None)
+        if cache is None:
+            cache = {}
+            setattr(g, cache_attr, cache)
+    if username in cache:
+        return cache[username]
+    row = db.execute(
+        text("SELECT external_id FROM users WHERE username = :u"),
+        {"u": username},
+    ).fetchone()
+    value = str(row.external_id) if row else None
+    cache[username] = value
     return value

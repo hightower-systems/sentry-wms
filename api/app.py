@@ -5,10 +5,11 @@ Sentry WMS - Flask API Entry Point
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, g, request
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -142,6 +143,23 @@ def create_app():
         "form-action 'self'; "
         "object-src 'none'"
     )
+
+    @app.before_request
+    def _mint_source_txn_id():
+        # v1.5.0 plan section 1.5: every emit_event call within a single
+        # HTTP request reuses one source_txn_id so a retried request
+        # collapses to one row via the integration_events idempotency
+        # key. Prefer an inbound X-Request-ID header when it parses as a
+        # UUID (supports distributed tracing across services); otherwise
+        # mint a fresh one.
+        inbound = request.headers.get("X-Request-ID", "").strip()
+        if inbound:
+            try:
+                g.source_txn_id = uuid.UUID(inbound)
+            except (ValueError, TypeError):
+                g.source_txn_id = uuid.uuid4()
+        else:
+            g.source_txn_id = uuid.uuid4()
 
     @app.after_request
     def set_security_headers(response):
