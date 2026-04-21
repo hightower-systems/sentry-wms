@@ -67,6 +67,6 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Current Version
 
-v1.4.3 -- Mobile patch release. Put-away done screen layout fix (the success checkmark no longer overlays the title when session history grows), and a keyboard fallback for manual barcode entry on scan fields: tapping a scan field now opens the soft keyboard and copy/paste works, without disturbing the Chainway C6000 hardware-scan flow. 734 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.3 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.3).
+v1.4.4 -- Reverse-proxy hotfix. Sentry behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik, ALB) now honours `X-Forwarded-*` headers when `TRUST_PROXY=true`, so cookies scope to the public hostname the browser actually sees instead of the internal `127.0.0.1` hop. Fixes Fruxh's production repro where every CSRF-protected `POST` / `PUT` / `PATCH` / `DELETE` returned `403 CSRF token missing or invalid`. Deployment docs expanded with annotated nginx / Caddy / Traefik snippets and a multi-hop note. 738 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.4 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.4).
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).

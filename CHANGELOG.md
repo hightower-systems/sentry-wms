@@ -2,6 +2,33 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.4.4] - 2026-04-21
+
+Reverse-proxy hotfix. Every production deployment that fronts Sentry with a TLS-terminating reverse proxy (nginx, Caddy, Traefik, AWS ALB, etc.) was returning `403 CSRF token missing or invalid` on every `POST` / `PUT` / `PATCH` / `DELETE`. Fixed by wrapping `app.wsgi_app` in Werkzeug `ProxyFix` behind a `TRUST_PROXY` env var, so Flask's `request.scheme` / `request.host` / `request.is_secure` reflect the browser's view of the request instead of the internal `127.0.0.1` hop. Found and root-caused by Fruxh from his production install. api-only code change; admin panel and mobile unaffected.
+
+### Fixed -- Core
+- **Flask now honours `X-Forwarded-*` headers from a trusted reverse proxy when `TRUST_PROXY=true`.** Without this, Sentry behind nginx / Caddy / Traefik / ALB issued cookies scoped to the internal `127.0.0.1:<port>` host; the browser on the public hostname treated them as cross-origin garbage and never resubmitted, so the CSRF double-submit cookie was absent on every mutation and the middleware 403'd. Root cause: `app.wsgi_app` was never wrapped in `werkzeug.middleware.proxy_fix.ProxyFix`. `api/services/cookie_auth.py` already checked `X-Forwarded-Proto` defensively when setting the `Secure` flag, but Flask's `request.host` / `request.scheme` / `request.is_secure` stayed stuck on the internal view. Fixed by wiring `ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=0)` in `api/app.py`, gated behind `TRUST_PROXY=true / 1 / yes`. Opt-in only because honouring `X-Forwarded-*` when the app is NOT behind a trusted proxy lets any client forge its own scheme / hostname / client IP (the classic ProxyFix footgun). The `_cookie_secure()` header fallback stays as belt-and-suspenders with a comment noting ProxyFix is now the primary mechanism. (Closes #107, refs Fruxh's #98 -- #98 closes once Fruxh confirms the v1.4.4 build resolves his production repro.)
+
+### Documentation
+- **`docs/deployment.md` "Reverse Proxy (HTTPS)" section expanded with `TRUST_PROXY` guidance, annotated snippets, and a multi-hop note.** The prior doc had a single minimum nginx config block and no mention of `TRUST_PROXY`, which meant every v1.4.0-v1.4.3 operator who deployed behind a reverse proxy hit the #107 CSRF-403 wall without a doc trail to follow. New content covers: (1) when and why to set `TRUST_PROXY=true`, with the explicit security warning that trusting `X-Forwarded-*` without a proxy in front of the app is a header-forgery vector; (2) an annotated nginx config explaining what ProxyFix reads each `proxy_set_header` line for; (3) Caddy `reverse_proxy` and Traefik v2+ dynamic-config snippets (both set `X-Forwarded-*` automatically); (4) a one-line note that AWS ALB / GCP HTTPS LB / Azure Application Gateway / Cloudflare Tunnels / Fly.io / Render all work the same way under `TRUST_PROXY`; (5) a multi-hop section explaining that CDN -> nginx -> Sentry needs `x_for=2, x_proto=2, x_host=2` with links to the upstream Werkzeug docs for the full theory.
+
+### Build / CI
+- **`python-dotenv` bumped `1.0.1` -> `1.2.2` to clear `GHSA-mf9w-mj56-hr94`.** OSV published the advisory between the 2026-04-21 08:08 UTC scheduled `main` audit (green) and the 17:17 UTC initial v1.4.4 branch push (red). Same commit SHA, different audit outcome -- advisory data refreshed, not a code regression. `python-dotenv` is only used for `load_dotenv()` at app import; the `1.0.x` -> `1.2.x` line is drop-in compatible, no code changes needed. Riding along on v1.4.4 rather than deferring via `--ignore-vuln` because the one-line bump strictly improves the release; an ignore line would kick the can and add noise to `audit.yml`. (Closes #106)
+
+### Thanks
+Thanks to **Fruxh** for filing #98 from his production v1.4.3 install and following through to the root cause with a detailed reproduction: nginx terminating TLS at `https://sentry.fruxh.example`, forwarding to Flask on `http://127.0.0.1:8080` with the standard `X-Forwarded-*` headers, browser refusing to resubmit the cookie that Flask issued against the internal host. The diagnostic work turned what would have been a days-long triage into a one-commit fix.
+
+### Tests
+- Backend: 738 passing (up from 734 at v1.4.3). New file `api/tests/test_proxy_fix.py` (4 cases): (1) opt-in invariant -- without `TRUST_PROXY`, forged `X-Forwarded-*` headers cannot spoof `scheme` / `host` / `is_secure`; (2) `TRUST_PROXY=true` rewrites `request.scheme` to `https`, `request.host` to the `X-Forwarded-Host` value, and `request.is_secure` to `True`; (3) login behind proxy headers returns CSRF + auth cookies that both carry `Secure`, with CSRF still `SameSite=Strict` and auth still `HttpOnly`; (4) change-password behind proxy headers does NOT 403 on the CSRF gate when the client echoes the cookie value in `X-CSRF-Token` (Fruxh's exact repro path, asserting the fix).
+- Admin: 58 passing, unchanged (v1.4.4 has no admin code changes).
+- Mobile: 32 passing, unchanged (v1.4.4 has no mobile code changes).
+
+### Notes for operators
+- **New required env var for reverse-proxy deployments.** If you run Sentry behind nginx / Caddy / Traefik / ALB / any other TLS-terminating proxy, set `TRUST_PROXY=true` in the API container's environment after pulling v1.4.4. Without it, the `ProxyFix` middleware stays off and the CSRF-403 bug from v1.4.0-v1.4.3 continues. See `docs/deployment.md` "Reverse Proxy (HTTPS)" for the full writeup.
+- **Direct-connect (no proxy) deployments:** do NOT set `TRUST_PROXY`. The default-off posture is correct for any install where Sentry is reachable directly from the browser / mobile client. Setting `TRUST_PROXY=true` without a trusted proxy in front allows clients to forge origin / scheme / client IP by sending `X-Forwarded-*` themselves.
+- **Upgrade procedure unchanged** from v1.4.2: `git pull && docker compose down && docker compose build && docker compose up -d` for the API + admin host. The BUILD_VERSION guard (#73) continues to catch skipped rebuilds.
+- **No mobile APK ships with v1.4.4.** Existing v1.4.1 / v1.4.3 APKs on Chainway C6000 devices continue to work; the v1.4.4 tag on GitHub does not attach a new APK. Mobile version strings bumped only to keep the BUILD_VERSION guard consistent.
+
 ## [v1.4.3] - 2026-04-20
 
 Mobile patch release. Two fixes from the v1.4.3 mobile bug bash, plus a follow-up for the regression surfaced during Chainway C6000 verification of the second fix. Zero backend or admin code changes; tests and docs only elsewhere. Closes the keyboard-fallback half of Fruxh's #70 report; the camera-scanner half remains tracked under #70 for v2.x.

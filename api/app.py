@@ -10,6 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
@@ -52,6 +53,31 @@ def create_app():
     check_build_version()
 
     app = Flask(__name__)
+
+    # #107: honour X-Forwarded-* headers from a trusted reverse proxy so
+    # request.scheme / request.host / request.is_secure reflect what the
+    # browser sees, not the Flask <- proxy hop. Without this, behind an
+    # HTTPS-terminating nginx / Caddy / Traefik / ALB, cookies get scoped
+    # to the internal 127.0.0.1 host instead of the public hostname, the
+    # browser never resubmits them, and every CSRF-protected request 403s.
+    #
+    # Gated behind TRUST_PROXY because honouring these headers when NOT
+    # behind a trusted proxy lets any client forge its own scheme / host /
+    # IP (a well-known ProxyFix footgun). Opt-in only; operator confirms
+    # via docs/deployment.md that the app sits on a network the proxy
+    # controls before setting TRUST_PROXY=true.
+    if os.getenv("TRUST_PROXY", "").lower() in ("true", "1", "yes"):
+        # One proxy hop is the standard nginx / Caddy / Traefik / ALB
+        # shape. Deployments that terminate TLS at multiple proxies in
+        # front of Sentry (e.g. CDN -> nginx -> Sentry) increase the
+        # x_for / x_proto / x_host counts accordingly.
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=1,
+            x_proto=1,
+            x_host=1,
+            x_prefix=0,
+        )
 
     # Config
     app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB request body limit
