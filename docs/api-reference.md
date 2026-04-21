@@ -1226,7 +1226,7 @@ All connector endpoints require `ADMIN` role.
 
 **DELETE /api/admin/connectors/{connector_name}/credentials** - Remove all credentials for one connector + warehouse. Body: `{"warehouse_id": <int>}`.
 
-**POST /api/admin/connectors/{connector_name}/test** - Invoke the connector's `test_connection()` with the stored credentials. Returns `{"connected": <bool>, "message": <string>, ...}`. The message is length-capped at 500 characters and stripped of non-printable bytes. Returns `400` with `error: "blocked_destination"` if the configured `base_url` resolves to a private / loopback / internal address (SSRF guard, see [SECURITY.md](../SECURITY.md)).
+**POST /api/admin/connectors/{connector_name}/test** - Invoke the connector's `test_connection()` with the stored credentials. Returns `{"connected": <bool>, "message": <string>, ...}`. The message is length-capped at 500 characters and stripped of non-printable bytes. Returns `400` with `error: "blocked_destination"` if the configured `base_url` resolves to a private / loopback / internal address (SSRF guard, see [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md)).
 
 **GET /api/admin/connectors/{connector_name}/sync-status?warehouse_id={id}** - Return the sync-state row for every sync type (`orders`, `items`, `inventory`, `fulfillment`). Each row carries `sync_status` (`idle` / `running` / `error`), `last_synced_at`, `last_success_at`, `last_error_at`, `last_error_message`, and `consecutive_errors`.
 

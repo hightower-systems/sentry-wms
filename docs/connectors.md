@@ -188,7 +188,7 @@ UPDATE sync_state
 resolves to a private address. If your ERP is on a local network,
 you need to proxy it through a public (or VPN-reachable public) URL.
 The guard is deliberately strict; see
-[SECURITY_BACKLOG.md](../SECURITY_BACKLOG.md) for the rationale.
+[SECURITY_BACKLOG.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY_BACKLOG.md) for the rationale.
 
 **`CircuitOpenError`.** The connector has hit 5 consecutive failures;
 calls will fail fast for 5 minutes. Check `sync_state.last_error_message`
