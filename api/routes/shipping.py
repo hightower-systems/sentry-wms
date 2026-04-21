@@ -2,6 +2,8 @@
 Shipping / fulfillment endpoint: records tracking info and creates fulfillment records.
 """
 
+import uuid
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
@@ -144,8 +146,8 @@ def fulfill(validated):
     result = g.db.execute(
         text(
             """
-            INSERT INTO item_fulfillments (so_id, warehouse_id, tracking_number, carrier, ship_method, shipped_by, status)
-            VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, :shipped_status)
+            INSERT INTO item_fulfillments (so_id, warehouse_id, tracking_number, carrier, ship_method, shipped_by, status, external_id)
+            VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, :shipped_status, :ext_id)
             RETURNING fulfillment_id
             """
         ),
@@ -157,6 +159,7 @@ def fulfill(validated):
             "ship_method": ship_method,
             "shipped_by": username,
             "shipped_status": SO_SHIPPED,
+            "ext_id": str(uuid.uuid4()),
         },
     )
     fulfillment_id = result.fetchone()[0]

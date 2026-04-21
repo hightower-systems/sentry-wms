@@ -2,6 +2,7 @@
 Receiving endpoints: PO lookup and item receipt submission.
 """
 
+import uuid
 from datetime import datetime, timezone
 
 from flask import Blueprint, g, jsonify, request
@@ -191,9 +192,9 @@ def receive_items(validated):
             text(
                 """
                 INSERT INTO item_receipts (po_id, po_line_id, item_id, quantity_received, bin_id,
-                                           warehouse_id, lot_number, serial_number, received_by, notes)
+                                           warehouse_id, lot_number, serial_number, received_by, notes, external_id)
                 VALUES (:po_id, :po_line_id, :item_id, :quantity, :bin_id,
-                        :warehouse_id, :lot_number, :serial_number, :received_by, :notes)
+                        :warehouse_id, :lot_number, :serial_number, :received_by, :notes, :ext_id)
                 RETURNING receipt_id
                 """
             ),
@@ -208,6 +209,7 @@ def receive_items(validated):
                 "serial_number": serial_number,
                 "received_by": username,
                 "notes": notes,
+                "ext_id": str(uuid.uuid4()),
             },
         )
         receipt_id = result.fetchone()[0]

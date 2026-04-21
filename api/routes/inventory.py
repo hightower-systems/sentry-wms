@@ -2,6 +2,8 @@
 Inventory management endpoints: cycle count creation, retrieval, and submission.
 """
 
+import uuid
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
@@ -51,12 +53,13 @@ def create_cycle_count(validated):
         result = g.db.execute(
             text(
                 """
-                INSERT INTO cycle_counts (warehouse_id, bin_id, status, assigned_to)
-                VALUES (:wh, :bid, :status, :user)
+                INSERT INTO cycle_counts (warehouse_id, bin_id, status, assigned_to, external_id)
+                VALUES (:wh, :bid, :status, :user, :ext_id)
                 RETURNING count_id
                 """
             ),
-            {"wh": warehouse_id, "bid": bid, "status": COUNT_PENDING, "user": username},
+            {"wh": warehouse_id, "bid": bid, "status": COUNT_PENDING, "user": username,
+             "ext_id": str(uuid.uuid4())},
         )
         count_id = result.fetchone()[0]
 
@@ -246,8 +249,8 @@ def submit_cycle_count(validated):
                 text(
                     """
                     INSERT INTO inventory_adjustments
-                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id)
-                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :adj_status, :user, :cid)
+                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id, external_id)
+                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :adj_status, :user, :cid, :ext_id)
                     RETURNING adjustment_id
                     """
                 ),
@@ -260,6 +263,7 @@ def submit_cycle_count(validated):
                     "adj_status": ADJ_PENDING,
                     "user": username,
                     "cid": count_id,
+                    "ext_id": str(uuid.uuid4()),
                 },
             )
             adj_id = adj_result.fetchone()[0]
@@ -314,8 +318,8 @@ def submit_cycle_count(validated):
                 text(
                     """
                     INSERT INTO inventory_adjustments
-                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id)
-                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :adj_status, :user, :cid)
+                        (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, cycle_count_id, external_id)
+                    VALUES (:iid, :bid, :wh, :change, 'CYCLE_COUNT', :detail, :adj_status, :user, :cid, :ext_id)
                     RETURNING adjustment_id
                     """
                 ),
@@ -328,6 +332,7 @@ def submit_cycle_count(validated):
                     "adj_status": ADJ_PENDING,
                     "user": username,
                     "cid": count_id,
+                    "ext_id": str(uuid.uuid4()),
                 },
             )
             adj_id = adj_result.fetchone()[0]

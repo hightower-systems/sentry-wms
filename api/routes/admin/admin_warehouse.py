@@ -1,6 +1,7 @@
 """Warehouse, Zone, and Bin endpoints."""
 
 import math
+import uuid
 
 from flask import g, jsonify, request
 from sqlalchemy import text
@@ -398,8 +399,8 @@ def create_bin(validated):
 
     result = g.db.execute(
         text("""
-            INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, aisle, row_num, level_num, position_num, pick_sequence, putaway_sequence)
-            VALUES (:zone_id, :wid, :code, :barcode, :type, :aisle, :row, :level, :pos, :pick_seq, :put_seq)
+            INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, aisle, row_num, level_num, position_num, pick_sequence, putaway_sequence, external_id)
+            VALUES (:zone_id, :wid, :code, :barcode, :type, :aisle, :row, :level, :pos, :pick_seq, :put_seq, :ext_id)
             RETURNING bin_id, zone_id, warehouse_id, bin_code, bin_barcode, bin_type, aisle, row_num, level_num, position_num, pick_sequence, putaway_sequence, is_active
         """),
         {
@@ -407,6 +408,7 @@ def create_bin(validated):
             "barcode": data["bin_barcode"], "type": data["bin_type"],
             "aisle": data.get("aisle"), "row": data.get("row_num"), "level": data.get("level_num"),
             "pos": data.get("position_num"), "pick_seq": data.get("pick_sequence", 0), "put_seq": data.get("putaway_sequence", 0),
+            "ext_id": str(uuid.uuid4()),
         },
     )
     row = result.fetchone()
@@ -560,8 +562,8 @@ def create_inter_warehouse_transfer(validated):
     # Create bin_transfers record
     transfer = g.db.execute(
         text("""
-            INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, warehouse_id, quantity, transferred_by, transfer_type, reason)
-            VALUES (:iid, :from_bid, :to_bid, :wid, :qty, :username, 'INTER_WAREHOUSE', :reason)
+            INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, warehouse_id, quantity, transferred_by, transfer_type, reason, external_id)
+            VALUES (:iid, :from_bid, :to_bid, :wid, :qty, :username, 'INTER_WAREHOUSE', :reason, :ext_id)
             RETURNING transfer_id, transferred_at
         """),
         {
@@ -569,6 +571,7 @@ def create_inter_warehouse_transfer(validated):
             "wid": from_warehouse_id,
             "qty": quantity, "username": g.current_user["username"],
             "reason": reason,
+            "ext_id": str(uuid.uuid4()),
         },
     ).fetchone()
 

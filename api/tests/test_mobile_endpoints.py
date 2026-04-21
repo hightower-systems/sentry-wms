@@ -82,9 +82,9 @@ def test_me_packing_off_excludes_pack_for_non_admin(client, auth_headers):
         "ON CONFLICT (key) DO UPDATE SET value = 'false'"
     )
     cur.execute(
-        """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions)
+        """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions, external_id)
            VALUES ('packer1', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                   'Packer One', 'PACKER', 1, '{pack,ship}')"""
+                   'Packer One', 'PACKER', 1, '{pack,ship}', gen_random_uuid())"""
     )
     cur.close()
 
@@ -103,9 +103,9 @@ def test_me_picker_role(client, auth_headers):
     conn = _db_conn()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions)
+        """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions, external_id)
            VALUES ('picker1', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                   'Picker One', 'PICKER', 1, '{pick,count}')"""
+                   'Picker One', 'PICKER', 1, '{pick,count}', gen_random_uuid())"""
     )
     cur.close()
 
@@ -126,9 +126,9 @@ def test_me_empty_functions(client, auth_headers):
     conn = _db_conn()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions)
+        """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions, external_id)
            VALUES ('receiver1', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                   'Receiver One', 'RECEIVER', 1, '{}')"""
+                   'Receiver One', 'RECEIVER', 1, '{}', gen_random_uuid())"""
     )
     cur.close()
 

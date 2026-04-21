@@ -1,6 +1,7 @@
 """Purchase Orders, Sales Orders, and Short Picks endpoints."""
 
 import math
+import uuid
 
 from flask import g, jsonify, request
 from sqlalchemy import text
@@ -128,8 +129,8 @@ def create_purchase_order(validated):
 
     result = g.db.execute(
         text("""
-            INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, expected_date, warehouse_id, notes, created_by, status)
-            VALUES (:pn, :pb, :vendor, :exp_date, :wid, :notes, :created_by, :status)
+            INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, expected_date, warehouse_id, notes, created_by, status, external_id)
+            VALUES (:pn, :pb, :vendor, :exp_date, :wid, :notes, :created_by, :status, :ext_id)
             RETURNING po_id
         """),
         {
@@ -137,6 +138,7 @@ def create_purchase_order(validated):
             "vendor": data.get("vendor_name"), "exp_date": data.get("expected_date"),
             "wid": data["warehouse_id"], "notes": data.get("notes"),
             "created_by": g.current_user["username"], "status": PO_OPEN,
+            "ext_id": str(uuid.uuid4()),
         },
     )
     po_id = result.fetchone()[0]
@@ -361,8 +363,8 @@ def create_sales_order(validated):
 
     result = g.db.execute(
         text("""
-            INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status)
-            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, :status)
+            INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status, external_id)
+            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, :status, :ext_id)
             RETURNING so_id
         """),
         {
@@ -373,6 +375,7 @@ def create_sales_order(validated):
             "ship": data.get("ship_method"), "addr": data.get("ship_address"),
             "ship_by": data.get("ship_by_date"), "created_by": g.current_user["username"],
             "status": SO_OPEN,
+            "ext_id": str(uuid.uuid4()),
         },
     )
     so_id = result.fetchone()[0]

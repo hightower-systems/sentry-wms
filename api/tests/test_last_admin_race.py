@@ -107,8 +107,8 @@ class TestLastAdminCheckSingleThreaded:
         db.execute(
             text(
                 "INSERT INTO users (username, password_hash, full_name, role, "
-                "warehouse_id, is_active, allowed_functions) "
-                "VALUES ('secondadmin', 'x', 'Second Admin', 'ADMIN', 1, FALSE, '{}')"
+                "warehouse_id, is_active, allowed_functions, external_id) "
+                "VALUES ('secondadmin', 'x', 'Second Admin', 'ADMIN', 1, FALSE, '{}', gen_random_uuid())"
             )
         )
         db.commit()

@@ -190,9 +190,9 @@ class TestWarehouseAuthorization:
         wids = "{" + ",".join(str(w) for w in warehouse_ids) + "}"
         cur.execute(
             """INSERT INTO users (username, password_hash, full_name, role,
-                   warehouse_id, warehouse_ids, allowed_functions)
+                   warehouse_id, warehouse_ids, allowed_functions, external_id)
                VALUES (%s, '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                       'Test User', 'PICKER', %s, %s, '{pick,receive,count}')""",
+                       'Test User', 'PICKER', %s, %s, '{pick,receive,count}', gen_random_uuid())""",
             (username, warehouse_id, wids),
         )
         cur.close()
@@ -268,9 +268,9 @@ class TestV103WarehouseIdSourceMismatch:
         wids = "{" + ",".join(str(w) for w in warehouse_ids) + "}"
         cur.execute(
             """INSERT INTO users (username, password_hash, full_name, role,
-                   warehouse_id, warehouse_ids, allowed_functions)
+                   warehouse_id, warehouse_ids, allowed_functions, external_id)
                VALUES (%s, '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                       'V-103 Test', 'PICKER', %s, %s, '{pick,receive,count}')""",
+                       'V-103 Test', 'PICKER', %s, %s, '{pick,receive,count}', gen_random_uuid())""",
             (username, warehouse_ids[0], wids),
         )
         cur.close()

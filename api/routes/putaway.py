@@ -3,6 +3,8 @@ Put-away endpoints: pending items, preferred bin suggestion, confirm transfer,
 and preferred bin management.
 """
 
+import uuid
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import bindparam, text
 
@@ -220,9 +222,9 @@ def confirm_putaway(validated):
         text(
             """
             INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, warehouse_id, quantity,
-                                       transfer_type, lot_number, transferred_by)
+                                       transfer_type, lot_number, transferred_by, external_id)
             VALUES (:item_id, :from_bin_id, :to_bin_id, :warehouse_id, :quantity,
-                    'PUTAWAY', :lot_number, :transferred_by)
+                    'PUTAWAY', :lot_number, :transferred_by, :ext_id)
             RETURNING transfer_id
             """
         ),
@@ -234,6 +236,7 @@ def confirm_putaway(validated):
             "quantity": quantity,
             "lot_number": lot_number,
             "transferred_by": username,
+            "ext_id": str(uuid.uuid4()),
         },
     )
     transfer_id = result.fetchone()[0]

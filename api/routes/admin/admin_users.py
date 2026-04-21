@@ -1,6 +1,7 @@
 """Users, Audit Log, Dashboard Stats, Settings, Cycle Counts, and Adjustment Approval endpoints."""
 
 import math
+import uuid
 
 import bcrypt
 from flask import g, jsonify, request
@@ -78,13 +79,13 @@ def create_user(validated):
     pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     result = g.db.execute(
         text("""
-            INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, allowed_functions)
-            VALUES (:u, :pw, :name, :role, :wid, :wids, :funcs)
+            INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, allowed_functions, external_id)
+            VALUES (:u, :pw, :name, :role, :wid, :wids, :funcs, :ext_id)
             RETURNING user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at
         """),
         {"u": data["username"], "pw": pw_hash, "name": data["full_name"],
          "role": data["role"], "wid": warehouse_id, "wids": warehouse_ids,
-         "funcs": allowed_functions},
+         "funcs": allowed_functions, "ext_id": str(uuid.uuid4())},
     )
     row = result.fetchone()
     g.db.commit()
@@ -772,8 +773,8 @@ def direct_adjustment(validated):
     # Create adjustment record as APPROVED
     adj = g.db.execute(
         text("""
-            INSERT INTO inventory_adjustments (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, adjusted_at)
-            VALUES (:iid, :bid, :wid, :qty_change, :reason_code, :reason_detail, :status, :user_id, NOW())
+            INSERT INTO inventory_adjustments (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, adjusted_at, external_id)
+            VALUES (:iid, :bid, :wid, :qty_change, :reason_code, :reason_detail, :status, :user_id, NOW(), :ext_id)
             RETURNING adjustment_id, adjusted_at
         """),
         {
@@ -783,6 +784,7 @@ def direct_adjustment(validated):
             "reason_detail": reason,
             "status": ADJ_APPROVED,
             "user_id": g.current_user["user_id"],
+            "ext_id": str(uuid.uuid4()),
         },
     ).fetchone()
 

@@ -98,8 +98,8 @@ class TestV029_PoLineLock:
         setup.autocommit = True
         cur = setup.cursor()
         cur.execute(
-            "INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, status, warehouse_id) "
-            "VALUES ('PO-V029-RACE', 'PO-V029-RACE', 'V', 'OPEN', 1) RETURNING po_id"
+            "INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, status, warehouse_id, external_id) "
+            "VALUES ('PO-V029-RACE', 'PO-V029-RACE', 'V', 'OPEN', 1, gen_random_uuid()) RETURNING po_id"
         )
         po_id = cur.fetchone()[0]
         cur.execute(
@@ -216,7 +216,7 @@ class TestV030_InventoryLock:
         cur = setup.cursor()
         # Use a fresh item+bin pair to avoid polluting the seed.
         cur.execute(
-            "INSERT INTO items (sku, item_name) VALUES ('V030-SKU', 'V030 Test') RETURNING item_id"
+            "INSERT INTO items (sku, item_name, external_id) VALUES ('V030-SKU', 'V030 Test', gen_random_uuid()) RETURNING item_id"
         )
         item_id = cur.fetchone()[0]
         cur.execute(
@@ -225,20 +225,20 @@ class TestV030_InventoryLock:
         )
         zone_id = cur.fetchone()[0]
         cur.execute(
-            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
-            "VALUES (%s, 1, 'V030-SRC', 'V030-SRC-BC', 'Pickable') RETURNING bin_id",
+            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, external_id) "
+            "VALUES (%s, 1, 'V030-SRC', 'V030-SRC-BC', 'Pickable', gen_random_uuid()) RETURNING bin_id",
             (zone_id,),
         )
         src_bin = cur.fetchone()[0]
         cur.execute(
-            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
-            "VALUES (%s, 1, 'V030-DST1', 'V030-DST1-BC', 'Pickable') RETURNING bin_id",
+            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, external_id) "
+            "VALUES (%s, 1, 'V030-DST1', 'V030-DST1-BC', 'Pickable', gen_random_uuid()) RETURNING bin_id",
             (zone_id,),
         )
         dst1 = cur.fetchone()[0]
         cur.execute(
-            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
-            "VALUES (%s, 1, 'V030-DST2', 'V030-DST2-BC', 'Pickable') RETURNING bin_id",
+            "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, external_id) "
+            "VALUES (%s, 1, 'V030-DST2', 'V030-DST2-BC', 'Pickable', gen_random_uuid()) RETURNING bin_id",
             (zone_id,),
         )
         dst2 = cur.fetchone()[0]

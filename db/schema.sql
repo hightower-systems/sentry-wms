@@ -50,7 +50,7 @@ CREATE TABLE bins (
     max_volume_cuft DECIMAL(10,2),
     description VARCHAR(200),
     is_active BOOLEAN DEFAULT TRUE,
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+    external_id UUID UNIQUE NOT NULL,
     UNIQUE(warehouse_id, bin_code)
 );
 
@@ -81,7 +81,7 @@ CREATE TABLE items (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE INDEX ix_items_upc ON items(upc);
@@ -127,7 +127,7 @@ CREATE TABLE purchase_orders (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     received_at TIMESTAMPTZ,
     created_by VARCHAR(100),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE purchase_order_lines (
@@ -159,7 +159,7 @@ CREATE TABLE item_receipts (
     received_by VARCHAR(100) NOT NULL,
     received_at TIMESTAMPTZ DEFAULT NOW(),
     notes VARCHAR(500),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -188,7 +188,7 @@ CREATE TABLE sales_orders (
     carrier VARCHAR(100),
     tracking_number VARCHAR(255),
     created_by VARCHAR(100),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE sales_order_lines (
@@ -288,7 +288,7 @@ CREATE TABLE bin_transfers (
     reason VARCHAR(200),
     transferred_by VARCHAR(100) NOT NULL,
     transferred_at TIMESTAMPTZ DEFAULT NOW(),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -303,7 +303,7 @@ CREATE TABLE cycle_counts (
     assigned_to VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE cycle_count_lines (
@@ -333,7 +333,7 @@ CREATE TABLE item_fulfillments (
     status VARCHAR(20) DEFAULT 'SHIPPED',
     shipped_by VARCHAR(100),
     shipped_at TIMESTAMPTZ DEFAULT NOW(),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE item_fulfillment_lines (
@@ -363,7 +363,7 @@ CREATE TABLE inventory_adjustments (
     adjusted_by VARCHAR(100) NOT NULL,
     adjusted_at TIMESTAMPTZ DEFAULT NOW(),
     cycle_count_id INT REFERENCES cycle_counts(count_id),
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -480,7 +480,7 @@ CREATE TABLE users (
     last_login TIMESTAMPTZ,
     password_changed_at TIMESTAMPTZ,
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
-    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================

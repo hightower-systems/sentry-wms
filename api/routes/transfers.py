@@ -2,6 +2,8 @@
 Bin transfer endpoint: general-purpose bin-to-bin inventory moves.
 """
 
+import uuid
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
@@ -74,8 +76,8 @@ def move(validated):
         text(
             """
             INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, warehouse_id, quantity,
-                                       transfer_type, lot_number, reason, transferred_by)
-            VALUES (:iid, :from_bid, :to_bid, :wh, :qty, 'MOVE', :lot, :reason, :user)
+                                       transfer_type, lot_number, reason, transferred_by, external_id)
+            VALUES (:iid, :from_bid, :to_bid, :wh, :qty, 'MOVE', :lot, :reason, :user, :ext_id)
             RETURNING transfer_id
             """
         ),
@@ -88,6 +90,7 @@ def move(validated):
             "lot": lot_number,
             "reason": reason,
             "user": username,
+            "ext_id": str(uuid.uuid4()),
         },
     )
     transfer_id = result.fetchone()[0]

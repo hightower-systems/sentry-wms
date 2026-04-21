@@ -22,7 +22,7 @@ def _picker_headers(client):
     import bcrypt
     pw_hash = bcrypt.hashpw(b"picker123", bcrypt.gensalt()).decode("utf-8")
     cur.execute(
-        "INSERT INTO users (username, password_hash, full_name, role, warehouse_id) VALUES ('picker1', %s, 'Test Picker', 'PICKER', 1)",
+        "INSERT INTO users (username, password_hash, full_name, role, warehouse_id, external_id) VALUES ('picker1', %s, 'Test Picker', 'PICKER', 1, gen_random_uuid())",
         (pw_hash,),
     )
     cur.close()

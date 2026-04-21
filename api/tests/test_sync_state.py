@@ -256,9 +256,9 @@ class TestSyncStatusEndpoints:
         conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute(
-            """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids)
+            """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, external_id)
                VALUES ('sync_test_user', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                       'Test', 'USER', 1, '{1}')
+                       'Test', 'USER', 1, '{1}', gen_random_uuid())
                ON CONFLICT (username) DO NOTHING"""
         )
         cur.close()
@@ -346,9 +346,9 @@ class TestManualSyncTrigger:
         conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute(
-            """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids)
+            """INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, external_id)
                VALUES ('sync_trigger_user', '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
-                       'Test', 'USER', 1, '{1}')
+                       'Test', 'USER', 1, '{1}', gen_random_uuid())
                ON CONFLICT (username) DO NOTHING"""
         )
         cur.close()

@@ -291,14 +291,13 @@ class TestVisibleAtTrigger:
 
 
 class TestExternalIdRetrofit:
-    """The ten aggregate/actor tables got an external_id UUID column with
-    DEFAULT gen_random_uuid(); every existing seed row got a unique UUID
-    via the DEFAULT, and a fresh INSERT without supplying external_id
-    still produces a non-NULL value.
-
-    Migration 025 (issue #108) drops the DEFAULT; these tests verify the
-    pre-025 world where the DEFAULT is still in place and existing
-    callers are unaffected.
+    """The ten aggregate/actor tables carry an external_id UUID column
+    post-migration 025: UUID, UNIQUE, NOT NULL, and NO DEFAULT. Every
+    INSERT site (production routes, test fixtures, seed SQL) supplies
+    a value explicitly via uuid.uuid4() in Python or gen_random_uuid()
+    in SQL. A callsite that forgets the column now fails with a NOT
+    NULL violation; the CI guardrail in test_external_id_inserts.py
+    catches it during review.
     """
 
     RETROFITTED_TABLES = [
@@ -332,16 +331,16 @@ class TestExternalIdRetrofit:
                 dtype, nullable, default = row
                 assert dtype == "uuid", f"{table}.external_id must be UUID, got {dtype}"
                 assert nullable == "NO", f"{table}.external_id must be NOT NULL"
-                assert default and "gen_random_uuid" in default, (
-                    f"{table}.external_id must default to gen_random_uuid(); "
+                assert default is None, (
+                    f"{table}.external_id must have no DEFAULT post-migration 025; "
                     f"got {default!r}"
                 )
         finally:
             conn.close()
 
     def test_seed_rows_carry_unique_non_null_external_ids(self):
-        """seed-apartment-lab.sql inserts without external_id; the DEFAULT
-        must have populated every seed row with a unique UUID."""
+        """Every seed row supplies external_id via gen_random_uuid() inline;
+        values must be non-NULL and unique per table."""
         conn = _make_conn()
         try:
             cur = conn.cursor()
