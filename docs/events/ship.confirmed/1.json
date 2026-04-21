@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentry-wms.example/events/ship.confirmed/1.json",
+  "title": "ship.confirmed v1",
+  "description": "A sales order has shipped. Emitted by api/routes/shipping.py::fulfill. Aggregate: sales_order. Sentry's item_fulfillments.ship_method is renamed to service_level on the wire per plan 1.7.1.",
+  "type": "object",
+  "required": [
+    "sales_order_external_id",
+    "tracking_numbers",
+    "carrier",
+    "service_level",
+    "packages",
+    "completed_by_user_external_id",
+    "completed_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "sales_order_external_id": { "type": "string", "format": "uuid" },
+    "tracking_numbers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "carrier": { "type": "string" },
+    "service_level": {
+      "type": "string",
+      "description": "Sentry internal column is item_fulfillments.ship_method; renamed on the wire."
+    },
+    "packages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["package_external_id", "lines"],
+        "additionalProperties": false,
+        "properties": {
+          "package_external_id": { "type": "string" },
+          "weight_lb": { "type": ["number", "null"] },
+          "dimensions_in": { "type": ["object", "null"] },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["item_external_id", "quantity_packed"],
+              "additionalProperties": false,
+              "properties": {
+                "item_external_id": { "type": "string", "format": "uuid" },
+                "quantity_packed": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "completed_by_user_external_id": { "type": "string", "format": "uuid" },
+    "completed_at": { "type": "string", "format": "date-time" }
+  }
+}

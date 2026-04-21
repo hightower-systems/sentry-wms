@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentry-wms.example/events/cycle_count.adjusted/1.json",
+  "title": "cycle_count.adjusted v1",
+  "description": "A cycle-count variance has been approved by an admin. Emitted at the APPROVED branch of review_adjustments when adjustment.cycle_count_id is non-null (Decision C routing). Aggregate: inventory_adjustment.",
+  "type": "object",
+  "required": [
+    "cycle_count_external_id",
+    "item_external_id",
+    "bin_external_id",
+    "counted_quantity",
+    "system_quantity",
+    "quantity_delta",
+    "counted_by_user_external_id",
+    "counted_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "cycle_count_external_id": { "type": "string", "format": "uuid" },
+    "item_external_id": { "type": "string", "format": "uuid" },
+    "bin_external_id": { "type": "string", "format": "uuid" },
+    "counted_quantity": { "type": "integer", "minimum": 0 },
+    "system_quantity": { "type": "integer", "minimum": 0 },
+    "quantity_delta": { "type": "integer" },
+    "counted_by_user_external_id": { "type": "string", "format": "uuid" },
+    "counted_at": { "type": "string", "format": "date-time" }
+  }
+}

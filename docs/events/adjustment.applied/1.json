@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentry-wms.example/events/adjustment.applied/1.json",
+  "title": "adjustment.applied v1",
+  "description": "An inventory adjustment has been applied. Emitted on APPROVED (review_adjustments, cycle_count_id NULL branch) and inline on direct_adjustment. Aggregate: inventory_adjustments.",
+  "type": "object",
+  "required": [
+    "adjustment_external_id",
+    "item_external_id",
+    "bin_external_id",
+    "quantity_delta",
+    "reason_code",
+    "applied_by_user_external_id",
+    "applied_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "adjustment_external_id": { "type": "string", "format": "uuid" },
+    "item_external_id": { "type": "string", "format": "uuid" },
+    "bin_external_id": { "type": "string", "format": "uuid" },
+    "quantity_delta": { "type": "integer" },
+    "reason_code": { "type": "string" },
+    "applied_by_user_external_id": { "type": "string", "format": "uuid" },
+    "applied_at": { "type": "string", "format": "date-time" }
+  }
+}
