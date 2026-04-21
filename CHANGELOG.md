@@ -2,7 +2,29 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
-## [v1.4.2] - Unreleased
+## [v1.4.3] - 2026-04-20
+
+Mobile patch release. Two fixes from the v1.4.3 mobile bug bash, plus a follow-up for the regression surfaced during Chainway C6000 verification of the second fix. Zero backend or admin code changes; tests and docs only elsewhere. Closes the keyboard-fallback half of Fruxh's #70 report; the camera-scanner half remains tracked under #70 for v2.x.
+
+### Fixed -- Mobile
+- **Put-away "done" screen no longer overlays the success checkmark on the title.** The done phase was rendered inside `doneStyles.section` (`flex: 1, justifyContent: 'center', alignItems: 'center'`) but the container also holds the session-history list, which grows with each put-away. Once history exceeded the viewport, content overflowed and `justifyContent: 'center'` pushed the large check glyph visually into the title below it. Swapped to a ScrollView with natural top-down flow, matching the CountScreen done-phase pattern. Visual regression only; no functional impact. (Closes #103)
+- **Scan input fields now allow keyboard fallback for manual entry and copy/paste.** `mobile/src/components/ScanInput.js` had `showSoftInputOnFocus={false}` and `contextMenuHidden`, so tapping a scan field on the Chainway C6000 did nothing (no soft keyboard) and long-press did not expose the context menu (no copy/paste). Removed both flags. Broadcast-intent scans still route through `ScanSettingsContext`'s `activeScanHandlerRef` and bypass the TextInput entirely; keyboard-mode scans still land in `onChangeText` the same way manual typing does. Every scan screen inherits this fix via the shared component. (Closes #104, refs #70)
+- **Scan input soft keyboard now only opens on user tap, not on auto-refocus.** The #104 fix removed the unconditional `showSoftInputOnFocus={false}`, but the 1-second refocus loop that keeps the field ready for hardware scans then re-popped the soft keyboard on every tick on the C6000. Track a `softInput` state that is false by default and flipped to true only on `onPressIn`; force a blur/refocus cycle on tap so the updated prop applies and the keyboard actually opens. Reset to false on blur and after submit so the auto-refocus loop, mount autofocus, and post-submit refocus all stay silent. Net behavior: tap opens the keyboard for manual entry, every other focus path leaves it hidden. (Closes #105)
+
+### Tests
+- Mobile: 32 passing (up from 24 at v1.4.2). New file `mobile/src/components/__tests__/ScanInput.test.js` locks the exact props and handlers that encode the tap-to-open, hidden-during-hardware-scan contract and the absence of `contextMenuHidden`. Source-level regression gate because the mobile vitest harness has no RN runtime (see `mobile/src/auth/__tests__/forcedChangePersistence.test.js` for the pattern note). User-visible behaviour verified on a Chainway C6000 before release.
+- Backend: 734 passing, unchanged (v1.4.3 has no backend code changes).
+- Admin: 58 passing, unchanged (v1.4.3 has no admin code changes).
+
+### Thanks
+Thanks to **Fruxh** for the original #70 report that asked for both an in-app camera scanner and a keyboard fallback. v1.4.3 ships the keyboard half; the camera-scanner half stays open under #70 for v2.x scope.
+
+### Notes for operators
+- **Mobile APK rebuild.** v1.4.3 has real mobile code changes (unlike v1.4.2, which did not ship a new APK). The new `sentry-wms-v1.4.3.apk` is attached to the GitHub release and installs over v1.4.1 / v1.4.2 on Chainway C6000 devices without a data wipe.
+- **No backend or admin redeploy needed for mobile operators.** `api/version.py` and all package manifests still bump to 1.4.3 so the BUILD_VERSION guard (#73) stays consistent, but the API and admin images have no source changes in this release. Pulling and rebuilding is safe but not required if you only operate the mobile fleet.
+- **Upgrade procedure unchanged** from v1.4.2: `git pull && docker compose down && docker compose build && docker compose up -d` for the API + admin host; `adb install sentry-wms-v1.4.3.apk` on each scanner.
+
+## [v1.4.2] - 2026-04-20
 
 Admin panel patch release. Headline is an operator safeguard against upgrades-without-rebuild; everything else is either a real bug reported externally by Fruxh from a production deployment or surfaced during an internal admin bug bash on 2026-04-19 plus the pre-merge gate on 2026-04-20. Zero mobile code changes; a v1.4.3 will follow for mobile-side reports.
 
