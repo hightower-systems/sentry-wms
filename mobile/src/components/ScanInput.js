@@ -108,9 +108,7 @@ export default function ScanInput({ placeholder = 'SCAN BARCODE', onScan, disabl
         autoCorrect={false}
         blurOnSubmit={false}
         returnKeyType="done"
-        showSoftInputOnFocus={false}
         selectTextOnFocus
-        contextMenuHidden
       />
     </View>
   );
