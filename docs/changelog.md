@@ -6,6 +6,66 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.4.5 -- Reverse Proxy Hotfix Follow-up
+
+*2026-04-21.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.5).
+
+v1.4.4 (#107) wired Werkzeug `ProxyFix` into `api/app.py` behind a
+`TRUST_PROXY` env var, but `docker-compose.yml` was never updated to
+pass `TRUST_PROXY` into the `api` service environment. Operators who
+set `TRUST_PROXY=true` in `.env` saw no effect because Compose does
+not auto-forward arbitrary host env vars: the value stopped at the
+Compose shell and `os.getenv("TRUST_PROXY")` returned `None` inside
+the container, so `ProxyFix` stayed off and the CSRF-403-behind-proxy
+bug from v1.4.0-v1.4.3 kept firing. Fruxh hit this after installing
+v1.4.4 fresh. api + Compose + docs change; admin and mobile untouched.
+
+Fixes:
+
+- **`TRUST_PROXY` now reaches the api container (#136, refs #107,
+  Fruxh's #98).** `docker-compose.yml` `services.api.environment`
+  gains `TRUST_PROXY: ${TRUST_PROXY:-false}`, same pattern as
+  `FLASK_ENV`. Default `false` preserves the direct-connect posture;
+  operators opt in by setting `TRUST_PROXY=true` in `.env`. Without
+  this single line, v1.4.4's `ProxyFix` wiring was cosmetic for every
+  Compose-deployed install.
+- **ProxyFix state is logged at Flask startup.** `api/app.py` emits
+  `ProxyFix active: ...` or `ProxyFix inactive: ...` at WARNING level
+  so the line clears the default gunicorn stderr threshold.
+  Operators verify with `docker compose logs api | grep ProxyFix`
+  without execing into the container.
+- **`/api/health` now returns `proxy_fix_active`.** External monitors
+  and the reverse proxy itself can confirm the wiring end-to-end with
+  a single HTTPS `GET`. A green health response with
+  `"proxy_fix_active": false` behind an nginx deployment is the exact
+  signature of this bug.
+- **`.env.example` gains a `TRUST_PROXY` block with the security
+  warning inline**, and `docs/deployment.md` "Reverse Proxy (HTTPS)"
+  clarifies that `TRUST_PROXY` goes in `.env` at the repo root (not
+  `api/.env`), that `docker compose restart api` does NOT re-read
+  `.env` (use `docker compose up -d` to pick up changes), and that
+  the wiring can be verified three independent ways: `env | grep
+  TRUST_PROXY` in the container, `logs api | grep ProxyFix` at the
+  Flask layer, and `curl /api/health` from outside.
+
+Tests: 740 backend (up from 738 at v1.4.4), 58 admin, 32 mobile.
+`api/tests/test_proxy_fix.py` gains `TestHealthEndpointReportsProxyFixState`
+with two cases locking the `/api/health` `proxy_fix_active` contract
+in both the unproxied and proxied-client states; the original 4 cases
+(opt-in invariant, scheme/host/is_secure rewrite, Secure CSRF + auth
+cookies, change-password NOT 403'ing behind proxy) are unchanged and
+still green. All CI workflows green.
+
+Operator notes: the v1.4.3 APK is stable; no APK update is needed for
+v1.4.5 (mobile has zero code changes and the API contract is
+unchanged). Operators who upgraded to v1.4.4 and set `TRUST_PROXY=true`
+but still saw CSRF-403 errors should pull v1.4.5, run `docker compose
+down && docker compose build && docker compose up -d` (NOT just
+`restart`), and confirm the wiring with `docker compose exec api env
+| grep TRUST_PROXY` and `curl /api/health`.
+
+---
+
 ## v1.4.4 -- Reverse Proxy Hotfix
 
 *2026-04-21.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.4).
