@@ -3,7 +3,7 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.4.2-8e2716)
+  ![Version](https://img.shields.io/badge/version-1.4.3-8e2716)
   ![Tests](https://img.shields.io/badge/tests-734%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.4.2 - Admin panel patch (V-017 cluster, Fruxh fixes, UI consistency)**
+**v1.4.3 - Mobile patch (put-away done screen layout + scan-input keyboard fallback)**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -306,6 +306,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | **v1.4.0** | **Security backlog cleanup - HttpOnly cookie + CSRF for admin auth (V-045), mobile SecureStore migration (V-047), strict Content-Security-Policy (V-050), Flask-Limiter rate limiting (V-041), `pip-audit` + `npm audit` in CI (V-042), DNS-rebinding pin (V-108), self-hosted fonts (V-110), and all 9 v1.4 audit findings (V-100 through V-111) closed** | ✅ **Released** |
 | **v1.4.1** | **Patch - forced password change on first login eliminates the "grep logs for random admin password" onboarding paper-cut (#69), mobile HomeScreen + LoginScreen version display bumped from stale v1.2.0 (#68), forced-mode navigator stuck-spinner fix** | ✅ **Released** |
 | **v1.4.2** | **Admin panel patch - upgrade-without-rebuild safeguard (#73), V-017 validation_error cluster across seven admin create/edit forms (#74-81), PO/SO close and cancel state transitions (#88, #90), pencil/trash icon consistency across every admin list page (#102), Fruxh-reported fixes (#71, #72, #98)** | ✅ **Released** |
+| **v1.4.3** | **Mobile patch - put-away done screen no longer overlays the success checkmark on the title when session history grows (#103), scan inputs now allow keyboard fallback for manual entry and copy/paste without disturbing hardware-scan workflows (#104, #105, refs #70)** | ✅ **Released** |
 | v2.0.0 | First-party ERP + commerce connectors (NetSuite, QuickBooks, Shopify, Fabric) on top of the v1.3 connector framework | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -318,4 +319,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.4.2
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.4.3

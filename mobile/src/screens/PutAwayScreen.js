@@ -452,7 +452,10 @@ export default function PutAwayScreen({ navigation }) {
 
       {/* Done Phase */}
       {phase === 'done' && (
-        <View style={[doneStyles.section, { paddingTop: 40 }]}>
+        <ScrollView
+          style={screenStyles.content}
+          contentContainerStyle={{ alignItems: 'center', paddingHorizontal: 32, paddingTop: 40, paddingBottom: 32 }}
+        >
           <Text style={doneStyles.check}>{'\u2713'}</Text>
           <Text style={doneStyles.title}>Put-Away Complete</Text>
           <Text style={[doneStyles.detail, { marginBottom: 16 }]}>
@@ -480,7 +483,7 @@ export default function PutAwayScreen({ navigation }) {
           <TouchableOpacity style={[buttonStyles.buttonSecondary, { marginTop: 8, width: '100%' }]} onPress={() => navigation.goBack()}>
             <Text style={buttonStyles.buttonSecondaryText}>DONE</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       )}
 
       {/* Preferred bin prompt modal */}

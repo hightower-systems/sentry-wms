@@ -1,6 +1,6 @@
 {
   "name": "sentry-wms-mobile",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Sentry WMS - Mobile Scanner App",
   "main": "expo/AppEntry.js",
   "scripts": {

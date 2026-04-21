@@ -67,6 +67,6 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## Current Version
 
-v1.4.2 -- Admin panel patch release. Upgrade-without-rebuild safeguard, the V-017 validation_error cluster on seven admin create/edit forms, PO/SO close and cancel state transitions, pencil/trash icon consistency across every admin list page, and a bundle of Fruxh-reported fixes from external deployments. 734 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.2 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.2).
+v1.4.3 -- Mobile patch release. Put-away done screen layout fix (the success checkmark no longer overlays the title when session history grows), and a keyboard fallback for manual barcode entry on scan fields: tapping a scan field now opens the soft keyboard and copy/paste works, without disturbing the Chainway C6000 hardware-scan flow. 734 backend tests passing. See the [changelog](changelog.md), [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md), and the [v1.4.3 release](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.3).
 
 Licensed under MIT. Built by [Hightower Systems](https://github.com/hightower-systems).
