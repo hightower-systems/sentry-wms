@@ -6,6 +6,56 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.4.4 -- Reverse Proxy Hotfix
+
+*2026-04-21.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.4).
+
+Every production deployment that fronts Sentry with a TLS-terminating
+reverse proxy (nginx, Caddy, Traefik, AWS ALB, etc.) was returning
+`403 CSRF token missing or invalid` on every `POST` / `PUT` / `PATCH` /
+`DELETE`. Fruxh filed #98 from his production install and traced it to
+the root cause: Flask's `request.host` / `request.scheme` were stuck on
+the internal `127.0.0.1:<port>` hop, so cookies were scoped to the wrong
+host and the browser never resubmitted them. api-only change; admin and
+mobile untouched.
+
+Fixes:
+
+- **Trust `X-Forwarded-*` headers from a reverse proxy when
+  `TRUST_PROXY=true` (#107, refs #98).** `app.wsgi_app` is now wrapped in
+  Werkzeug `ProxyFix` when the env var is set, so `request.scheme`,
+  `request.host`, and `request.is_secure` reflect the browser's view of
+  the request instead of the internal hop. Opt-in via env var because
+  honouring `X-Forwarded-*` without a proxy in front lets any client
+  forge its own scheme, hostname, and client IP. The
+  `services/cookie_auth.py` header-based fallback stays as belt-and-
+  suspenders.
+- **Reverse-proxy deployment guidance expanded in `docs/deployment.md`.**
+  New `TRUST_PROXY` section with an annotated nginx config, Caddy and
+  Traefik v2+ snippets, a one-line note covering AWS ALB / GCP HTTPS LB /
+  Azure Application Gateway / Cloudflare Tunnels / Fly / Render, an
+  explicit security warning on header-forgery risk, and a multi-hop
+  section for CDN-in-front deployments.
+- **`python-dotenv` bumped `1.0.1` -> `1.2.2` (#106)** to clear
+  `GHSA-mf9w-mj56-hr94`. OSV published the advisory between the
+  2026-04-21 scheduled `main` audit (green) and the v1.4.4 initial push
+  (red). Drop-in compatible; no code changes needed.
+
+Tests: 738 backend (up from 734 at v1.4.3), 58 admin, 32 mobile. New
+file `api/tests/test_proxy_fix.py` (4 cases): the opt-in invariant,
+`TRUST_PROXY=true` rewriting `scheme` / `host` / `is_secure`, login
+behind proxy headers returning `Secure` + `SameSite=Strict` cookies,
+and change-password behind proxy headers NOT 403'ing on the CSRF gate
+(Fruxh's exact repro path). All CI workflows green.
+
+Operator notes: the v1.4.3 APK is stable; no APK update is needed for
+v1.4.4 (mobile has zero code changes and the API contract is unchanged).
+API operators behind a reverse proxy MUST add `TRUST_PROXY=true` to the
+API environment before rebuilding; direct-connect deployments must NOT
+set it.
+
+---
+
 ## v1.4.3 -- Mobile Patch
 
 *2026-04-20.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.3).
