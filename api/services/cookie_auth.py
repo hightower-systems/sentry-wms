@@ -26,6 +26,12 @@ def generate_csrf_token() -> str:
 
 def _cookie_secure() -> bool:
     # True over HTTPS (direct or via a TLS-terminating reverse proxy).
+    # #107: ProxyFix (wired in api/app.py behind TRUST_PROXY) is the
+    # primary mechanism -- it rewrites request.scheme from X-Forwarded-
+    # Proto so request.is_secure reads correctly. The header fallback
+    # below stays as belt-and-suspenders for deployments that front
+    # the app with HTTPS but skip TRUST_PROXY; the cookie still picks
+    # up Secure, which is the safe direction.
     return bool(request.is_secure) or request.headers.get("X-Forwarded-Proto") == "https"
 
 
