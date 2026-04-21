@@ -63,7 +63,14 @@ def move(validated):
     if not ok:
         return denied
 
-    # 1 & 2. Move inventory (decrement source, upsert destination)
+    # 1 & 2. Move inventory (decrement source, upsert destination).
+    # v1.5.0 #119: the bin_transfers aggregate is created by this
+    # handler so there is no pre-existing row to lock. The
+    # serialisation point for concurrent moves on the same item+bin
+    # is move_inventory()'s V-030 FOR UPDATE on the source inventory
+    # row; that is the lock that prevents two transactions from
+    # interleaving their transfer.completed emits out of commit order
+    # on the integration_events outbox. No additional lock needed here.
     try:
         new_source_qty, new_dest_qty = move_inventory(
             g.db, item_id, from_bin_id, to_bin_id, warehouse_id, quantity, lot_number

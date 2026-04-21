@@ -653,8 +653,12 @@ def review_adjustments(validated):
         if not adj_id or action not in ("approve", "reject"):
             continue
 
+        # v1.5.0 #119: FOR UPDATE serialises concurrent approvals of the
+        # same adjustment so the status-check-then-update pattern is
+        # race-safe and the adjustment.applied / cycle_count.adjusted
+        # event emits in commit order on the integration_events outbox.
         row = g.db.execute(
-            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status, adjusted_by, cycle_count_id FROM inventory_adjustments WHERE adjustment_id = :aid"),
+            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status, adjusted_by, cycle_count_id FROM inventory_adjustments WHERE adjustment_id = :aid FOR UPDATE"),
             {"aid": adj_id},
         ).fetchone()
 
@@ -752,8 +756,13 @@ def direct_adjustment(validated):
         add_inventory(g.db, item_id, bin_id, warehouse_id, quantity)
     else:
         # REMOVE  -  validate sufficient stock
+        # v1.5.0 #119: FOR UPDATE on the inventory row is the
+        # serialisation point for concurrent direct-adjustment REMOVEs
+        # against the same item+bin. The ADD branch goes through
+        # add_inventory() which already locks the target row (V-030);
+        # this branch does its own SELECT so it needs its own lock.
         inv = g.db.execute(
-            text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid"),
+            text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid FOR UPDATE"),
             {"iid": item_id, "bid": bin_id},
         ).fetchone()
         available = inv.quantity_on_hand if inv else 0

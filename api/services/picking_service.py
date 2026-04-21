@@ -601,6 +601,10 @@ def complete_batch(db, batch_id, username):
     )
 
     # 3. Update each SO to PICKING
+    # v1.5.0 #119: FOR UPDATE OF so locks each sales_orders row for the
+    # rest of this transaction so two concurrent complete_batch calls
+    # that share an SO serialise on the SO aggregate. The lock scope
+    # is sales_orders only; pick_batch_orders rows are not locked.
     so_rows = db.execute(
         text(
             """
@@ -608,6 +612,7 @@ def complete_batch(db, batch_id, username):
             FROM pick_batch_orders pbo
             JOIN sales_orders so ON so.so_id = pbo.so_id
             WHERE pbo.batch_id = :bid
+            FOR UPDATE OF so
             """
         ),
         {"bid": batch_id},

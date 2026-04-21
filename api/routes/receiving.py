@@ -109,12 +109,18 @@ def receive_items(validated):
     items = validated.items
 
     # Validate PO with warehouse scope at SELECT time (V-026).
+    # v1.5.0 #119: FOR UPDATE holds a row lock on the purchase_orders
+    # aggregate for the rest of this transaction so two concurrent
+    # receives against the same PO produce per-aggregate FIFO on the
+    # integration_events outbox. The PO line lock (V-029) below is
+    # stricter than this one on its own axis; both hold.
     scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     po = g.db.execute(
         text(
             f"""
             SELECT po_id, status, warehouse_id FROM purchase_orders
             WHERE po_id = :po_id {scope_clause}
+            FOR UPDATE
             """
         ),
         {"po_id": po_id, **scope_params},

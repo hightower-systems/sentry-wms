@@ -120,12 +120,17 @@ def fulfill(validated):
     username = g.current_user["username"]
 
     # Validate SO with warehouse scope at SELECT time (V-026).
+    # v1.5.0 #119: FOR UPDATE locks the sales_orders row so a concurrent
+    # complete_packing / fulfill on the same SO serialises and emits
+    # pack.confirmed / ship.confirmed on the integration_events outbox
+    # in commit order.
     scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     so = g.db.execute(
         text(
             f"""
             SELECT so_id, so_number, status, warehouse_id FROM sales_orders
             WHERE so_id = :so_id {scope_clause}
+            FOR UPDATE
             """
         ),
         {"so_id": so_id, **scope_params},
