@@ -204,28 +204,102 @@ and does not ship to production.
 The API serves HTTP only. For HTTPS, put a reverse proxy in front:
 
 ```
-Mobile app --> HTTPS --> nginx/Caddy --> HTTP --> gunicorn:5000
+Browser / mobile app --> HTTPS --> nginx / Caddy / Traefik / ALB --> HTTP --> gunicorn:5000
 ```
 
-A minimal nginx config:
+#### TRUST_PROXY (required behind a reverse proxy)
+
+When Sentry runs behind a reverse proxy, set `TRUST_PROXY=true` in the API's environment:
+
+```
+TRUST_PROXY=true
+```
+
+The Flask app wraps `app.wsgi_app` in Werkzeug's `ProxyFix` when this flag is set, so `request.scheme`, `request.host`, and `request.is_secure` reflect the headers the proxy forwards (`X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-For`) instead of the internal `http://127.0.0.1:5000` hop. Without this, cookies issued at login are scoped to the internal hostname, the browser never resubmits them to the public hostname, and every CSRF-protected `POST` / `PUT` / `PATCH` / `DELETE` returns `403 CSRF token missing or invalid` (#107).
+
+> **Security warning.** Only enable `TRUST_PROXY` when Sentry actually runs behind a reverse proxy on a network the proxy controls. If the app is reachable directly (no proxy in front, or a proxy that forwards from the public internet without stripping inbound `X-Forwarded-*` headers), any client can forge its own scheme, hostname, and client IP by sending those headers. `TRUST_PROXY` is opt-in for exactly this reason. The default-off deployment is safe against header forgery.
+
+#### nginx
+
+Minimum config. Each header has a specific job; the comments explain why each one is required:
 
 ```nginx
 server {
     listen 443 ssl;
-    server_name api.yourcompany.com;
+    server_name sentry.yourcompany.com;
 
-    ssl_certificate /etc/ssl/certs/your-cert.pem;
+    ssl_certificate     /etc/ssl/certs/your-cert.pem;
     ssl_certificate_key /etc/ssl/private/your-key.pem;
 
     location / {
-        proxy_pass http://localhost:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:5000;
+
+        # Public hostname the browser used. ProxyFix rewrites
+        # request.host from this so cookies scope to the public
+        # hostname instead of 127.0.0.1.
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-Host  $host;
+
+        # Scheme the browser used. ProxyFix rewrites request.scheme
+        # and request.is_secure from this so the Secure cookie flag
+        # and HSTS header emit correctly.
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Real client IP for audit logs and rate limiting.
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     }
 }
 ```
+
+#### Caddy
+
+Caddy's `reverse_proxy` directive sets all the required `X-Forwarded-*` headers automatically:
+
+```caddy
+sentry.yourcompany.com {
+    reverse_proxy 127.0.0.1:5000
+}
+```
+
+#### Traefik (v2+)
+
+Traefik sets the forwarded headers by default for any service reached through a router. A minimum dynamic-config snippet:
+
+```yaml
+http:
+  routers:
+    sentry:
+      rule: "Host(`sentry.yourcompany.com`)"
+      entryPoints: [websecure]
+      tls: {}
+      service: sentry-api
+  services:
+    sentry-api:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:5000"
+```
+
+#### AWS ALB and other TLS-terminating load balancers
+
+ALB, GCP HTTPS Load Balancer, Azure Application Gateway, Cloudflare Tunnels, Fly.io, Render, and most other managed edges all send `X-Forwarded-Proto` and `X-Forwarded-For`. `TRUST_PROXY=true` works the same way for all of them.
+
+#### Multi-hop deployments (CDN in front of a proxy)
+
+The default ProxyFix config trusts **one** proxy hop. When Sentry sits behind multiple TLS-terminating proxies (e.g. Cloudflare CDN -> nginx -> Sentry, or ALB -> nginx -> Sentry), increase the hop count in `api/app.py`:
+
+```python
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=2,    # one entry each from CDN and nginx
+    x_proto=2,
+    x_host=2,
+    x_prefix=0,
+)
+```
+
+The hop count must match the number of trusted proxies in the chain exactly. Over-counting accepts forged headers from the innermost proxy's client (a request originator can prepend fake `X-Forwarded-*` entries that a too-permissive ProxyFix will trust); under-counting scopes cookies to the wrong hop. Upstream Werkzeug documents this at <https://werkzeug.palletsprojects.com/en/latest/middleware/proxy_fix/>.
 
 ---
 
