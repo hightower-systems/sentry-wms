@@ -6,6 +6,55 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.4.3 -- Mobile Patch
+
+*2026-04-20.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.3).
+
+Mobile patch release. Two fixes from the v1.4.3 mobile bug bash, plus a
+follow-up for a regression surfaced during Chainway C6000 verification.
+Zero backend or admin code changes. Closes the keyboard-fallback half
+of Fruxh's #70 report; the camera-scanner half remains tracked under
+#70 for v2.x.
+
+Fixes:
+
+- **Put-away "done" screen no longer overlays the success checkmark on
+  the title (#103).** The done phase was rendered inside a flex
+  container with `justifyContent: 'center'` that also holds a growing
+  session-history list. Once history overflowed the viewport, the
+  centered content pushed the large check glyph visually into the
+  title below it. Swapped to a ScrollView with natural top-down flow,
+  matching the CountScreen done-phase pattern.
+- **Scan input fields now allow keyboard fallback for manual entry and
+  copy/paste (#104, refs #70).** `ScanInput` had
+  `showSoftInputOnFocus={false}` and `contextMenuHidden`, so tapping a
+  scan field on the Chainway C6000 did nothing and long-press did not
+  expose copy/paste. Removed both. Broadcast-intent scans still route
+  through `ScanSettingsContext` and bypass the TextInput; keyboard-mode
+  scans still land in `onChangeText` the same way manual typing does.
+- **Scan input soft keyboard now only opens on user tap, not on
+  auto-refocus (#105).** The #104 removal made the 1-second refocus
+  loop that keeps the field ready for hardware scans re-pop the
+  keyboard on every tick. `ScanInput` now tracks a `softInput` state
+  that is false by default and flipped to true only on `onPressIn`,
+  with a forced blur/refocus cycle so the updated
+  `showSoftInputOnFocus` prop applies. Reset on blur and after submit
+  so the auto-refocus loop, mount autofocus, and post-submit refocus
+  stay silent.
+
+Tests: 734 backend, 58 admin, 32 mobile (up from 24; new file
+`mobile/src/components/__tests__/ScanInput.test.js` locks the
+tap-to-open contract at the source level since the mobile vitest
+harness has no RN runtime). All CI workflows green.
+
+Operator notes: a new `sentry-wms-v1.4.3.apk` is attached to the
+GitHub release and installs over v1.4.1 / v1.4.2 on Chainway C6000
+devices without a data wipe. API and admin images have no source
+changes; rebuilding them is safe but not required for mobile-only
+operators.
+
+---
+
 ## v1.4.2 -- Admin Panel Patch
 
 *2026-04-20.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.2).
