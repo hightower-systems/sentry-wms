@@ -219,6 +219,39 @@ The Flask app wraps `app.wsgi_app` in Werkzeug's `ProxyFix` when this flag is se
 
 > **Security warning.** Only enable `TRUST_PROXY` when Sentry actually runs behind a reverse proxy on a network the proxy controls. If the app is reachable directly (no proxy in front, or a proxy that forwards from the public internet without stripping inbound `X-Forwarded-*` headers), any client can forge its own scheme, hostname, and client IP by sending those headers. `TRUST_PROXY` is opt-in for exactly this reason. The default-off deployment is safe against header forgery.
 
+##### Where to set it, and how to apply the change
+
+`TRUST_PROXY` goes in the `.env` file at the **repo root** (next to `docker-compose.yml`), NOT `api/.env`. `docker-compose.yml` reads `.env` from the Compose project directory; `api/.env` is only picked up by a direct `flask run` from inside the `api/` folder and is not consulted by the containerised deployment.
+
+After editing `.env`, the `api` container must be **recreated**, not just restarted, for the new value to take effect. Compose picks up `.env` changes when it creates a container, not when it starts one. A common footgun:
+
+- `docker compose up -d` -- recreates the container when the config has changed, which is what picks up the new `.env` value.
+- `docker compose restart api` -- keeps the existing container and just bounces the process inside it, which does NOT re-read `.env`.
+
+##### Verification
+
+Two checks confirm `TRUST_PROXY` actually reached the Flask app after `docker compose up -d`:
+
+```bash
+# 1. Compose forwarded the env var into the container.
+docker compose exec api env | grep TRUST_PROXY
+# Expected: TRUST_PROXY=true
+
+# 2. Flask read it at startup and wired ProxyFix.
+docker compose logs api | grep ProxyFix
+# Expected: "ProxyFix active: trusting X-Forwarded-* headers (TRUST_PROXY=true)"
+# One line per gunicorn worker (4 lines on the default worker count).
+```
+
+Or, from outside the container (e.g. from the reverse proxy itself), hit the health endpoint:
+
+```bash
+curl -s https://sentry.yourcompany.com/api/health
+# {"status":"ok","service":"sentry-wms","proxy_fix_active":true}
+```
+
+A green health response with `"proxy_fix_active": false` behind a reverse proxy means `TRUST_PROXY` did not reach the container. Check `docker-compose.yml` (v1.4.4 shipped without the Compose-side wiring; v1.4.5 added it; #136) and confirm you ran `up -d`, not `restart`, after changing `.env`.
+
 #### nginx
 
 Minimum config. Each header has a specific job; the comments explain why each one is required:
@@ -312,7 +345,7 @@ Download the APK from the [GitHub Releases](https://github.com/hightower-systems
 Install via ADB:
 
 ```bash
-adb install sentry-wms-v1.4.4.apk
+adb install sentry-wms-v1.4.5.apk
 ```
 
 Or transfer the APK to the device and open it from the file manager.

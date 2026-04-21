@@ -29,6 +29,13 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env -- see .env.example}
       FLASK_ENV: ${FLASK_ENV:-production}
       FLASK_PORT: 5000
+      # #136 / #107 follow-up: explicitly forward TRUST_PROXY into the
+      # api container. Without this, setting TRUST_PROXY=true in .env is
+      # cosmetic -- Compose does not auto-forward arbitrary host env vars.
+      # Default false for direct-connect deployments; operator opts in by
+      # setting TRUST_PROXY=true in .env when Sentry runs behind a TLS-
+      # terminating reverse proxy. See docs/deployment.md.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8080,http://localhost:8081"
       SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
       # The API enqueues Celery tasks (manual sync trigger, fulfillment
