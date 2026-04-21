@@ -66,7 +66,8 @@ def create_app():
     # IP (a well-known ProxyFix footgun). Opt-in only; operator confirms
     # via docs/deployment.md that the app sits on a network the proxy
     # controls before setting TRUST_PROXY=true.
-    if os.getenv("TRUST_PROXY", "").lower() in ("true", "1", "yes"):
+    proxy_fix_active = os.getenv("TRUST_PROXY", "").lower() in ("true", "1", "yes")
+    if proxy_fix_active:
         # One proxy hop is the standard nginx / Caddy / Traefik / ALB
         # shape. Deployments that terminate TLS at multiple proxies in
         # front of Sentry (e.g. CDN -> nginx -> Sentry) increase the
@@ -78,6 +79,23 @@ def create_app():
             x_host=1,
             x_prefix=0,
         )
+    # #136: emit the ProxyFix state at startup so operators can verify
+    # activation via `docker compose logs api | grep ProxyFix` without
+    # having to inspect app internals. The line fires for both states --
+    # "active" confirms the wiring reached the container, "inactive"
+    # confirms the default-off posture. Logged via the module logger at
+    # WARNING level to match the check_build_version() pattern: this is
+    # load-bearing security state and needs to clear the default gunicorn
+    # stderr threshold, not be filtered at INFO.
+    if proxy_fix_active:
+        logger.warning(
+            "ProxyFix active: trusting X-Forwarded-* headers (TRUST_PROXY=true)"
+        )
+    else:
+        logger.warning(
+            "ProxyFix inactive: not trusting proxy headers (TRUST_PROXY not set)"
+        )
+    app.config["PROXY_FIX_ACTIVE"] = proxy_fix_active
 
     # Config
     app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB request body limit
@@ -180,7 +198,14 @@ def create_app():
 
     @app.route("/api/health")
     def health():
-        return {"status": "ok", "service": "sentry-wms"}
+        # #136: expose ProxyFix state so operators can verify the
+        # TRUST_PROXY wiring reached the container, without reading logs
+        # or execing into the container. Curl-friendly from the proxy.
+        return {
+            "status": "ok",
+            "service": "sentry-wms",
+            "proxy_fix_active": app.config.get("PROXY_FIX_ACTIVE", False),
+        }
 
     return app
 

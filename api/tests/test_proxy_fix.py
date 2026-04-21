@@ -158,3 +158,22 @@ class TestCsrfCookieBehindProxy:
             f"is wrong. response: {resp.get_json()}"
         )
         assert resp.status_code == 200
+
+
+class TestHealthEndpointReportsProxyFixState:
+    # #136: operators must be able to verify from the outside that
+    # TRUST_PROXY actually reached the Flask app. /api/health returns
+    # proxy_fix_active=true when the middleware is wired, false when
+    # it is not. A green health response with proxy_fix_active=false
+    # behind an nginx deployment is the exact signature of the v1.4.4
+    # Compose-wiring gap Fruxh hit: TRUST_PROXY set in .env, ProxyFix
+    # still off because the var never reached the container.
+    def test_health_reports_inactive_without_trust_proxy(self, unproxied_client):
+        resp = unproxied_client.get("/api/health")
+        assert resp.status_code == 200
+        assert resp.get_json()["proxy_fix_active"] is False
+
+    def test_health_reports_active_with_trust_proxy(self, proxied_client):
+        resp = proxied_client.get("/api/health")
+        assert resp.status_code == 200
+        assert resp.get_json()["proxy_fix_active"] is True
