@@ -20,7 +20,11 @@
     "bin_external_id": { "type": "string", "format": "uuid" },
     "quantity_delta": { "type": "integer" },
     "reason_code": { "type": "string" },
-    "applied_by_user_external_id": { "type": "string", "format": "uuid" },
+    "applied_by_user_external_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The actor who effectuated the inventory change. At review_adjustments this is the APPROVER (g.current_user), not the submitter; at direct_adjustment these are the same admin. Connectors that want the proposer instead should wait for a v2 field such as requested_by_user_external_id."
+    },
     "applied_at": { "type": "string", "format": "date-time" }
   }
 }

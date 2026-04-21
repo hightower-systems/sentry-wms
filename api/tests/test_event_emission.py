@@ -170,3 +170,158 @@ class TestReceiptCompletedEmission:
         rows = _query_event_rows(request_id)
         assert len(rows) == 1
         assert rows[0]["source_txn_id"] == request_id
+
+
+def _insert_pending_adjustment(item_id, bin_id, warehouse_id, quantity_change,
+                               reason_code="CORRECTION", submitted_by="admin",
+                               cycle_count_id=None):
+    """Insert a PENDING inventory_adjustments row directly for test setup."""
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO inventory_adjustments
+            (item_id, bin_id, warehouse_id, quantity_change, reason_code,
+             status, adjusted_by, cycle_count_id, external_id)
+        VALUES (%s, %s, %s, %s, %s, 'PENDING', %s, %s, gen_random_uuid())
+        RETURNING adjustment_id
+        """,
+        (item_id, bin_id, warehouse_id, quantity_change, reason_code,
+         submitted_by, cycle_count_id),
+    )
+    adj_id = cur.fetchone()[0]
+    cur.close()
+    return adj_id
+
+
+class TestAdjustmentAppliedEmission:
+    def test_approval_emits_adjustment_applied_with_approver_as_applier(
+        self, client, auth_headers, seed_data
+    ):
+        """Non-cycle-count adjustment: approval emits adjustment.applied
+        naming the APPROVER (g.current_user) in applied_by_user_external_id,
+        not the submitter."""
+        adj_id = _insert_pending_adjustment(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity_change=-3,
+            reason_code="DAMAGE",
+            submitted_by="some_other_user",  # NOT the approver
+        )
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()["approved"] == 1
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "adjustment.applied"
+        assert row["aggregate_type"] == "inventory_adjustment"
+        payload = row["payload"]
+        assert payload["quantity_delta"] == -3
+        assert payload["reason_code"] == "DAMAGE"
+
+        # The applier is the approver (admin), not "some_other_user" (submitter).
+        admin_ext = _query_external_id("users", "username", "admin")
+        assert payload["applied_by_user_external_id"] == admin_ext
+
+    def test_reject_emits_zero_events(self, client, auth_headers, seed_data):
+        """Rejected adjustments must not appear on the outbox."""
+        adj_id = _insert_pending_adjustment(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity_change=10,
+        )
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "reject"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["rejected"] == 1
+        assert _query_event_rows(request_id) == []
+
+
+class TestCycleCountAdjustedEmission:
+    def _create_variance(self, client, auth_headers):
+        """Replicated pattern from test_inventory.TestAdjustmentSelfApproval:
+        create a cycle count, submit a count with variance, return the
+        pending adjustment_id."""
+        create_resp = client.post(
+            "/api/inventory/cycle-count/create",
+            json={"warehouse_id": 1, "bin_ids": [3]},
+            headers=auth_headers,
+        )
+        count_id = create_resp.get_json()["counts"][0]["count_id"]
+
+        detail_resp = client.get(
+            f"/api/inventory/cycle-count/{count_id}", headers=auth_headers
+        )
+        lines = detail_resp.get_json()["lines"]
+
+        submit_lines = [
+            {"count_line_id": lines[0]["count_line_id"],
+             "counted_quantity": lines[0]["expected_quantity"] + 5}
+        ]
+        submit_resp = client.post(
+            "/api/inventory/cycle-count/submit",
+            json={"count_id": count_id, "lines": submit_lines},
+            headers=auth_headers,
+        )
+        adj = submit_resp.get_json()["summary"]["adjustments"][0]
+        return adj["adjustment_id"]
+
+    def test_approval_emits_cycle_count_adjusted(self, client, auth_headers):
+        adj_id = self._create_variance(client, auth_headers)
+        # First turn off separation so self-approval goes through in the
+        # test fixture without juggling users.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('require_count_approval_separation', 'false') "
+            "ON CONFLICT (key) DO UPDATE SET value = 'false'"
+        )
+        cur.close()
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "cycle_count.adjusted"
+        assert row["aggregate_type"] == "inventory_adjustment"
+        payload = row["payload"]
+        # Payload must carry both the cycle_count external_id (from the
+        # cycle_counts join) and the adjusted quantity_delta.
+        assert uuid.UUID(payload["cycle_count_external_id"])
+        assert uuid.UUID(payload["item_external_id"])
+        assert uuid.UUID(payload["bin_external_id"])
+        assert payload["counted_quantity"] == payload["system_quantity"] + 5
+        assert payload["quantity_delta"] == 5
+        assert uuid.UUID(payload["counted_by_user_external_id"])
+        assert payload["counted_at"]
+
+
+def _query_external_id(table, key_column, key_value):
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT external_id::text FROM {table} WHERE {key_column} = %s",
+        (key_value,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return row[0] if row else None

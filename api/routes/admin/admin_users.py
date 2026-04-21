@@ -2,6 +2,7 @@
 
 import math
 import uuid
+from datetime import datetime, timezone
 
 import bcrypt
 from flask import g, jsonify, request
@@ -19,6 +20,7 @@ from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustm
 from schemas.settings import UpdateSettingsRequest
 from schemas.users import CreateUserRequest, UpdateUserRequest
 from services.audit_service import write_audit_log
+from services.events_service import emit_event, get_user_external_id
 from services.auth_service import validate_password
 from services.inventory_service import add_inventory
 from utils.validation import validate_body
@@ -658,7 +660,11 @@ def review_adjustments(validated):
         # race-safe and the adjustment.applied / cycle_count.adjusted
         # event emits in commit order on the integration_events outbox.
         row = g.db.execute(
-            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status, adjusted_by, cycle_count_id FROM inventory_adjustments WHERE adjustment_id = :aid FOR UPDATE"),
+            text(
+                "SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change,"
+                " reason_code, status, adjusted_by, cycle_count_id, external_id"
+                " FROM inventory_adjustments WHERE adjustment_id = :aid FOR UPDATE"
+            ),
             {"aid": adj_id},
         ).fetchone()
 
@@ -708,6 +714,87 @@ def review_adjustments(validated):
                     user_id=g.current_user["username"],
                     warehouse_id=row.warehouse_id,
                     details={"cycle_count_id": row.cycle_count_id, "quantity_change": row.quantity_change},
+                )
+
+            # v1.5.0 #113: emit cycle_count.adjusted OR adjustment.applied
+            # per Decision C routing. cycle_count_id non-null => this row
+            # is the resolution of a variance count; otherwise it is a
+            # normal inventory correction. Fires only on APPROVE (once
+            # per approved variance); rejects emit nothing.
+            item_ext = g.db.execute(
+                text("SELECT external_id FROM items WHERE item_id = :iid"),
+                {"iid": row.item_id},
+            ).fetchone()
+            bin_ext = g.db.execute(
+                text("SELECT external_id FROM bins WHERE bin_id = :bid"),
+                {"bid": row.bin_id},
+            ).fetchone()
+            applied_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+            if row.cycle_count_id:
+                # Join cycle_counts (for its external_id) and
+                # cycle_count_lines (for counted qty + counter name) so
+                # the event payload carries the variance context.
+                cc = g.db.execute(
+                    text(
+                        """
+                        SELECT cc.external_id AS cycle_count_external_id,
+                               ccl.counted_quantity,
+                               ccl.expected_quantity,
+                               ccl.counted_by,
+                               ccl.counted_at
+                          FROM cycle_counts cc
+                          JOIN cycle_count_lines ccl
+                            ON ccl.count_id = cc.count_id
+                         WHERE cc.count_id = :cid
+                           AND ccl.item_id = :iid
+                         LIMIT 1
+                        """
+                    ),
+                    {"cid": row.cycle_count_id, "iid": row.item_id},
+                ).fetchone()
+                emit_event(
+                    g.db,
+                    event_type="cycle_count.adjusted",
+                    event_version=1,
+                    aggregate_type="inventory_adjustment",
+                    aggregate_id=adj_id,
+                    aggregate_external_id=row.external_id,
+                    warehouse_id=row.warehouse_id,
+                    source_txn_id=g.source_txn_id,
+                    payload={
+                        "cycle_count_external_id": str(cc.cycle_count_external_id),
+                        "item_external_id": str(item_ext.external_id),
+                        "bin_external_id": str(bin_ext.external_id),
+                        "counted_quantity": cc.counted_quantity,
+                        "system_quantity": cc.expected_quantity,
+                        "quantity_delta": row.quantity_change,
+                        "counted_by_user_external_id": get_user_external_id(g.db, cc.counted_by),
+                        "counted_at": cc.counted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    },
+                )
+            else:
+                emit_event(
+                    g.db,
+                    event_type="adjustment.applied",
+                    event_version=1,
+                    aggregate_type="inventory_adjustment",
+                    aggregate_id=adj_id,
+                    aggregate_external_id=row.external_id,
+                    warehouse_id=row.warehouse_id,
+                    source_txn_id=g.source_txn_id,
+                    payload={
+                        "adjustment_external_id": str(row.external_id),
+                        "item_external_id": str(item_ext.external_id),
+                        "bin_external_id": str(bin_ext.external_id),
+                        "quantity_delta": row.quantity_change,
+                        "reason_code": row.reason_code,
+                        # The APPROVER is the actor who effectuated the
+                        # change; row.adjusted_by is the submitter
+                        # (different person in the two-step flow).
+                        "applied_by_user_external_id": get_user_external_id(g.db, g.current_user["username"]),
+                        "applied_at": applied_at,
+                    },
                 )
 
             approved += 1
