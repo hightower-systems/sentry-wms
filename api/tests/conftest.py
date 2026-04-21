@@ -24,6 +24,7 @@ if not os.path.exists(SEED_PATH):
     SEED_PATH = "/db/seed-apartment-lab.sql"
 
 ALL_TABLES = [
+    "integration_events",
     "sync_state",
     "connector_credentials",
     "login_attempts",

@@ -5,6 +5,11 @@
 -- Production:  PostgreSQL Cloud or Fabric SQL Database
 -- ============================================================
 
+-- gen_random_uuid() backs the external_id DEFAULT on every aggregate /
+-- actor table below. The extension is idempotent and also required by
+-- the audit_log hash-chain trigger further down.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ============================================================
 -- LOCATIONS & WAREHOUSES
 -- ============================================================
@@ -45,6 +50,7 @@ CREATE TABLE bins (
     max_volume_cuft DECIMAL(10,2),
     description VARCHAR(200),
     is_active BOOLEAN DEFAULT TRUE,
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
     UNIQUE(warehouse_id, bin_code)
 );
 
@@ -74,7 +80,8 @@ CREATE TABLE items (
     is_serial_tracked BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 CREATE INDEX ix_items_upc ON items(upc);
@@ -119,7 +126,8 @@ CREATE TABLE purchase_orders (
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     received_at TIMESTAMPTZ,
-    created_by VARCHAR(100)
+    created_by VARCHAR(100),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 CREATE TABLE purchase_order_lines (
@@ -150,7 +158,8 @@ CREATE TABLE item_receipts (
     serial_number VARCHAR(100),
     received_by VARCHAR(100) NOT NULL,
     received_at TIMESTAMPTZ DEFAULT NOW(),
-    notes VARCHAR(500)
+    notes VARCHAR(500),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 -- ============================================================
@@ -178,7 +187,8 @@ CREATE TABLE sales_orders (
     shipped_at TIMESTAMPTZ,
     carrier VARCHAR(100),
     tracking_number VARCHAR(255),
-    created_by VARCHAR(100)
+    created_by VARCHAR(100),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 CREATE TABLE sales_order_lines (
@@ -277,7 +287,8 @@ CREATE TABLE bin_transfers (
     lot_number VARCHAR(50),
     reason VARCHAR(200),
     transferred_by VARCHAR(100) NOT NULL,
-    transferred_at TIMESTAMPTZ DEFAULT NOW()
+    transferred_at TIMESTAMPTZ DEFAULT NOW(),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 -- ============================================================
@@ -291,7 +302,8 @@ CREATE TABLE cycle_counts (
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',  -- 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'VARIANCE'
     assigned_to VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 CREATE TABLE cycle_count_lines (
@@ -320,7 +332,8 @@ CREATE TABLE item_fulfillments (
     ship_method VARCHAR(50),
     status VARCHAR(20) DEFAULT 'SHIPPED',
     shipped_by VARCHAR(100),
-    shipped_at TIMESTAMPTZ DEFAULT NOW()
+    shipped_at TIMESTAMPTZ DEFAULT NOW(),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 CREATE TABLE item_fulfillment_lines (
@@ -349,7 +362,8 @@ CREATE TABLE inventory_adjustments (
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',  -- 'PENDING', 'APPROVED', 'REJECTED'
     adjusted_by VARCHAR(100) NOT NULL,
     adjusted_at TIMESTAMPTZ DEFAULT NOW(),
-    cycle_count_id INT REFERENCES cycle_counts(count_id)
+    cycle_count_id INT REFERENCES cycle_counts(count_id),
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 -- ============================================================
@@ -465,7 +479,8 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_login TIMESTAMPTZ,
     password_changed_at TIMESTAMPTZ,
-    must_change_password BOOLEAN NOT NULL DEFAULT FALSE
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+    external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()
 );
 
 -- ============================================================
@@ -586,3 +601,59 @@ CREATE TABLE sync_state (
 );
 
 CREATE INDEX ix_sync_state_connector ON sync_state(connector_name, warehouse_id);
+
+-- ============================================================
+-- INTEGRATION EVENTS (v1.5.0 transactional outbox)
+-- ============================================================
+-- Every inventory-changing handler writes one row here inside its own
+-- transaction. External connectors poll /api/v1/events with a cursor
+-- over event_id. The visible_at deferred-constraint trigger sets
+-- visible_at at COMMIT time so readers see events in commit order even
+-- though BIGSERIAL may have assigned event_ids out of commit order.
+-- Readers filter "visible_at <= NOW() - INTERVAL '2 seconds'
+-- AND event_id > cursor"; the 2-second buffer tolerates the gap
+-- between a trigger firing and the COMMIT becoming visible to a
+-- separate session.
+--
+-- The identical DDL lives in db/migrations/020_integration_events.sql
+-- for deployments that were created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE integration_events (
+    event_id              BIGSERIAL    PRIMARY KEY,
+    event_type            VARCHAR(64)  NOT NULL,
+    event_version         SMALLINT     NOT NULL DEFAULT 1,
+    event_timestamp       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    aggregate_type        VARCHAR(32)  NOT NULL,
+    aggregate_id          BIGINT       NOT NULL,
+    aggregate_external_id UUID         NOT NULL,
+    warehouse_id          INT          NOT NULL REFERENCES warehouses(warehouse_id),
+    source_txn_id         UUID         NOT NULL,
+    visible_at            TIMESTAMPTZ,
+    payload               JSONB        NOT NULL,
+    CONSTRAINT integration_events_idempotency_key
+        UNIQUE (aggregate_type, aggregate_id, event_type, source_txn_id)
+);
+
+CREATE INDEX ix_integration_events_warehouse_event
+    ON integration_events (warehouse_id, event_id);
+CREATE INDEX ix_integration_events_type_event
+    ON integration_events (event_type, event_id);
+CREATE INDEX ix_integration_events_visible_at
+    ON integration_events (visible_at)
+    WHERE visible_at IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION set_integration_event_visible_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE integration_events
+       SET visible_at = clock_timestamp()
+     WHERE event_id = NEW.event_id;
+    RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER tr_integration_events_visible_at
+    AFTER INSERT ON integration_events
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION set_integration_event_visible_at();
