@@ -2,6 +2,8 @@
 Packing endpoints: order lookup for packing, scan-to-verify, and pack completion.
 """
 
+from datetime import datetime, timezone
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
@@ -9,6 +11,7 @@ from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.pack_verification import CompletePackingRequest, VerifyPackItemRequest
 from services.audit_service import write_audit_log
+from services.events_service import emit_event, get_user_external_id
 from constants import SO_PICKED, SO_PACKED, ACTION_PACK
 from utils.validation import validate_body
 
@@ -222,7 +225,7 @@ def complete_packing(validated):
     so = g.db.execute(
         text(
             f"""
-            SELECT so_id, so_number, status, warehouse_id FROM sales_orders
+            SELECT so_id, so_number, status, warehouse_id, external_id FROM sales_orders
             WHERE so_id = :so_id {scope_clause}
             FOR UPDATE
             """
@@ -278,6 +281,54 @@ def complete_packing(validated):
         user_id=g.current_user["username"],
         warehouse_id=so.warehouse_id,
         details={"so_number": so.so_number, "total_items": int(stats.total_items)},
+    )
+
+    # v1.5.0 #117: emit pack.confirmed on the integration_events outbox.
+    # Sentry ships single-package today so packages[] is a single
+    # synthesised entry keyed "<so_ext>-pkg-1"; dimensions_in is null
+    # (not tracked). Multi-package support is v1.5.x+ once the packing
+    # UI supports discrete packages.
+    pack_lines = g.db.execute(
+        text(
+            """
+            SELECT i.external_id AS item_external_id, sol.quantity_packed
+              FROM sales_order_lines sol
+              JOIN items i ON i.item_id = sol.item_id
+             WHERE sol.so_id = :sid
+             ORDER BY sol.line_number
+            """
+        ),
+        {"sid": so_id},
+    ).fetchall()
+    so_external_id_str = str(so.external_id)
+    emit_event(
+        g.db,
+        event_type="pack.confirmed",
+        event_version=1,
+        aggregate_type="sales_order",
+        aggregate_id=so_id,
+        aggregate_external_id=so.external_id,
+        warehouse_id=so.warehouse_id,
+        source_txn_id=g.source_txn_id,
+        payload={
+            "sales_order_external_id": so_external_id_str,
+            "packages": [
+                {
+                    "package_external_id": f"{so_external_id_str}-pkg-1",
+                    "weight_lb": float(stats.total_weight) if stats.total_weight is not None else None,
+                    "dimensions_in": None,
+                    "lines": [
+                        {
+                            "item_external_id": str(line.item_external_id),
+                            "quantity_packed": line.quantity_packed,
+                        }
+                        for line in pack_lines
+                    ],
+                },
+            ],
+            "completed_by_user_external_id": get_user_external_id(g.db, g.current_user["username"]),
+            "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        },
     )
 
     g.db.commit()

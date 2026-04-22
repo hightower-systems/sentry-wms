@@ -486,6 +486,95 @@ class TestPickConfirmedEmission:
             assert line["serial_number"] is None
 
 
+def _advance_so_through_picking(client, auth_headers, so_number="SO-2026-001"):
+    """Run picking end-to-end so the SO lands in PICKED ready for packing."""
+    create_resp = client.post(
+        "/api/picking/create-batch",
+        json={"so_identifiers": [so_number], "warehouse_id": 1},
+        headers=auth_headers,
+    )
+    batch_id = create_resp.get_json()["batch_id"]
+    while True:
+        nxt = client.get(
+            f"/api/picking/batch/{batch_id}/next", headers=auth_headers
+        )
+        data = nxt.get_json()
+        if "message" in data:
+            break
+        client.post(
+            "/api/picking/confirm",
+            json={
+                "pick_task_id": data["pick_task_id"],
+                "scanned_barcode": data["upc"],
+                "quantity_picked": data["quantity_to_pick"],
+            },
+            headers=auth_headers,
+        )
+    client.post(
+        "/api/picking/complete-batch",
+        json={"batch_id": batch_id},
+        headers=auth_headers,
+    )
+
+
+def _verify_pack_all(client, auth_headers, so_id, so_number="SO-2026-001"):
+    """Run verify on every packed quantity so complete_packing can close the SO."""
+    order_resp = client.get(f"/api/packing/order/{so_number}", headers=auth_headers)
+    for line in order_resp.get_json()["lines"]:
+        remaining = line["quantity_picked"] - line["quantity_packed"]
+        if remaining > 0:
+            client.post(
+                "/api/packing/verify",
+                json={
+                    "so_id": so_id,
+                    "scanned_barcode": line["upc"],
+                    "quantity": remaining,
+                },
+                headers=auth_headers,
+            )
+
+
+class TestPackConfirmedEmission:
+    def test_complete_packing_emits_single_package_envelope(
+        self, client, auth_headers, seed_data
+    ):
+        _advance_so_through_picking(client, auth_headers, "SO-2026-001")
+        _verify_pack_all(client, auth_headers, so_id=1, so_number="SO-2026-001")
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/packing/complete",
+            json={"so_id": 1},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "pack.confirmed"
+        assert row["aggregate_type"] == "sales_order"
+        assert row["aggregate_id"] == 1
+        payload = row["payload"]
+        assert uuid.UUID(payload["sales_order_external_id"])
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+
+        # Sentry ships single-package today; packages[] is array of one.
+        assert isinstance(payload["packages"], list)
+        assert len(payload["packages"]) == 1
+        pkg = payload["packages"][0]
+        # Synthetic package_external_id keyed to the SO external id.
+        assert pkg["package_external_id"] == f"{payload['sales_order_external_id']}-pkg-1"
+        # dimensions_in is null: Sentry does not track package dimensions.
+        assert pkg["dimensions_in"] is None
+        assert isinstance(pkg["weight_lb"], (int, float))
+
+        assert isinstance(pkg["lines"], list) and len(pkg["lines"]) >= 1
+        for line in pkg["lines"]:
+            assert uuid.UUID(line["item_external_id"])
+            assert isinstance(line["quantity_packed"], int)
+
+
 class TestTransferCompletedEmission:
     def _seed_source_inventory(self, item_id, bin_id, warehouse_id, quantity):
         conn = get_raw_connection()
