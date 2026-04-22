@@ -826,13 +826,16 @@ def direct_adjustment(validated):
     reason = validated.reason
 
     # Validate item exists
-    item = g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
+    item = g.db.execute(
+        text("SELECT item_id, sku, external_id FROM items WHERE item_id = :iid"),
+        {"iid": item_id},
+    ).fetchone()
     if not item:
         return jsonify({"error": "Item not found"}), 404
 
     # Validate bin exists and belongs to warehouse
     bin_row = g.db.execute(
-        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
+        text("SELECT bin_id, bin_code, external_id FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
         {"bid": bin_id, "wid": warehouse_id},
     ).fetchone()
     if not bin_row:
@@ -871,7 +874,7 @@ def direct_adjustment(validated):
         text("""
             INSERT INTO inventory_adjustments (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, adjusted_at, external_id)
             VALUES (:iid, :bid, :wid, :qty_change, :reason_code, :reason_detail, :status, :user_id, NOW(), :ext_id)
-            RETURNING adjustment_id, adjusted_at
+            RETURNING adjustment_id, adjusted_at, external_id
         """),
         {
             "iid": item_id, "bid": bin_id, "wid": warehouse_id,
@@ -894,6 +897,31 @@ def direct_adjustment(validated):
             "bin_id": bin_id,
             "quantity": quantity,
             "reason": reason,
+        },
+    )
+
+    # v1.5.0 #114: emit adjustment.applied on the integration_events
+    # outbox. direct_adjustment auto-approves inline so the admin doing
+    # the call is both proposer and effectuator; applied_by_user_external_id
+    # names that admin. cycle_count_id is always null on this path, so
+    # the event is never cycle_count.adjusted here.
+    emit_event(
+        g.db,
+        event_type="adjustment.applied",
+        event_version=1,
+        aggregate_type="inventory_adjustment",
+        aggregate_id=adj.adjustment_id,
+        aggregate_external_id=adj.external_id,
+        warehouse_id=warehouse_id,
+        source_txn_id=g.source_txn_id,
+        payload={
+            "adjustment_external_id": str(adj.external_id),
+            "item_external_id": str(item.external_id),
+            "bin_external_id": str(bin_row.external_id),
+            "quantity_delta": quantity_change,
+            "reason_code": "DIRECT_ADJUSTMENT",
+            "applied_by_user_external_id": get_user_external_id(g.db, g.current_user["username"]),
+            "applied_at": adj.adjusted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         },
     )
 

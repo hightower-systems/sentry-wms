@@ -250,6 +250,76 @@ class TestAdjustmentAppliedEmission:
         assert _query_event_rows(request_id) == []
 
 
+class TestDirectAdjustmentEmission:
+    def test_add_direct_adjustment_emits_adjustment_applied(
+        self, client, auth_headers, seed_data
+    ):
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/direct",
+            json={
+                "warehouse_id": 1,
+                "bin_id": 2,
+                "item_id": 5,
+                "adjustment_type": "add",
+                "quantity": 2,
+                "reason": "direct-add emission test",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "adjustment.applied"
+        assert row["aggregate_type"] == "inventory_adjustment"
+        payload = row["payload"]
+        assert payload["quantity_delta"] == 2
+        assert payload["reason_code"] == "DIRECT_ADJUSTMENT"
+        # Admin is both submitter and approver here.
+        admin_ext = _query_external_id("users", "username", "admin")
+        assert payload["applied_by_user_external_id"] == admin_ext
+        assert uuid.UUID(payload["adjustment_external_id"])
+        assert uuid.UUID(payload["item_external_id"])
+        assert uuid.UUID(payload["bin_external_id"])
+
+    def test_remove_direct_adjustment_emits_negative_delta(
+        self, client, auth_headers, seed_data
+    ):
+        # Seed inventory so the REMOVE branch has enough to subtract from.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+            "VALUES (5, 2, 1, 20) ON CONFLICT (item_id, bin_id, lot_number) "
+            "DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand"
+        )
+        cur.close()
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/direct",
+            json={
+                "warehouse_id": 1,
+                "bin_id": 2,
+                "item_id": 5,
+                "adjustment_type": "remove",
+                "quantity": 3,
+                "reason": "direct-remove emission test",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "adjustment.applied"
+        assert row["payload"]["quantity_delta"] == -3
+        assert row["payload"]["reason_code"] == "DIRECT_ADJUSTMENT"
+
+
 class TestCycleCountAdjustedEmission:
     def _create_variance(self, client, auth_headers):
         """Replicated pattern from test_inventory.TestAdjustmentSelfApproval:
