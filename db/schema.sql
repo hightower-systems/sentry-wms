@@ -673,6 +673,46 @@ CREATE TABLE wms_tokens (
 CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
 
 -- ============================================================
+-- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
+-- ============================================================
+-- Per-scan metadata for GET /api/v1/snapshot/inventory. The API tier
+-- INSERTs a 'pending' row; the snapshot-keeper daemon (#132) opens a
+-- REPEATABLE READ transaction, exports a pg_snapshot_id via
+-- pg_export_snapshot(), writes it back, and holds the transaction
+-- idle until the scan completes. Keeper wake-up is NOTIFY-driven
+-- (LISTEN on 'snapshot_scans_pending') with a 1s fallback poll.
+--
+-- The identical DDL lives in db/migrations/024_snapshot_scans.sql
+-- for deployments created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE snapshot_scans (
+    scan_id              UUID          PRIMARY KEY,
+    pg_snapshot_id       TEXT,
+    snapshot_event_id    BIGINT,
+    warehouse_id         INTEGER       NOT NULL,
+    started_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    last_accessed_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    status               VARCHAR(16)   NOT NULL DEFAULT 'pending',
+    created_by_token_id  BIGINT        REFERENCES wms_tokens(token_id)
+);
+
+CREATE INDEX snapshot_scans_status_started ON snapshot_scans (status, started_at);
+
+CREATE OR REPLACE FUNCTION notify_snapshot_scans_pending()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.status = 'pending' THEN
+        PERFORM pg_notify('snapshot_scans_pending', NEW.scan_id::text);
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER tr_snapshot_scans_notify
+    AFTER INSERT ON snapshot_scans
+    FOR EACH ROW EXECUTE FUNCTION notify_snapshot_scans_pending();
+
+-- ============================================================
 -- INTEGRATION EVENTS (v1.5.0 transactional outbox)
 -- ============================================================
 -- Every inventory-changing handler writes one row here inside its own
