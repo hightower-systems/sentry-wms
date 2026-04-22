@@ -545,6 +545,77 @@ class TestAckCursor:
         assert resp.status_code == 401
 
 
+class TestTypesEndpoint:
+    def test_returns_all_seven_v150_event_types(self, client, scoped_token):
+        resp = client.get(
+            "/api/v1/events/types",
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        names = {t["event_type"] for t in body["types"]}
+        assert names == {
+            "receipt.completed",
+            "adjustment.applied",
+            "transfer.completed",
+            "pick.confirmed",
+            "pack.confirmed",
+            "ship.confirmed",
+            "cycle_count.adjusted",
+        }
+
+    def test_each_entry_exposes_versions_and_aggregate_type(
+        self, client, scoped_token
+    ):
+        resp = client.get(
+            "/api/v1/events/types",
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        body = resp.get_json()
+        by_name = {t["event_type"]: t for t in body["types"]}
+        assert by_name["ship.confirmed"]["aggregate_type"] == "sales_order"
+        assert by_name["ship.confirmed"]["versions"] == [1]
+        assert by_name["receipt.completed"]["aggregate_type"] == "item_receipt"
+        assert by_name["adjustment.applied"]["aggregate_type"] == "inventory_adjustment"
+
+    def test_requires_token(self, client):
+        resp = client.get("/api/v1/events/types")
+        assert resp.status_code == 401
+
+
+class TestSchemaEndpoint:
+    def test_returns_raw_schema_body_with_schema_json_content_type(
+        self, client, scoped_token
+    ):
+        resp = client.get(
+            "/api/v1/events/schema/ship.confirmed/1",
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        assert resp.status_code == 200
+        assert resp.mimetype == "application/schema+json"
+        body = json.loads(resp.get_data())
+        assert body["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert body["title"].startswith("ship.confirmed")
+
+    def test_unknown_event_type_returns_404(self, client, scoped_token):
+        resp = client.get(
+            "/api/v1/events/schema/does.not.exist/1",
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        assert resp.status_code == 404
+
+    def test_unknown_version_returns_404(self, client, scoped_token):
+        resp = client.get(
+            "/api/v1/events/schema/ship.confirmed/999",
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        assert resp.status_code == 404
+
+    def test_requires_token(self, client):
+        resp = client.get("/api/v1/events/schema/ship.confirmed/1")
+        assert resp.status_code == 401
+
+
 class TestAggregateExternalIdIsDirect:
     def test_no_join_required_wire_reads_stored_uuid(
         self, client, scoped_token

@@ -25,12 +25,13 @@ import json
 import time
 from typing import Dict, List, Optional
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request
 from sqlalchemy import text
 
 from middleware.auth_middleware import require_wms_token
 from middleware.db import with_db
 from schemas.polling import AckBody, PollQuery
+from services import events_schema_registry
 from services.rate_limit import limiter
 from utils.validation import validate_body
 
@@ -298,3 +299,40 @@ def ack_cursor(validated: AckBody):
             "last_cursor": refreshed.last_cursor,
         }
     )
+
+
+@polling_bp.route("/types", methods=["GET"])
+@require_wms_token
+@limiter.limit("120 per minute")
+def list_event_types():
+    """Serve the v1.5.0 event catalog from the in-process registry.
+
+    No DB, no per-request filesystem read; the registry is loaded once
+    at ``create_app`` time (#110) and catalog queries are O(7).
+    """
+    return jsonify({"types": events_schema_registry.known_types()})
+
+
+@polling_bp.route("/schema/<event_type>/<int:version>", methods=["GET"])
+@require_wms_token
+@limiter.limit("120 per minute")
+def serve_schema(event_type, version):
+    """Stream the raw JSON Schema file as application/schema+json.
+
+    404 when the pair is not in V150_CATALOG; the registry always has
+    a loadable file for every catalog entry so a ``(type, version)``
+    that is not registered is an unknown-pair error, not a file-missing
+    error.
+    """
+    if not any(
+        e == event_type and v == version
+        for e, v, _ in events_schema_registry.V150_CATALOG
+    ):
+        return jsonify({"error": "unknown_event_type_or_version"}), 404
+    path = events_schema_registry.schema_path(event_type, version)
+    # Reading the file each call is cheap (tens of kB) and the
+    # registry-at-boot validation guarantees the file is present and
+    # well-formed; no need to cache-and-reserialise.
+    with open(path, "rb") as f:
+        body = f.read()
+    return Response(body, mimetype="application/schema+json")

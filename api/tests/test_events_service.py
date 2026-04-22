@@ -209,7 +209,7 @@ class TestValidationFlag:
 class TestRegistryBootInvariants:
     def test_every_catalog_entry_has_a_validator(self):
         from services import events_schema_registry
-        for event_type, version in events_schema_registry.V150_CATALOG:
+        for event_type, version, _aggregate_type in events_schema_registry.V150_CATALOG:
             assert events_schema_registry.get_validator(event_type, version) is not None
 
     def test_get_validator_raises_for_unknown_type(self):

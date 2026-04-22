@@ -20,17 +20,20 @@ from typing import Dict, Tuple
 
 from jsonschema import Draft202012Validator
 
-# Seven v1.5.0 event types. Each entry is (event_type, version) and the
-# registry requires a matching docs/events/<event_type>/<version>.json
-# file. Adding a type here without shipping the file fails boot.
-V150_CATALOG: Tuple[Tuple[str, int], ...] = (
-    ("receipt.completed", 1),
-    ("adjustment.applied", 1),
-    ("transfer.completed", 1),
-    ("pick.confirmed", 1),
-    ("pack.confirmed", 1),
-    ("ship.confirmed", 1),
-    ("cycle_count.adjusted", 1),
+# Seven v1.5.0 event types. Each entry is (event_type, version,
+# aggregate_type) and the registry requires a matching
+# docs/events/<event_type>/<version>.json file. Adding a type here
+# without shipping the file fails boot. The aggregate_type value
+# surfaces on the /api/v1/events/types endpoint so consumers can
+# build their aggregate index without parsing every schema body.
+V150_CATALOG: Tuple[Tuple[str, int, str], ...] = (
+    ("receipt.completed",    1, "item_receipt"),
+    ("adjustment.applied",   1, "inventory_adjustment"),
+    ("transfer.completed",   1, "inventory_transfer"),
+    ("pick.confirmed",       1, "sales_order"),
+    ("pack.confirmed",       1, "sales_order"),
+    ("ship.confirmed",       1, "sales_order"),
+    ("cycle_count.adjusted", 1, "inventory_adjustment"),
 )
 
 # Resolved once at module import from <repo>/docs/events. The api/
@@ -45,7 +48,7 @@ _validators: Dict[Tuple[str, int], Draft202012Validator] = {}
 def _load_all() -> None:
     """Load and validate every schema in V150_CATALOG. Raises on any failure."""
     _validators.clear()
-    for event_type, version in V150_CATALOG:
+    for event_type, version, _aggregate_type in V150_CATALOG:
         path = os.path.join(_SCHEMAS_DIR, event_type, f"{version}.json")
         if not os.path.exists(path):
             raise RuntimeError(
@@ -90,17 +93,32 @@ def get_validator(event_type: str, event_version: int) -> Draft202012Validator:
 
 
 def known_types():
-    """Return the list registered by V150_CATALOG, one entry per type with its versions grouped.
+    """Return the catalog for GET /api/v1/events/types.
 
-    Used by the GET /api/v1/events/types endpoint in #124.
+    Groups versions per event_type and carries the aggregate_type so
+    consumers can build an aggregate -> event_type index without
+    parsing every schema file.
     """
-    grouped: Dict[str, list] = {}
-    for event_type, version in V150_CATALOG:
-        grouped.setdefault(event_type, []).append(version)
-    return [
-        {"event_type": event_type, "versions": sorted(versions)}
-        for event_type, versions in grouped.items()
-    ]
+    grouped: Dict[str, dict] = {}
+    for event_type, version, aggregate_type in V150_CATALOG:
+        entry = grouped.setdefault(
+            event_type,
+            {"event_type": event_type, "versions": [], "aggregate_type": aggregate_type},
+        )
+        entry["versions"].append(version)
+    for entry in grouped.values():
+        entry["versions"].sort()
+    return list(grouped.values())
+
+
+def schema_path(event_type: str, version: int) -> str:
+    """Absolute path to the JSON Schema file for (event_type, version).
+
+    Returns the path whether or not the file exists; callers decide
+    between 404 (no such file) and 200 (stream the bytes). Used by
+    the schema-serving endpoint in #124.
+    """
+    return os.path.join(_SCHEMAS_DIR, event_type, f"{version}.json")
 
 
 def schemas_dir() -> str:
