@@ -212,6 +212,7 @@ def create_app():
     from routes.admin import admin_bp
     from routes.warehouses import warehouses_bp
     from routes.polling import polling_bp
+    from routes.snapshot import snapshot_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
@@ -227,6 +228,9 @@ def create_app():
     # v1.5.0 #122: first /api/v1/* surface. Gated by @require_wms_token
     # per route; cookie-auth users do not see this surface.
     app.register_blueprint(polling_bp, url_prefix="/api/v1/events")
+    # v1.5.0 #133: bulk snapshot paging. Shares the same
+    # @require_wms_token surface as polling, distinct 2/min rate limit.
+    app.register_blueprint(snapshot_bp, url_prefix="/api/v1/snapshot")
 
     # Import connector modules so they auto-register with the registry
     import connectors.example  # noqa: F401

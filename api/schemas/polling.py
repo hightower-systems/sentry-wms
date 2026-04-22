@@ -30,6 +30,21 @@ class PollQuery(BaseModel):
         return self
 
 
+class SnapshotQuery(BaseModel):
+    """Query params for GET /api/v1/snapshot/inventory (v1.5.0 #133).
+
+    ``cursor`` is an opaque base64 blob produced by the endpoint on
+    every non-final page. ``warehouse_id`` is required; ``limit``
+    caps at 2000 same as the polling endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    warehouse_id: int = Field(..., gt=0)
+    cursor: Optional[str] = Field(None, max_length=2048)
+    limit: int = Field(500, ge=1, le=2000)
+
+
 class AckBody(BaseModel):
     """POST /api/v1/events/ack body (plan 2.4).
 
