@@ -573,6 +573,11 @@ CREATE TABLE connector_credentials (
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     credential_key VARCHAR(128) NOT NULL,
     encrypted_value TEXT NOT NULL,
+    -- v1.5.0 #127: credential_type discriminates v1.3's connector_api_key
+    -- rows from future v2+ outbound flavours (outbound_oauth,
+    -- outbound_api_key, outbound_bearer). Inbound tokens live in
+    -- wms_tokens, not here.
+    credential_type VARCHAR(32) NOT NULL DEFAULT 'connector_api_key',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(connector_name, warehouse_id, credential_key)
@@ -636,6 +641,36 @@ CREATE TABLE consumer_groups (
 );
 
 CREATE INDEX ix_consumer_groups_connector ON consumer_groups (connector_id);
+
+-- ============================================================
+-- WMS TOKENS (v1.5.0 inbound API tokens for X-WMS-Token auth)
+-- ============================================================
+-- Hash-only storage per Decision P. token_hash is
+-- SHA256(SENTRY_TOKEN_PEPPER || plaintext).hexdigest() per Decision Q.
+-- Scope columns are typed arrays per Decision S. Default expiry is
+-- one year per Decision R.
+--
+-- The identical DDL lives in db/migrations/023_wms_tokens.sql for
+-- deployments created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE wms_tokens (
+    token_id       BIGSERIAL     PRIMARY KEY,
+    token_name     VARCHAR(128)  NOT NULL,
+    token_hash     CHAR(64)      UNIQUE NOT NULL,
+    warehouse_ids  BIGINT[]      NOT NULL DEFAULT '{}',
+    event_types    TEXT[]        NOT NULL DEFAULT '{}',
+    endpoints      TEXT[]        NOT NULL DEFAULT '{}',
+    connector_id   VARCHAR(64)   REFERENCES connectors(connector_id),
+    status         VARCHAR(16)   NOT NULL DEFAULT 'active',
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    rotated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    expires_at     TIMESTAMPTZ   NOT NULL DEFAULT (NOW() + INTERVAL '1 year'),
+    revoked_at     TIMESTAMPTZ,
+    last_used_at   TIMESTAMPTZ
+);
+
+CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
 
 -- ============================================================
 -- INTEGRATION EVENTS (v1.5.0 transactional outbox)
