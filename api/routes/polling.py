@@ -1,0 +1,243 @@
+"""GET /api/v1/events polling endpoint (v1.5.0 #122).
+
+First route under the /api/v1/* surface. Connectors poll this with a
+plain int64 ``after`` cursor (client-cursor mode) or a ``consumer_group``
+identifier (consumer-group mode); the two modes are mutually exclusive
+and sending both returns 400. Scope enforcement is strict subset per
+plan Decision H: a request that asks for anything outside the token's
+warehouse_ids or event_types returns 403, never a silent intersection.
+
+Wire shape (plan 2.2, pinned):
+- ``next_cursor`` is a plain int64. No base64, no opaque format.
+- No ``has_more`` field. Full page (events.length == limit) implies
+  more; partial page implies caught up. Connectors compute this
+  themselves.
+- Visibility gate is hardcoded: visible_at IS NOT NULL AND
+  visible_at <= NOW() - INTERVAL '2 seconds'. Not configurable, not a
+  query param; rooted in the migration 020 trigger contract.
+- aggregate_external_id is read directly from integration_events per
+  Decision J. No join to the aggregate table, no wire view.
+- Rate limit 120/minute per token (plan 2.1), applied via
+  services.rate_limit._rate_limit_key which prefers g.current_token.
+"""
+
+import json
+import time
+from typing import Dict, List, Optional
+
+from flask import Blueprint, g, jsonify, request
+from sqlalchemy import text
+
+from middleware.auth_middleware import require_wms_token
+from middleware.db import with_db
+from schemas.polling import PollQuery
+from services.rate_limit import limiter
+
+
+polling_bp = Blueprint("polling", __name__)
+
+
+# Per-process in-memory dict used by consumer-group mode to throttle
+# last_heartbeat UPDATEs to once per 30s per group (Decision T). A
+# connector polling at default cadence would otherwise double the
+# write amplification on every request.
+_HEARTBEAT_THROTTLE_SECONDS = 30
+_last_heartbeat_write: Dict[str, float] = {}
+
+
+def _scope_violation(request_values, allowed_values) -> bool:
+    """Return True iff any value in ``request_values`` is outside the
+    token's ``allowed_values``. Strict subset per Decision H."""
+    if not request_values:
+        return False
+    allowed = set(allowed_values or [])
+    return any(v not in allowed for v in request_values)
+
+
+def _parse_types_csv(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+def _build_events_query(
+    after: int,
+    allowed_warehouses: List[int],
+    allowed_event_types: List[str],
+    request_warehouse_id: Optional[int],
+    request_types: List[str],
+    subscription_warehouse_ids: Optional[List[int]],
+    subscription_event_types: Optional[List[str]],
+    limit: int,
+):
+    """Produce the SELECT + params pair. Filters are conjunctive:
+    token scope ∧ request filter ∧ subscription filter. Empty token
+    scope arrays match no rows (plan 3.1: ``empty = no access``).
+    """
+    clauses = [
+        "event_id > :after",
+        "visible_at IS NOT NULL",
+        "visible_at <= NOW() - INTERVAL '2 seconds'",
+        "warehouse_id = ANY(:allowed_warehouses)",
+        "event_type = ANY(:allowed_event_types)",
+    ]
+    params = {
+        "after": after,
+        "allowed_warehouses": allowed_warehouses,
+        "allowed_event_types": allowed_event_types,
+        "limit": limit,
+    }
+    if request_warehouse_id is not None:
+        clauses.append("warehouse_id = :request_warehouse_id")
+        params["request_warehouse_id"] = request_warehouse_id
+    if request_types:
+        clauses.append("event_type = ANY(:request_types)")
+        params["request_types"] = request_types
+    if subscription_warehouse_ids:
+        clauses.append("warehouse_id = ANY(:sub_warehouse_ids)")
+        params["sub_warehouse_ids"] = subscription_warehouse_ids
+    if subscription_event_types:
+        clauses.append("event_type = ANY(:sub_event_types)")
+        params["sub_event_types"] = subscription_event_types
+    sql = (
+        "SELECT event_id, event_type, event_version, event_timestamp, "
+        "       aggregate_type, aggregate_external_id, warehouse_id, "
+        "       source_txn_id, payload "
+        "  FROM integration_events "
+        " WHERE " + " AND ".join(clauses) + " "
+        " ORDER BY event_id ASC "
+        " LIMIT :limit"
+    )
+    return sql, params
+
+
+def _row_to_envelope(row) -> dict:
+    payload = row.payload
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return {
+        "event_id": row.event_id,
+        "event_type": row.event_type,
+        "event_version": row.event_version,
+        "event_timestamp": row.event_timestamp.isoformat(),
+        "aggregate_type": row.aggregate_type,
+        # Plan Decision J: the wire carries the external_id directly,
+        # read from integration_events (no join to the aggregate table).
+        "aggregate_id": str(row.aggregate_external_id),
+        "warehouse_id": row.warehouse_id,
+        "source_txn_id": str(row.source_txn_id),
+        "data": payload,
+    }
+
+
+def _load_consumer_group(db, consumer_group_id: str):
+    return db.execute(
+        text(
+            "SELECT consumer_group_id, last_cursor, subscription "
+            "  FROM consumer_groups WHERE consumer_group_id = :cgid"
+        ),
+        {"cgid": consumer_group_id},
+    ).fetchone()
+
+
+def _maybe_write_heartbeat(db, consumer_group_id: str) -> bool:
+    """Update consumer_groups.last_heartbeat when the per-process
+    throttle permits. Returns True on write, False when throttled."""
+    now = time.monotonic()
+    last_write = _last_heartbeat_write.get(consumer_group_id, 0.0)
+    if (now - last_write) < _HEARTBEAT_THROTTLE_SECONDS:
+        return False
+    db.execute(
+        text(
+            "UPDATE consumer_groups SET last_heartbeat = NOW() "
+            " WHERE consumer_group_id = :cgid"
+        ),
+        {"cgid": consumer_group_id},
+    )
+    _last_heartbeat_write[consumer_group_id] = now
+    return True
+
+
+# Blueprint is mounted at /api/v1/events so "/" serves GET /api/v1/events
+# and future siblings land at "/ack", "/types", "/schema/<type>/<ver>".
+@polling_bp.route("/", methods=["GET"], strict_slashes=False)
+@require_wms_token
+@limiter.limit("120 per minute")
+@with_db
+def poll_events():
+    """Serve one page of integration_events to the caller.
+
+    Two modes (mutually exclusive):
+    - client-cursor: ``after=<int>`` [, types, warehouse_id, limit]
+    - consumer-group: ``consumer_group=<id>`` [, types, warehouse_id, limit]
+
+    The consumer-group mode reads the group's persisted last_cursor as
+    the effective ``after`` and applies the group's subscription
+    JSONB as additional filtering.
+    """
+    try:
+        query = PollQuery(
+            after=request.args.get("after", type=int),
+            consumer_group=request.args.get("consumer_group") or None,
+            types=request.args.get("types") or None,
+            warehouse_id=request.args.get("warehouse_id", type=int),
+            limit=request.args.get("limit", default=500, type=int),
+        )
+    except Exception as e:  # noqa: BLE001 -- Pydantic validation error
+        return jsonify({"error": str(e)}), 400
+
+    token = g.current_token
+    allowed_warehouses = list(token.get("warehouse_ids") or [])
+    allowed_event_types = list(token.get("event_types") or [])
+    request_types = _parse_types_csv(query.types)
+
+    # Strict-subset scope check BEFORE running the query so a scope
+    # violation returns 403 with a clear error body rather than an
+    # empty events array that looks like "caught up".
+    if query.warehouse_id is not None and _scope_violation(
+        [query.warehouse_id], allowed_warehouses
+    ):
+        return jsonify({"error": "scope_violation", "field": "warehouse_id"}), 403
+    if request_types and _scope_violation(request_types, allowed_event_types):
+        return jsonify({"error": "scope_violation", "field": "types"}), 403
+
+    subscription_warehouse_ids: Optional[List[int]] = None
+    subscription_event_types: Optional[List[str]] = None
+    after = query.after or 0
+
+    if query.consumer_group is not None:
+        cg_row = _load_consumer_group(g.db, query.consumer_group)
+        if cg_row is None:
+            return jsonify({"error": "consumer_group_not_found"}), 404
+        after = cg_row.last_cursor
+        subscription = cg_row.subscription or {}
+        if isinstance(subscription, str):
+            subscription = json.loads(subscription)
+        sub_wh = subscription.get("warehouse_ids")
+        sub_et = subscription.get("event_types")
+        if sub_wh:
+            subscription_warehouse_ids = [int(w) for w in sub_wh]
+        if sub_et:
+            subscription_event_types = [str(t) for t in sub_et]
+
+    sql, params = _build_events_query(
+        after=after,
+        allowed_warehouses=allowed_warehouses,
+        allowed_event_types=allowed_event_types,
+        request_warehouse_id=query.warehouse_id,
+        request_types=request_types,
+        subscription_warehouse_ids=subscription_warehouse_ids,
+        subscription_event_types=subscription_event_types,
+        limit=query.limit,
+    )
+    rows = g.db.execute(text(sql), params).fetchall()
+    events = [_row_to_envelope(r) for r in rows]
+    # Plain int64 next_cursor (plan 2.2, pinned). When no rows land the
+    # cursor echoes the input so the next poll does not regress.
+    next_cursor = events[-1]["event_id"] if events else after
+
+    if query.consumer_group is not None:
+        _maybe_write_heartbeat(g.db, query.consumer_group)
+        g.db.commit()
+
+    return jsonify({"events": events, "next_cursor": next_cursor})

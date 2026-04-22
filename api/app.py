@@ -211,6 +211,7 @@ def create_app():
     from routes.transfers import transfers_bp
     from routes.admin import admin_bp
     from routes.warehouses import warehouses_bp
+    from routes.polling import polling_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
@@ -223,6 +224,9 @@ def create_app():
     app.register_blueprint(transfers_bp, url_prefix="/api/transfers")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(warehouses_bp, url_prefix="/api/warehouses")
+    # v1.5.0 #122: first /api/v1/* surface. Gated by @require_wms_token
+    # per route; cookie-auth users do not see this surface.
+    app.register_blueprint(polling_bp, url_prefix="/api/v1/events")
 
     # Import connector modules so they auto-register with the registry
     import connectors.example  # noqa: F401
