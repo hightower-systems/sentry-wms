@@ -4,21 +4,39 @@ One class per emit site (receipt.completed, adjustment.applied,
 transfer.completed, pick.confirmed, pack.confirmed, ship.confirmed,
 cycle_count.adjusted). Each drives the real handler via the existing
 cookie-auth + SQLAlchemy-savepoint fixture and asserts that the
-``integration_events`` row lands with the right envelope shape.
+``integration_events`` row lands with the right envelope shape and
+the payload validates against the registered JSON Schema.
 
-``visible_at`` commit-ordering and concurrency coverage live in
-``test_events_migration.py`` (schema-level) and ``test_event_fifo.py``
-(to be added in #120). The fixture used here wraps each test in a
-rollback'd outer transaction, so the deferred ``visible_at`` trigger
-does not fire inside the test window. The tests instead assert the
-row lands with ``visible_at IS NULL`` pre-commit; the trigger's
-post-commit behaviour is already proven in ``test_events_migration``.
+``visible_at`` commit-ordering across sessions lives in
+``test_events_migration.py`` (raw connections, real COMMIT). For the
+Flask-driven paths here the fixture wraps each test in a rolled-back
+outer transaction, so by default the DEFERRED visible_at trigger does
+not fire. ``TestVisibleAtGate`` uses ``SET CONSTRAINTS IMMEDIATE``
+to fire the trigger synchronously inside the fixture window.
+
+Cross-aggregate FIFO / commit-order concurrency coverage is in
+``test_event_fifo.py`` (dedicated module per #120).
 """
 
 import json
 import uuid
 
 from db_test_context import get_raw_connection
+
+# Boot the registry here too so per-path tests can validate payloads
+# against the shipping JSON Schemas without each class importing it.
+from services.events_schema_registry import get_validator
+
+
+def _assert_payload_matches_schema(event_type: str, version: int, payload: dict) -> None:
+    """Round-trip the payload through jsonschema Draft 2020-12.
+
+    A SchemaValidationError propagates to the test as a failed assertion
+    via pytest. This is the one integration-level check that proves the
+    handler's payload is consumable by the contract connectors depend on.
+    """
+    validator = get_validator(event_type, version)
+    validator.validate(payload)
 
 
 def _query_event_rows(source_txn_id: str):
@@ -124,6 +142,8 @@ class TestReceiptCompletedEmission:
         assert line["quantity_received"] == 5
         assert line["lot_number"] == "LOT-TEST-112-B"
         assert line["serial_number"] == "SN-42"
+
+        _assert_payload_matches_schema("receipt.completed", 1, payload)
 
     def test_multi_item_receive_emits_one_event_per_receipt_row(
         self, client, auth_headers, seed_data
@@ -231,6 +251,8 @@ class TestAdjustmentAppliedEmission:
         admin_ext = _query_external_id("users", "username", "admin")
         assert payload["applied_by_user_external_id"] == admin_ext
 
+        _assert_payload_matches_schema("adjustment.applied", 1, payload)
+
     def test_reject_emits_zero_events(self, client, auth_headers, seed_data):
         """Rejected adjustments must not appear on the outbox."""
         adj_id = _insert_pending_adjustment(
@@ -283,6 +305,8 @@ class TestDirectAdjustmentEmission:
         assert uuid.UUID(payload["adjustment_external_id"])
         assert uuid.UUID(payload["item_external_id"])
         assert uuid.UUID(payload["bin_external_id"])
+
+        _assert_payload_matches_schema("adjustment.applied", 1, payload)
 
     def test_remove_direct_adjustment_emits_negative_delta(
         self, client, auth_headers, seed_data
@@ -383,6 +407,8 @@ class TestCycleCountAdjustedEmission:
         assert payload["quantity_delta"] == 5
         assert uuid.UUID(payload["counted_by_user_external_id"])
         assert payload["counted_at"]
+
+        _assert_payload_matches_schema("cycle_count.adjusted", 1, payload)
 
 
 def _query_external_id(table, key_column, key_value):
@@ -485,6 +511,8 @@ class TestPickConfirmedEmission:
             assert line["lot_number"] is None
             assert line["serial_number"] is None
 
+        _assert_payload_matches_schema("pick.confirmed", 1, payload)
+
 
 def _advance_so_through_picking(client, auth_headers, so_number="SO-2026-001"):
     """Run picking end-to-end so the SO lands in PICKED ready for packing."""
@@ -574,6 +602,8 @@ class TestPackConfirmedEmission:
             assert uuid.UUID(line["item_external_id"])
             assert isinstance(line["quantity_packed"], int)
 
+        _assert_payload_matches_schema("pack.confirmed", 1, payload)
+
 
 def _advance_so_to_packed(client, auth_headers, so_number="SO-2026-001"):
     """Picking + packing so the SO lands in PACKED ready for fulfill."""
@@ -633,6 +663,8 @@ class TestShipConfirmedEmission:
         assert pkg["dimensions_in"] is None
         assert isinstance(pkg["lines"], list) and len(pkg["lines"]) >= 1
 
+        _assert_payload_matches_schema("ship.confirmed", 1, payload)
+
 
 class TestTransferCompletedEmission:
     def _seed_source_inventory(self, item_id, bin_id, warehouse_id, quantity):
@@ -685,6 +717,8 @@ class TestTransferCompletedEmission:
         assert uuid.UUID(line["item_external_id"])
         assert line["quantity"] == 5
 
+        _assert_payload_matches_schema("transfer.completed", 1, payload)
+
     def test_putaway_confirm_emits_nothing(self, client, auth_headers, seed_data):
         """Decision K: putaway.confirm is an internal warehouse movement,
         not a connector-visible transfer. The bin_transfers row it writes
@@ -719,3 +753,150 @@ class TestTransferCompletedEmission:
         # The receive call emits receipt.completed (different source_txn_id);
         # the putaway call emits nothing.
         assert _query_event_rows(putaway_request_id) == []
+
+
+class TestVisibleAtGate:
+    """The DEFERRABLE INITIALLY DEFERRED trigger on integration_events
+    sets ``visible_at`` at COMMIT time. Inside the test fixture the
+    outer transaction is rolled back, so a "normal" commit never lands.
+    ``SET CONSTRAINTS ALL IMMEDIATE`` forces the deferred trigger to
+    fire synchronously, which is the same mechanism Postgres uses at
+    COMMIT - a cleaner proof than the rolled-back transaction pattern.
+
+    The commit-order-across-sessions guarantee has its own dedicated
+    coverage in ``test_events_migration.test_visible_at_respects_commit_order_across_sessions``
+    and in ``test_event_fifo``. This class only asserts the local
+    "NULL pre-commit, non-NULL post-trigger" invariant per Flask
+    handler.
+    """
+
+    def _force_trigger_fire(self):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        # SET CONSTRAINTS ALL IMMEDIATE fires every DEFERRED constraint
+        # (we only have the one visible_at trigger). Scoped to the
+        # fixture's open transaction via the conftest raw connection.
+        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        cur.close()
+
+    def test_receipt_visible_at_gate(self, client, auth_headers, seed_data):
+        request_id = str(uuid.uuid4())
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {"item_id": 1, "quantity": 1, "bin_id": seed_data["staging_bin_id"]},
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+
+        pre = _query_event_rows(request_id)
+        assert len(pre) == 1
+        assert pre[0]["visible_at"] is None
+
+        self._force_trigger_fire()
+
+        post = _query_event_rows(request_id)
+        assert len(post) == 1
+        assert post[0]["visible_at"] is not None
+
+
+class TestIdempotentReplay:
+    """Replay safety at the HTTP layer for handler-idempotent paths.
+
+    For handlers that flip an aggregate's status at their first
+    successful call (pack, ship, complete_batch, review_approve), a
+    replay of the same request with the same X-Request-ID MUST NOT
+    produce a second integration_events row. Two mechanisms combine
+    to deliver this: the handler's status guard returns 400 on the
+    second call (so emit_event is never reached), and even if it were,
+    the (aggregate_type, aggregate_id, event_type, source_txn_id)
+    UNIQUE constraint on integration_events would collapse the insert
+    via emit_event's ON CONFLICT DO NOTHING.
+
+    Receive and transfer and direct_adjustment create NEW aggregates
+    on each call and are HTTP-non-idempotent by design; the per-aggregate
+    idempotence for those paths is tested at the emit_event layer in
+    ``test_events_service.py``.
+    """
+
+    def test_complete_packing_replay_produces_one_event(
+        self, client, auth_headers, seed_data
+    ):
+        so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+        # Packing is already complete from _advance_so_to_packed, which
+        # itself called /api/packing/complete. A retry of the endpoint
+        # must not double-emit.
+        first_request_id = str(uuid.uuid4())
+        first = client.post(
+            "/api/packing/complete",
+            json={"so_id": so_id},
+            headers={**auth_headers, "X-Request-ID": first_request_id},
+        )
+        # First call fails (SO already PACKED) but must not double-emit.
+        assert first.status_code == 400
+        assert _query_event_rows(first_request_id) == []
+
+    def test_fulfill_replay_produces_one_event(self, client, auth_headers, seed_data):
+        so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+        request_id = str(uuid.uuid4())
+        first = client.post(
+            "/api/shipping/fulfill",
+            json={
+                "so_id": so_id,
+                "tracking_number": "1Z-REPLAY",
+                "carrier": "UPS",
+                "ship_method": "GROUND",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert first.status_code == 200
+        assert len(_query_event_rows(request_id)) == 1
+
+        # Retry with the same X-Request-ID. Handler rejects on status
+        # check; no second event row lands.
+        second = client.post(
+            "/api/shipping/fulfill",
+            json={
+                "so_id": so_id,
+                "tracking_number": "1Z-REPLAY",
+                "carrier": "UPS",
+                "ship_method": "GROUND",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert second.status_code == 400
+        assert len(_query_event_rows(request_id)) == 1
+
+    def test_review_approve_replay_produces_one_event(
+        self, client, auth_headers, seed_data
+    ):
+        adj_id = _insert_pending_adjustment(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity_change=-1,
+            reason_code="CORRECTION",
+            submitted_by="admin",
+        )
+        request_id = str(uuid.uuid4())
+        first = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert first.status_code == 200
+        assert len(_query_event_rows(request_id)) == 1
+
+        # Second call: status is no longer PENDING so the handler loop
+        # skips without emitting.
+        second = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert second.status_code == 200
+        assert second.get_json()["approved"] == 0
+        assert len(_query_event_rows(request_id)) == 1
