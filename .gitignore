@@ -43,3 +43,7 @@ mobile/.expo/web/
 mobile/android/
 mobile/ios/
 site/
+
+# Proxy
+proxy/certs/
+proxy/certs/*.pem
