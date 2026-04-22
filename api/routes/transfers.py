@@ -2,6 +2,9 @@
 Bin transfer endpoint: general-purpose bin-to-bin inventory moves.
 """
 
+import uuid
+from datetime import timezone
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
@@ -10,6 +13,7 @@ from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from schemas.bin_transfer import MoveRequest
 from services.audit_service import write_audit_log
+from services.events_service import emit_event
 from services.inventory_service import move_inventory
 from utils.validation import validate_body
 
@@ -30,7 +34,7 @@ def move(validated):
 
     # Validate item
     item = g.db.execute(
-        text("SELECT item_id, sku, item_name FROM items WHERE item_id = :iid"),
+        text("SELECT item_id, sku, item_name, external_id FROM items WHERE item_id = :iid"),
         {"iid": item_id},
     ).fetchone()
     if not item:
@@ -51,6 +55,7 @@ def move(validated):
     if not to_bin:
         return jsonify({"error": "Destination bin not found"}), 404
 
+
     if to_bin.warehouse_id != from_bin.warehouse_id:
         return jsonify({"error": "Cross-warehouse moves are not allowed here. Use the admin inter-warehouse transfer."}), 400
 
@@ -61,7 +66,14 @@ def move(validated):
     if not ok:
         return denied
 
-    # 1 & 2. Move inventory (decrement source, upsert destination)
+    # 1 & 2. Move inventory (decrement source, upsert destination).
+    # v1.5.0 #119: the bin_transfers aggregate is created by this
+    # handler so there is no pre-existing row to lock. The
+    # serialisation point for concurrent moves on the same item+bin
+    # is move_inventory()'s V-030 FOR UPDATE on the source inventory
+    # row; that is the lock that prevents two transactions from
+    # interleaving their transfer.completed emits out of commit order
+    # on the integration_events outbox. No additional lock needed here.
     try:
         new_source_qty, new_dest_qty = move_inventory(
             g.db, item_id, from_bin_id, to_bin_id, warehouse_id, quantity, lot_number
@@ -74,9 +86,9 @@ def move(validated):
         text(
             """
             INSERT INTO bin_transfers (item_id, from_bin_id, to_bin_id, warehouse_id, quantity,
-                                       transfer_type, lot_number, reason, transferred_by)
-            VALUES (:iid, :from_bid, :to_bid, :wh, :qty, 'MOVE', :lot, :reason, :user)
-            RETURNING transfer_id
+                                       transfer_type, lot_number, reason, transferred_by, external_id)
+            VALUES (:iid, :from_bid, :to_bid, :wh, :qty, 'MOVE', :lot, :reason, :user, :ext_id)
+            RETURNING transfer_id, external_id, transferred_at
             """
         ),
         {
@@ -88,9 +100,13 @@ def move(validated):
             "lot": lot_number,
             "reason": reason,
             "user": username,
+            "ext_id": str(uuid.uuid4()),
         },
     )
-    transfer_id = result.fetchone()[0]
+    transfer_row = result.fetchone()
+    transfer_id = transfer_row.transfer_id
+    transfer_external_id = transfer_row.external_id
+    transferred_at = transfer_row.transferred_at
 
     # 4. Audit log
     write_audit_log(
@@ -111,7 +127,35 @@ def move(validated):
         },
     )
 
-    # 5. Commit
+    # 5. v1.5.0 #115: emit transfer.completed on the integration_events
+    # outbox. lines[] is array-shaped even though Sentry is single-line
+    # per transfer today, so a future multi-line expansion does not
+    # break consumer parsers. Decision K: putaway.confirm does NOT
+    # emit, only transfers.move does.
+    emit_event(
+        g.db,
+        event_type="transfer.completed",
+        event_version=1,
+        aggregate_type="inventory_transfer",
+        aggregate_id=transfer_id,
+        aggregate_external_id=transfer_external_id,
+        warehouse_id=warehouse_id,
+        source_txn_id=g.source_txn_id,
+        payload={
+            "transfer_external_id": str(transfer_external_id),
+            "from_warehouse_id": from_bin.warehouse_id,
+            "to_warehouse_id": to_bin.warehouse_id,
+            "lines": [
+                {
+                    "item_external_id": str(item.external_id),
+                    "quantity": quantity,
+                },
+            ],
+            "completed_at": transferred_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    # 6. Commit
     g.db.commit()
 
     return jsonify({

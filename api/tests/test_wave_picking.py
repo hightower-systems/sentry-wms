@@ -15,8 +15,8 @@ def _create_extra_so(so_number, customer, items_qty, warehouse_id=1):
     conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
-           VALUES (%s, %s, %s, 'OPEN', %s, 'admin') RETURNING so_id""",
+        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by, external_id)
+           VALUES (%s, %s, %s, 'OPEN', %s, 'admin', gen_random_uuid()) RETURNING so_id""",
         (so_number, so_number, customer, warehouse_id),
     )
     so_id = cur.fetchone()[0]
@@ -118,8 +118,8 @@ def test_validate_so_no_items(client, auth_headers):
     conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
-           VALUES ('SO-EMPTY', 'SO-EMPTY', 'Empty Customer', 'OPEN', 1, 'admin')"""
+        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by, external_id)
+           VALUES ('SO-EMPTY', 'SO-EMPTY', 'Empty Customer', 'OPEN', 1, 'admin', gen_random_uuid())"""
     )
     cur.close()
 

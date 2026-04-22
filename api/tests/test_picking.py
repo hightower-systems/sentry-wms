@@ -349,8 +349,8 @@ def test_next_pick_with_zone_no_aisle(client, auth_headers):
     conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
-           VALUES ('SO-NOAISLE', 'SO-NOAISLE', 'Cust', 'OPEN', 1, 'admin') RETURNING so_id"""
+        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by, external_id)
+           VALUES ('SO-NOAISLE', 'SO-NOAISLE', 'Cust', 'OPEN', 1, 'admin', gen_random_uuid()) RETURNING so_id"""
     )
     so_id = cur.fetchone()[0]
     cur.execute(
@@ -393,8 +393,8 @@ def test_next_pick_no_zone(client, auth_headers):
     )
     zone_id = cur.fetchone()[0]
     cur.execute(
-        """INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_sequence, putaway_sequence)
-           VALUES (%s, 1, 'NOZONE-01', 'BIN-NOZONE-01', 'Pickable', 50, 50) RETURNING bin_id""",
+        """INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_sequence, putaway_sequence, external_id)
+           VALUES (%s, 1, 'NOZONE-01', 'BIN-NOZONE-01', 'Pickable', 50, 50, gen_random_uuid()) RETURNING bin_id""",
         (zone_id,),
     )
     bin_id = cur.fetchone()[0]
@@ -410,8 +410,8 @@ def test_next_pick_no_zone(client, auth_headers):
     conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
-        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by)
-           VALUES ('SO-NOZONE', 'SO-NOZONE', 'Cust', 'OPEN', 1, 'admin') RETURNING so_id"""
+        """INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, created_by, external_id)
+           VALUES ('SO-NOZONE', 'SO-NOZONE', 'Cust', 'OPEN', 1, 'admin', gen_random_uuid()) RETURNING so_id"""
     )
     so_id = cur.fetchone()[0]
     cur.execute(

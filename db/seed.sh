@@ -38,14 +38,14 @@ INSERT INTO zones (warehouse_id, zone_code, zone_name, zone_type) VALUES
 (1, 'STAGE', 'Staging',      'STAGING');
 
 -- Default bins (one per type)
-INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_sequence, putaway_sequence, description) VALUES
-(1, 1, 'RECV-01', 'RECV-01', 'Staging',  0, 0, 'Default receiving bin'),
-(2, 1, 'PICK-01', 'PICK-01', 'Pickable', 100, 100, 'Default pick bin'),
-(3, 1, 'BULK-01', 'BULK-01', 'Pickable', 0, 0, 'Default bulk bin');
+INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, pick_sequence, putaway_sequence, description, external_id) VALUES
+(1, 1, 'RECV-01', 'RECV-01', 'Staging',  0, 0, 'Default receiving bin', gen_random_uuid()),
+(2, 1, 'PICK-01', 'PICK-01', 'Pickable', 100, 100, 'Default pick bin', gen_random_uuid()),
+(3, 1, 'BULK-01', 'BULK-01', 'Pickable', 0, 0, 'Default bulk bin', gen_random_uuid());
 
 -- Admin user
-INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions, must_change_password)
-VALUES ('admin', crypt(:'admin_pw', gen_salt('bf')), 'Admin User', 'ADMIN', 1, '{}', :'must_change'::boolean);
+INSERT INTO users (username, password_hash, full_name, role, warehouse_id, allowed_functions, must_change_password, external_id)
+VALUES ('admin', crypt(:'admin_pw', gen_salt('bf')), 'Admin User', 'ADMIN', 1, '{}', :'must_change'::boolean, gen_random_uuid());
 
 -- Default settings
 INSERT INTO app_settings (key, value) VALUES ('session_timeout_hours', '8');

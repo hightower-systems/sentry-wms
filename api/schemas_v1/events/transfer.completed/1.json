@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentry-wms.example/events/transfer.completed/1.json",
+  "title": "transfer.completed v1",
+  "description": "A bin-to-bin transfer has completed. Emitted only from api/routes/transfers.py::move (Decision K: putaway.confirm is internal, does not emit). Aggregate: inventory_transfer.",
+  "type": "object",
+  "required": [
+    "transfer_external_id",
+    "from_warehouse_id",
+    "to_warehouse_id",
+    "lines",
+    "completed_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "transfer_external_id": { "type": "string", "format": "uuid" },
+    "from_warehouse_id": { "type": "integer", "minimum": 1 },
+    "to_warehouse_id": { "type": "integer", "minimum": 1 },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["item_external_id", "quantity"],
+        "additionalProperties": false,
+        "properties": {
+          "item_external_id": { "type": "string", "format": "uuid" },
+          "quantity": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "completed_at": { "type": "string", "format": "date-time" }
+  }
+}

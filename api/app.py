@@ -5,10 +5,11 @@ Sentry WMS - Flask API Entry Point
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, g, request
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -109,6 +110,19 @@ def create_app():
         raise RuntimeError("JWT_SECRET environment variable is required")
     app.config["JWT_SECRET"] = jwt_secret
 
+    # v1.5.0 #128: SENTRY_TOKEN_PEPPER is concatenated with every
+    # inbound X-WMS-Token plaintext before the SHA-256 hash step
+    # (Decision Q). Boot fails without it rather than silently falling
+    # back to an empty pepper; a token hash computed with an empty
+    # pepper differs from every hash stored by a correctly-configured
+    # deployment, which would look like a blanket auth failure rather
+    # than a config problem.
+    if not os.getenv("SENTRY_TOKEN_PEPPER"):
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER environment variable is required for "
+            "X-WMS-Token auth (v1.5.0). See .env.example for details."
+        )
+
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
         "CORS_ORIGINS",
@@ -142,6 +156,23 @@ def create_app():
         "form-action 'self'; "
         "object-src 'none'"
     )
+
+    @app.before_request
+    def _mint_source_txn_id():
+        # v1.5.0 plan section 1.5: every emit_event call within a single
+        # HTTP request reuses one source_txn_id so a retried request
+        # collapses to one row via the integration_events idempotency
+        # key. Prefer an inbound X-Request-ID header when it parses as a
+        # UUID (supports distributed tracing across services); otherwise
+        # mint a fresh one.
+        inbound = request.headers.get("X-Request-ID", "").strip()
+        if inbound:
+            try:
+                g.source_txn_id = uuid.UUID(inbound)
+            except (ValueError, TypeError):
+                g.source_txn_id = uuid.uuid4()
+        else:
+            g.source_txn_id = uuid.uuid4()
 
     @app.after_request
     def set_security_headers(response):
@@ -180,6 +211,8 @@ def create_app():
     from routes.transfers import transfers_bp
     from routes.admin import admin_bp
     from routes.warehouses import warehouses_bp
+    from routes.polling import polling_bp
+    from routes.snapshot import snapshot_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
@@ -192,9 +225,20 @@ def create_app():
     app.register_blueprint(transfers_bp, url_prefix="/api/transfers")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(warehouses_bp, url_prefix="/api/warehouses")
+    # v1.5.0 #122: first /api/v1/* surface. Gated by @require_wms_token
+    # per route; cookie-auth users do not see this surface.
+    app.register_blueprint(polling_bp, url_prefix="/api/v1/events")
+    # v1.5.0 #133: bulk snapshot paging. Shares the same
+    # @require_wms_token surface as polling, distinct 2/min rate limit.
+    app.register_blueprint(snapshot_bp, url_prefix="/api/v1/snapshot")
 
     # Import connector modules so they auto-register with the registry
     import connectors.example  # noqa: F401
+
+    # v1.5.0: load the v1.5.0 event-schema registry eagerly so a malformed
+    # api/schemas_v1/events/*/*.json file or a catalog entry without a
+    # matching schema fails boot loudly, not lazily on the first emit.
+    import services.events_schema_registry  # noqa: F401
 
     @app.route("/api/health")
     def health():

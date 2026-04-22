@@ -46,6 +46,8 @@ const NAV = [
     label: 'System',
     items: [
       { to: '/users', label: 'Users' },
+      { to: '/api-tokens', label: 'API tokens' },
+      { to: '/consumer-groups', label: 'Consumer groups' },
       { to: '/audit-log', label: 'Audit log' },
       { to: '/imports', label: 'Import' },
       { to: '/integrations', label: 'Integrations' },

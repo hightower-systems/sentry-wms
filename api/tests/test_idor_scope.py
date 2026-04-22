@@ -33,10 +33,10 @@ def _login_as(client, username, warehouse_ids):
     wids = "{" + ",".join(str(w) for w in warehouse_ids) + "}"
     cur.execute(
         """INSERT INTO users (username, password_hash, full_name, role,
-               warehouse_id, warehouse_ids, allowed_functions)
+               warehouse_id, warehouse_ids, allowed_functions, external_id)
            VALUES (%s, '$2b$12$zDGRKFLmc6v/A4mVhxOzb.7uoW1ulnXn0AisK5uJ5iWk33vC2EpSK',
                    'Scope Test User', 'PICKER', %s, %s,
-                   '{pick,receive,count,pack,ship}')""",
+                   '{pick,receive,count,pack,ship}', gen_random_uuid())""",
         (username, warehouse_ids[0], wids),
     )
     cur.close()
@@ -61,20 +61,20 @@ def warehouse_2_setup():
     )
     z2 = cur.fetchone()[0]
     cur.execute(
-        "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type) "
-        "VALUES (%s, %s, 'W2-BIN-01', 'W2-BIN-01-BC', 'Pickable') RETURNING bin_id",
+        "INSERT INTO bins (zone_id, warehouse_id, bin_code, bin_barcode, bin_type, external_id) "
+        "VALUES (%s, %s, 'W2-BIN-01', 'W2-BIN-01-BC', 'Pickable', gen_random_uuid()) RETURNING bin_id",
         (z2, wh2),
     )
     bin2 = cur.fetchone()[0]
     cur.execute(
-        "INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, status, warehouse_id) "
-        "VALUES ('PO-W2-UNIQUE', 'PO-W2-UNIQUE', 'V', 'OPEN', %s) RETURNING po_id",
+        "INSERT INTO purchase_orders (po_number, po_barcode, vendor_name, status, warehouse_id, external_id) "
+        "VALUES ('PO-W2-UNIQUE', 'PO-W2-UNIQUE', 'V', 'OPEN', %s, gen_random_uuid()) RETURNING po_id",
         (wh2,),
     )
     po2 = cur.fetchone()[0]
     cur.execute(
-        "INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, order_date) "
-        "VALUES ('SO-W2-UNIQUE', 'SO-W2-UNIQUE', 'C', 'OPEN', %s, NOW()) RETURNING so_id",
+        "INSERT INTO sales_orders (so_number, so_barcode, customer_name, status, warehouse_id, order_date, external_id) "
+        "VALUES ('SO-W2-UNIQUE', 'SO-W2-UNIQUE', 'C', 'OPEN', %s, NOW(), gen_random_uuid()) RETURNING so_id",
         (wh2,),
     )
     so2 = cur.fetchone()[0]
@@ -159,7 +159,7 @@ class TestItemSearchWarehouseScope:
         conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO items (sku, item_name) VALUES (%s, 'W2 Only Item') RETURNING item_id",
+            "INSERT INTO items (sku, item_name, external_id) VALUES (%s, 'W2 Only Item', gen_random_uuid()) RETURNING item_id",
             (sku,),
         )
         item_id = cur.fetchone()[0]

@@ -38,6 +38,10 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-false}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8080,http://localhost:8081"
       SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
+      # v1.5.0 #128: pepper for the X-WMS-Token SHA-256 hash. The app
+      # fails to boot without it so a misconfigured deployment never
+      # silently falls back to an empty pepper.
+      SENTRY_TOKEN_PEPPER: ${SENTRY_TOKEN_PEPPER:?Set SENTRY_TOKEN_PEPPER in .env -- see .env.example}
       # The API enqueues Celery tasks (manual sync trigger, fulfillment
       # push) so it needs the authenticated broker URL too.
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
@@ -71,6 +75,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  snapshot-keeper:
+    # v1.5.0 #132: holds REPEATABLE READ transactions that export a
+    # pg_snapshot_id via pg_export_snapshot(). The API tier imports
+    # the same snapshot on short-lived connections to page through
+    # /api/v1/snapshot/inventory. Single-keeper architecture (plan
+    # R12); horizontal scale is deferred. Restart policy is always-on
+    # so a crash is quickly recovered and the 410 snapshot_expired
+    # path is exercised for any in-flight scans.
+    build: ./api
+    container_name: sentry-snapshot-keeper
+    command: python -m services.snapshot_keeper
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry}@db:5432/${POSTGRES_DB:-sentry}
+      SNAPSHOT_KEEPER_HEARTBEAT_FILE: /tmp/snapshot-keeper-heartbeat
+    volumes:
+      - ./api:/app
+    healthcheck:
+      # Heartbeat written every 5s by the keeper. Mark unhealthy when
+      # the file is older than 30s so a hung loop restarts the container.
+      test: ["CMD-SHELL", "find /tmp/snapshot-keeper-heartbeat -newermt '-30 seconds' -print -quit | grep -q ."]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   celery-worker:
     build: ./api

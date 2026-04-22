@@ -31,6 +31,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r api/requirements.txt
 
+      - name: Validate v1.5.0 event schemas
+        # #111: importing the registry forces Draft 2020-12 validation
+        # of every api/schemas_v1/events/*/*.json file and asserts
+        # V150_CATALOG has a matching schema for each (event_type,
+        # version). A malformed schema or missing catalog entry raises
+        # RuntimeError with the offending path, so failure output is
+        # self-explanatory.
+        run: |
+          cd api && python -c "from services import events_schema_registry as r; print(f'OK: {len(r.V150_CATALOG)} v1.5.0 schemas validated')"
+
       - name: Load database schema
         env:
           PGPASSWORD: sentry

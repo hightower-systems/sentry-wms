@@ -1,0 +1,902 @@
+"""Per-handler emission integration tests (v1.5.0 outbox).
+
+One class per emit site (receipt.completed, adjustment.applied,
+transfer.completed, pick.confirmed, pack.confirmed, ship.confirmed,
+cycle_count.adjusted). Each drives the real handler via the existing
+cookie-auth + SQLAlchemy-savepoint fixture and asserts that the
+``integration_events`` row lands with the right envelope shape and
+the payload validates against the registered JSON Schema.
+
+``visible_at`` commit-ordering across sessions lives in
+``test_events_migration.py`` (raw connections, real COMMIT). For the
+Flask-driven paths here the fixture wraps each test in a rolled-back
+outer transaction, so by default the DEFERRED visible_at trigger does
+not fire. ``TestVisibleAtGate`` uses ``SET CONSTRAINTS IMMEDIATE``
+to fire the trigger synchronously inside the fixture window.
+
+Cross-aggregate FIFO / commit-order concurrency coverage is in
+``test_event_fifo.py`` (dedicated module per #120).
+"""
+
+import json
+import uuid
+
+from db_test_context import get_raw_connection
+
+# Boot the registry here too so per-path tests can validate payloads
+# against the shipping JSON Schemas without each class importing it.
+from services.events_schema_registry import get_validator
+
+
+def _assert_payload_matches_schema(event_type: str, version: int, payload: dict) -> None:
+    """Round-trip the payload through jsonschema Draft 2020-12.
+
+    A SchemaValidationError propagates to the test as a failed assertion
+    via pytest. This is the one integration-level check that proves the
+    handler's payload is consumable by the contract connectors depend on.
+    """
+    validator = get_validator(event_type, version)
+    validator.validate(payload)
+
+
+def _query_event_rows(source_txn_id: str):
+    """Return every integration_events row emitted during this test's
+    wrapping transaction with the given source_txn_id.
+
+    Uses the raw test connection (same savepoint-owning connection the
+    handler ran against) so visibility inside the outer transaction
+    matches what the handler wrote.
+    """
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT event_id, event_type, event_version, aggregate_type,
+               aggregate_id, aggregate_external_id::text, warehouse_id,
+               source_txn_id::text, visible_at, payload
+          FROM integration_events
+         WHERE source_txn_id = %s
+         ORDER BY event_id
+        """,
+        (source_txn_id,),
+    )
+    cols = [c.name for c in cur.description]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    cur.close()
+    for row in rows:
+        # psycopg2 decodes JSONB to dict already; fall back for str case.
+        if isinstance(row["payload"], str):
+            row["payload"] = json.loads(row["payload"])
+    return rows
+
+
+class TestReceiptCompletedEmission:
+    def test_single_item_receive_emits_one_event(self, client, auth_headers, seed_data):
+        # Stable X-Request-ID so the test can filter integration_events by
+        # source_txn_id rather than scanning every row in the table.
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {
+                        "item_id": 1,
+                        "quantity": 3,
+                        "bin_id": seed_data["staging_bin_id"],
+                        "lot_number": "LOT-TEST-112",
+                        "serial_number": None,
+                    }
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1, f"expected exactly one receipt.completed row, got {len(rows)}"
+        row = rows[0]
+        assert row["event_type"] == "receipt.completed"
+        assert row["event_version"] == 1
+        assert row["aggregate_type"] == "item_receipt"
+        assert row["warehouse_id"] == seed_data["warehouse_id"]
+        # Aggregate external_id is a UUID string, not the internal receipt_id.
+        assert uuid.UUID(row["aggregate_external_id"])
+        # Deferred trigger does not fire inside the test fixture's outer
+        # transaction, so visible_at stays NULL here. The trigger's
+        # COMMIT-time behaviour is proven in test_events_migration.py.
+        assert row["visible_at"] is None
+
+    def test_receipt_payload_matches_schema(self, client, auth_headers, seed_data):
+        request_id = str(uuid.uuid4())
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {
+                        "item_id": 1,
+                        "quantity": 5,
+                        "bin_id": seed_data["staging_bin_id"],
+                        "lot_number": "LOT-TEST-112-B",
+                        "serial_number": "SN-42",
+                    }
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        payload = rows[0]["payload"]
+
+        # Field-by-field checks against api/schemas_v1/events/receipt.completed/1.json.
+        assert uuid.UUID(payload["receipt_external_id"])
+        assert uuid.UUID(payload["po_external_id"])
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+        assert payload["completed_at"].endswith("Z") or "+" in payload["completed_at"]
+
+        lines = payload["lines"]
+        assert len(lines) == 1  # v1.5.0 ships single-line per receipt row
+        line = lines[0]
+        assert uuid.UUID(line["item_external_id"])
+        assert line["quantity_received"] == 5
+        assert line["lot_number"] == "LOT-TEST-112-B"
+        assert line["serial_number"] == "SN-42"
+
+        _assert_payload_matches_schema("receipt.completed", 1, payload)
+
+    def test_multi_item_receive_emits_one_event_per_receipt_row(
+        self, client, auth_headers, seed_data
+    ):
+        """Sentry creates one item_receipts row per item in the call, so
+        the emit site fires one receipt.completed per row. Confirmed by
+        counting events after a 3-item receive."""
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {"item_id": 1, "quantity": 2, "bin_id": seed_data["staging_bin_id"]},
+                    {"item_id": 2, "quantity": 3, "bin_id": seed_data["staging_bin_id"]},
+                    {"item_id": 3, "quantity": 4, "bin_id": seed_data["staging_bin_id"]},
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 3
+        quantities = sorted(r["payload"]["lines"][0]["quantity_received"] for r in rows)
+        assert quantities == [2, 3, 4]
+
+    def test_source_txn_id_prefers_x_request_id_header(
+        self, client, auth_headers, seed_data
+    ):
+        """Plan 1.5: X-Request-ID wins over a generated id when it parses
+        as a UUID. The handler's emit call must therefore carry the
+        header UUID as source_txn_id on the resulting row."""
+        request_id = "7c9f4a2a-6fac-4e3b-8c0a-8d2f9d7ab012"
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {"item_id": 1, "quantity": 1, "bin_id": seed_data["staging_bin_id"]},
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        assert rows[0]["source_txn_id"] == request_id
+
+
+def _insert_pending_adjustment(item_id, bin_id, warehouse_id, quantity_change,
+                               reason_code="CORRECTION", submitted_by="admin",
+                               cycle_count_id=None):
+    """Insert a PENDING inventory_adjustments row directly for test setup."""
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO inventory_adjustments
+            (item_id, bin_id, warehouse_id, quantity_change, reason_code,
+             status, adjusted_by, cycle_count_id, external_id)
+        VALUES (%s, %s, %s, %s, %s, 'PENDING', %s, %s, gen_random_uuid())
+        RETURNING adjustment_id
+        """,
+        (item_id, bin_id, warehouse_id, quantity_change, reason_code,
+         submitted_by, cycle_count_id),
+    )
+    adj_id = cur.fetchone()[0]
+    cur.close()
+    return adj_id
+
+
+class TestAdjustmentAppliedEmission:
+    def test_approval_emits_adjustment_applied_with_approver_as_applier(
+        self, client, auth_headers, seed_data
+    ):
+        """Non-cycle-count adjustment: approval emits adjustment.applied
+        naming the APPROVER (g.current_user) in applied_by_user_external_id,
+        not the submitter."""
+        adj_id = _insert_pending_adjustment(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity_change=-3,
+            reason_code="DAMAGE",
+            submitted_by="some_other_user",  # NOT the approver
+        )
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()["approved"] == 1
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "adjustment.applied"
+        assert row["aggregate_type"] == "inventory_adjustment"
+        payload = row["payload"]
+        assert payload["quantity_delta"] == -3
+        assert payload["reason_code"] == "DAMAGE"
+
+        # The applier is the approver (admin), not "some_other_user" (submitter).
+        admin_ext = _query_external_id("users", "username", "admin")
+        assert payload["applied_by_user_external_id"] == admin_ext
+
+        _assert_payload_matches_schema("adjustment.applied", 1, payload)
+
+    def test_reject_emits_zero_events(self, client, auth_headers, seed_data):
+        """Rejected adjustments must not appear on the outbox."""
+        adj_id = _insert_pending_adjustment(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity_change=10,
+        )
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "reject"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["rejected"] == 1
+        assert _query_event_rows(request_id) == []
+
+
+class TestDirectAdjustmentEmission:
+    def test_add_direct_adjustment_emits_adjustment_applied(
+        self, client, auth_headers, seed_data
+    ):
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/direct",
+            json={
+                "warehouse_id": 1,
+                "bin_id": 2,
+                "item_id": 5,
+                "adjustment_type": "add",
+                "quantity": 2,
+                "reason": "direct-add emission test",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "adjustment.applied"
+        assert row["aggregate_type"] == "inventory_adjustment"
+        payload = row["payload"]
+        assert payload["quantity_delta"] == 2
+        assert payload["reason_code"] == "DIRECT_ADJUSTMENT"
+        # Admin is both submitter and approver here.
+        admin_ext = _query_external_id("users", "username", "admin")
+        assert payload["applied_by_user_external_id"] == admin_ext
+        assert uuid.UUID(payload["adjustment_external_id"])
+        assert uuid.UUID(payload["item_external_id"])
+        assert uuid.UUID(payload["bin_external_id"])
+
+        _assert_payload_matches_schema("adjustment.applied", 1, payload)
+
+    def test_remove_direct_adjustment_emits_negative_delta(
+        self, client, auth_headers, seed_data
+    ):
+        # Seed inventory so the REMOVE branch has enough to subtract from.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+            "VALUES (5, 2, 1, 20) ON CONFLICT (item_id, bin_id, lot_number) "
+            "DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand"
+        )
+        cur.close()
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/direct",
+            json={
+                "warehouse_id": 1,
+                "bin_id": 2,
+                "item_id": 5,
+                "adjustment_type": "remove",
+                "quantity": 3,
+                "reason": "direct-remove emission test",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "adjustment.applied"
+        assert row["payload"]["quantity_delta"] == -3
+        assert row["payload"]["reason_code"] == "DIRECT_ADJUSTMENT"
+
+
+class TestCycleCountAdjustedEmission:
+    def _create_variance(self, client, auth_headers):
+        """Replicated pattern from test_inventory.TestAdjustmentSelfApproval:
+        create a cycle count, submit a count with variance, return the
+        pending adjustment_id."""
+        create_resp = client.post(
+            "/api/inventory/cycle-count/create",
+            json={"warehouse_id": 1, "bin_ids": [3]},
+            headers=auth_headers,
+        )
+        count_id = create_resp.get_json()["counts"][0]["count_id"]
+
+        detail_resp = client.get(
+            f"/api/inventory/cycle-count/{count_id}", headers=auth_headers
+        )
+        lines = detail_resp.get_json()["lines"]
+
+        submit_lines = [
+            {"count_line_id": lines[0]["count_line_id"],
+             "counted_quantity": lines[0]["expected_quantity"] + 5}
+        ]
+        submit_resp = client.post(
+            "/api/inventory/cycle-count/submit",
+            json={"count_id": count_id, "lines": submit_lines},
+            headers=auth_headers,
+        )
+        adj = submit_resp.get_json()["summary"]["adjustments"][0]
+        return adj["adjustment_id"]
+
+    def test_approval_emits_cycle_count_adjusted(self, client, auth_headers):
+        adj_id = self._create_variance(client, auth_headers)
+        # First turn off separation so self-approval goes through in the
+        # test fixture without juggling users.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('require_count_approval_separation', 'false') "
+            "ON CONFLICT (key) DO UPDATE SET value = 'false'"
+        )
+        cur.close()
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "cycle_count.adjusted"
+        assert row["aggregate_type"] == "inventory_adjustment"
+        payload = row["payload"]
+        # Payload must carry both the cycle_count external_id (from the
+        # cycle_counts join) and the adjusted quantity_delta.
+        assert uuid.UUID(payload["cycle_count_external_id"])
+        assert uuid.UUID(payload["item_external_id"])
+        assert uuid.UUID(payload["bin_external_id"])
+        assert payload["counted_quantity"] == payload["system_quantity"] + 5
+        assert payload["quantity_delta"] == 5
+        assert uuid.UUID(payload["counted_by_user_external_id"])
+        assert payload["counted_at"]
+
+        _assert_payload_matches_schema("cycle_count.adjusted", 1, payload)
+
+
+def _query_external_id(table, key_column, key_value):
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT external_id::text FROM {table} WHERE {key_column} = %s",
+        (key_value,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return row[0] if row else None
+
+
+class TestPickConfirmedEmission:
+    def _pick_all_tasks(self, client, auth_headers, batch_id):
+        """Replicated from test_picking.TestCompleteBatch: pick or short every
+        pending task in the batch. Called before complete_batch so the batch
+        has no pending tasks left."""
+        while True:
+            next_resp = client.get(
+                f"/api/picking/batch/{batch_id}/next", headers=auth_headers
+            )
+            data = next_resp.get_json()
+            if "message" in data:
+                break
+            client.post(
+                "/api/picking/confirm",
+                json={
+                    "pick_task_id": data["pick_task_id"],
+                    "scanned_barcode": data["upc"],
+                    "quantity_picked": data["quantity_to_pick"],
+                },
+                headers=auth_headers,
+            )
+
+    def test_complete_batch_emits_one_pick_confirmed_per_so(
+        self, client, auth_headers, seed_data
+    ):
+        """A 2-SO batch produces exactly two pick.confirmed events, each
+        with a distinct aggregate_id but all sharing the one source_txn_id
+        of the complete-batch call. Same pattern the outbox already uses
+        for multi-item receive (see TestReceiptCompletedEmission)."""
+        create_resp = client.post(
+            "/api/picking/create-batch",
+            json={
+                "so_identifiers": ["SO-2026-001", "SO-2026-002"],
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        batch_id = create_resp.get_json()["batch_id"]
+        self._pick_all_tasks(client, auth_headers, batch_id)
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/picking/complete-batch",
+            json={"batch_id": batch_id},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 2
+        assert all(r["event_type"] == "pick.confirmed" for r in rows)
+        assert all(r["aggregate_type"] == "sales_order" for r in rows)
+        assert {r["aggregate_id"] for r in rows} == {1, 2}
+        assert {r["source_txn_id"] for r in rows} == {request_id}
+
+    def test_pick_confirmed_payload_matches_schema(
+        self, client, auth_headers, seed_data
+    ):
+        create_resp = client.post(
+            "/api/picking/create-batch",
+            json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1},
+            headers=auth_headers,
+        )
+        batch_id = create_resp.get_json()["batch_id"]
+        self._pick_all_tasks(client, auth_headers, batch_id)
+
+        request_id = str(uuid.uuid4())
+        client.post(
+            "/api/picking/complete-batch",
+            json={"batch_id": batch_id},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        payload = rows[0]["payload"]
+        assert uuid.UUID(payload["sales_order_external_id"])
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+        assert payload["completed_at"].endswith("Z") or "+" in payload["completed_at"]
+
+        assert isinstance(payload["lines"], list)
+        assert len(payload["lines"]) >= 1
+        for line in payload["lines"]:
+            assert uuid.UUID(line["item_external_id"])
+            assert isinstance(line["quantity_picked"], int)
+            # sales_order_lines does not carry lot / serial today.
+            assert line["lot_number"] is None
+            assert line["serial_number"] is None
+
+        _assert_payload_matches_schema("pick.confirmed", 1, payload)
+
+
+def _advance_so_through_picking(client, auth_headers, so_number="SO-2026-001"):
+    """Run picking end-to-end so the SO lands in PICKED ready for packing."""
+    create_resp = client.post(
+        "/api/picking/create-batch",
+        json={"so_identifiers": [so_number], "warehouse_id": 1},
+        headers=auth_headers,
+    )
+    batch_id = create_resp.get_json()["batch_id"]
+    while True:
+        nxt = client.get(
+            f"/api/picking/batch/{batch_id}/next", headers=auth_headers
+        )
+        data = nxt.get_json()
+        if "message" in data:
+            break
+        client.post(
+            "/api/picking/confirm",
+            json={
+                "pick_task_id": data["pick_task_id"],
+                "scanned_barcode": data["upc"],
+                "quantity_picked": data["quantity_to_pick"],
+            },
+            headers=auth_headers,
+        )
+    client.post(
+        "/api/picking/complete-batch",
+        json={"batch_id": batch_id},
+        headers=auth_headers,
+    )
+
+
+def _verify_pack_all(client, auth_headers, so_id, so_number="SO-2026-001"):
+    """Run verify on every packed quantity so complete_packing can close the SO."""
+    order_resp = client.get(f"/api/packing/order/{so_number}", headers=auth_headers)
+    for line in order_resp.get_json()["lines"]:
+        remaining = line["quantity_picked"] - line["quantity_packed"]
+        if remaining > 0:
+            client.post(
+                "/api/packing/verify",
+                json={
+                    "so_id": so_id,
+                    "scanned_barcode": line["upc"],
+                    "quantity": remaining,
+                },
+                headers=auth_headers,
+            )
+
+
+class TestPackConfirmedEmission:
+    def test_complete_packing_emits_single_package_envelope(
+        self, client, auth_headers, seed_data
+    ):
+        _advance_so_through_picking(client, auth_headers, "SO-2026-001")
+        _verify_pack_all(client, auth_headers, so_id=1, so_number="SO-2026-001")
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/packing/complete",
+            json={"so_id": 1},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "pack.confirmed"
+        assert row["aggregate_type"] == "sales_order"
+        assert row["aggregate_id"] == 1
+        payload = row["payload"]
+        assert uuid.UUID(payload["sales_order_external_id"])
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+
+        # Sentry ships single-package today; packages[] is array of one.
+        assert isinstance(payload["packages"], list)
+        assert len(payload["packages"]) == 1
+        pkg = payload["packages"][0]
+        # Synthetic package_external_id keyed to the SO external id.
+        assert pkg["package_external_id"] == f"{payload['sales_order_external_id']}-pkg-1"
+        # dimensions_in is null: Sentry does not track package dimensions.
+        assert pkg["dimensions_in"] is None
+        assert isinstance(pkg["weight_lb"], (int, float))
+
+        assert isinstance(pkg["lines"], list) and len(pkg["lines"]) >= 1
+        for line in pkg["lines"]:
+            assert uuid.UUID(line["item_external_id"])
+            assert isinstance(line["quantity_packed"], int)
+
+        _assert_payload_matches_schema("pack.confirmed", 1, payload)
+
+
+def _advance_so_to_packed(client, auth_headers, so_number="SO-2026-001"):
+    """Picking + packing so the SO lands in PACKED ready for fulfill."""
+    _advance_so_through_picking(client, auth_headers, so_number)
+    order_resp = client.get(
+        f"/api/packing/order/{so_number}", headers=auth_headers
+    )
+    so_id = order_resp.get_json()["sales_order"]["so_id"]
+    _verify_pack_all(client, auth_headers, so_id=so_id, so_number=so_number)
+    client.post(
+        "/api/packing/complete",
+        json={"so_id": so_id},
+        headers=auth_headers,
+    )
+    return so_id
+
+
+class TestShipConfirmedEmission:
+    def test_fulfill_emits_ship_confirmed(self, client, auth_headers, seed_data):
+        so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/shipping/fulfill",
+            json={
+                "so_id": so_id,
+                "tracking_number": "1Z999AA10123456784",
+                "carrier": "UPS",
+                "ship_method": "GROUND",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "ship.confirmed"
+        assert row["aggregate_type"] == "sales_order"
+        assert row["aggregate_id"] == so_id
+        payload = row["payload"]
+        assert uuid.UUID(payload["sales_order_external_id"])
+        # tracking_numbers[] is array-shaped even though Sentry emits
+        # exactly one fulfillment per SO today.
+        assert payload["tracking_numbers"] == ["1Z999AA10123456784"]
+        assert payload["carrier"] == "UPS"
+        # service_level on the wire = Sentry's ship_method column
+        # (documented rename in the JSON Schema).
+        assert payload["service_level"] == "GROUND"
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+
+        # Single synthesised package, same shape as pack.confirmed.
+        assert isinstance(payload["packages"], list)
+        assert len(payload["packages"]) == 1
+        pkg = payload["packages"][0]
+        assert pkg["package_external_id"] == f"{payload['sales_order_external_id']}-pkg-1"
+        assert pkg["dimensions_in"] is None
+        assert isinstance(pkg["lines"], list) and len(pkg["lines"]) >= 1
+
+        _assert_payload_matches_schema("ship.confirmed", 1, payload)
+
+
+class TestTransferCompletedEmission:
+    def _seed_source_inventory(self, item_id, bin_id, warehouse_id, quantity):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (item_id, bin_id, lot_number) "
+            "DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand",
+            (item_id, bin_id, warehouse_id, quantity),
+        )
+        cur.close()
+
+    def test_move_emits_transfer_completed(self, client, auth_headers, seed_data):
+        # Seed from-bin so the move has inventory to pull from.
+        self._seed_source_inventory(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity=15,
+        )
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/transfers/move",
+            json={
+                "item_id": 1,
+                "from_bin_id": seed_data["staging_bin_id"],
+                "to_bin_id": 3,
+                "quantity": 5,
+                "reason": "transfer emission test",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "transfer.completed"
+        assert row["aggregate_type"] == "inventory_transfer"
+        payload = row["payload"]
+        assert uuid.UUID(payload["transfer_external_id"])
+        assert payload["from_warehouse_id"] == seed_data["warehouse_id"]
+        assert payload["to_warehouse_id"] == seed_data["warehouse_id"]
+
+        # lines[] must be array-shaped even though Sentry is single-line.
+        assert isinstance(payload["lines"], list)
+        assert len(payload["lines"]) == 1
+        line = payload["lines"][0]
+        assert uuid.UUID(line["item_external_id"])
+        assert line["quantity"] == 5
+
+        _assert_payload_matches_schema("transfer.completed", 1, payload)
+
+    def test_putaway_confirm_emits_nothing(self, client, auth_headers, seed_data):
+        """Decision K: putaway.confirm is an internal warehouse movement,
+        not a connector-visible transfer. The bin_transfers row it writes
+        is an audit record; the outbox must stay empty."""
+        # Receive 10 into the staging bin first so putaway has something
+        # to move.
+        receive_request_id = str(uuid.uuid4())
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {"item_id": 1, "quantity": 10, "bin_id": seed_data["staging_bin_id"]},
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": receive_request_id},
+        )
+
+        putaway_request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/putaway/confirm",
+            json={
+                "item_id": 1,
+                "from_bin_id": seed_data["staging_bin_id"],
+                "to_bin_id": 3,
+                "quantity": 10,
+            },
+            headers={**auth_headers, "X-Request-ID": putaway_request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        # The receive call emits receipt.completed (different source_txn_id);
+        # the putaway call emits nothing.
+        assert _query_event_rows(putaway_request_id) == []
+
+
+class TestVisibleAtGate:
+    """The DEFERRABLE INITIALLY DEFERRED trigger on integration_events
+    sets ``visible_at`` at COMMIT time. Inside the test fixture the
+    outer transaction is rolled back, so a "normal" commit never lands.
+    ``SET CONSTRAINTS ALL IMMEDIATE`` forces the deferred trigger to
+    fire synchronously, which is the same mechanism Postgres uses at
+    COMMIT - a cleaner proof than the rolled-back transaction pattern.
+
+    The commit-order-across-sessions guarantee has its own dedicated
+    coverage in ``test_events_migration.test_visible_at_respects_commit_order_across_sessions``
+    and in ``test_event_fifo``. This class only asserts the local
+    "NULL pre-commit, non-NULL post-trigger" invariant per Flask
+    handler.
+    """
+
+    def _force_trigger_fire(self):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        # SET CONSTRAINTS ALL IMMEDIATE fires every DEFERRED constraint
+        # (we only have the one visible_at trigger). Scoped to the
+        # fixture's open transaction via the conftest raw connection.
+        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        cur.close()
+
+    def test_receipt_visible_at_gate(self, client, auth_headers, seed_data):
+        request_id = str(uuid.uuid4())
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {"item_id": 1, "quantity": 1, "bin_id": seed_data["staging_bin_id"]},
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+
+        pre = _query_event_rows(request_id)
+        assert len(pre) == 1
+        assert pre[0]["visible_at"] is None
+
+        self._force_trigger_fire()
+
+        post = _query_event_rows(request_id)
+        assert len(post) == 1
+        assert post[0]["visible_at"] is not None
+
+
+class TestIdempotentReplay:
+    """Replay safety at the HTTP layer for handler-idempotent paths.
+
+    For handlers that flip an aggregate's status at their first
+    successful call (pack, ship, complete_batch, review_approve), a
+    replay of the same request with the same X-Request-ID MUST NOT
+    produce a second integration_events row. Two mechanisms combine
+    to deliver this: the handler's status guard returns 400 on the
+    second call (so emit_event is never reached), and even if it were,
+    the (aggregate_type, aggregate_id, event_type, source_txn_id)
+    UNIQUE constraint on integration_events would collapse the insert
+    via emit_event's ON CONFLICT DO NOTHING.
+
+    Receive and transfer and direct_adjustment create NEW aggregates
+    on each call and are HTTP-non-idempotent by design; the per-aggregate
+    idempotence for those paths is tested at the emit_event layer in
+    ``test_events_service.py``.
+    """
+
+    def test_complete_packing_replay_produces_one_event(
+        self, client, auth_headers, seed_data
+    ):
+        so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+        # Packing is already complete from _advance_so_to_packed, which
+        # itself called /api/packing/complete. A retry of the endpoint
+        # must not double-emit.
+        first_request_id = str(uuid.uuid4())
+        first = client.post(
+            "/api/packing/complete",
+            json={"so_id": so_id},
+            headers={**auth_headers, "X-Request-ID": first_request_id},
+        )
+        # First call fails (SO already PACKED) but must not double-emit.
+        assert first.status_code == 400
+        assert _query_event_rows(first_request_id) == []
+
+    def test_fulfill_replay_produces_one_event(self, client, auth_headers, seed_data):
+        so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+        request_id = str(uuid.uuid4())
+        first = client.post(
+            "/api/shipping/fulfill",
+            json={
+                "so_id": so_id,
+                "tracking_number": "1Z-REPLAY",
+                "carrier": "UPS",
+                "ship_method": "GROUND",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert first.status_code == 200
+        assert len(_query_event_rows(request_id)) == 1
+
+        # Retry with the same X-Request-ID. Handler rejects on status
+        # check; no second event row lands.
+        second = client.post(
+            "/api/shipping/fulfill",
+            json={
+                "so_id": so_id,
+                "tracking_number": "1Z-REPLAY",
+                "carrier": "UPS",
+                "ship_method": "GROUND",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert second.status_code == 400
+        assert len(_query_event_rows(request_id)) == 1
+
+    def test_review_approve_replay_produces_one_event(
+        self, client, auth_headers, seed_data
+    ):
+        adj_id = _insert_pending_adjustment(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity_change=-1,
+            reason_code="CORRECTION",
+            submitted_by="admin",
+        )
+        request_id = str(uuid.uuid4())
+        first = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert first.status_code == 200
+        assert len(_query_event_rows(request_id)) == 1
+
+        # Second call: status is no longer PENDING so the handler loop
+        # skips without emitting.
+        second = client.post(
+            "/api/admin/adjustments/review",
+            json={"decisions": [{"adjustment_id": adj_id, "action": "approve"}]},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert second.status_code == 200
+        assert second.get_json()["approved"] == 0
+        assert len(_query_event_rows(request_id)) == 1

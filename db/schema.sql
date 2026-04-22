@@ -5,6 +5,11 @@
 -- Production:  PostgreSQL Cloud or Fabric SQL Database
 -- ============================================================
 
+-- gen_random_uuid() backs the external_id DEFAULT on every aggregate /
+-- actor table below. The extension is idempotent and also required by
+-- the audit_log hash-chain trigger further down.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ============================================================
 -- LOCATIONS & WAREHOUSES
 -- ============================================================
@@ -45,6 +50,7 @@ CREATE TABLE bins (
     max_volume_cuft DECIMAL(10,2),
     description VARCHAR(200),
     is_active BOOLEAN DEFAULT TRUE,
+    external_id UUID UNIQUE NOT NULL,
     UNIQUE(warehouse_id, bin_code)
 );
 
@@ -74,7 +80,8 @@ CREATE TABLE items (
     is_serial_tracked BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE INDEX ix_items_upc ON items(upc);
@@ -119,7 +126,8 @@ CREATE TABLE purchase_orders (
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     received_at TIMESTAMPTZ,
-    created_by VARCHAR(100)
+    created_by VARCHAR(100),
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE purchase_order_lines (
@@ -150,7 +158,8 @@ CREATE TABLE item_receipts (
     serial_number VARCHAR(100),
     received_by VARCHAR(100) NOT NULL,
     received_at TIMESTAMPTZ DEFAULT NOW(),
-    notes VARCHAR(500)
+    notes VARCHAR(500),
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -178,7 +187,8 @@ CREATE TABLE sales_orders (
     shipped_at TIMESTAMPTZ,
     carrier VARCHAR(100),
     tracking_number VARCHAR(255),
-    created_by VARCHAR(100)
+    created_by VARCHAR(100),
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE sales_order_lines (
@@ -277,7 +287,8 @@ CREATE TABLE bin_transfers (
     lot_number VARCHAR(50),
     reason VARCHAR(200),
     transferred_by VARCHAR(100) NOT NULL,
-    transferred_at TIMESTAMPTZ DEFAULT NOW()
+    transferred_at TIMESTAMPTZ DEFAULT NOW(),
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -291,7 +302,8 @@ CREATE TABLE cycle_counts (
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',  -- 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'VARIANCE'
     assigned_to VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE cycle_count_lines (
@@ -320,7 +332,8 @@ CREATE TABLE item_fulfillments (
     ship_method VARCHAR(50),
     status VARCHAR(20) DEFAULT 'SHIPPED',
     shipped_by VARCHAR(100),
-    shipped_at TIMESTAMPTZ DEFAULT NOW()
+    shipped_at TIMESTAMPTZ DEFAULT NOW(),
+    external_id UUID UNIQUE NOT NULL
 );
 
 CREATE TABLE item_fulfillment_lines (
@@ -349,7 +362,8 @@ CREATE TABLE inventory_adjustments (
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',  -- 'PENDING', 'APPROVED', 'REJECTED'
     adjusted_by VARCHAR(100) NOT NULL,
     adjusted_at TIMESTAMPTZ DEFAULT NOW(),
-    cycle_count_id INT REFERENCES cycle_counts(count_id)
+    cycle_count_id INT REFERENCES cycle_counts(count_id),
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -465,7 +479,8 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     last_login TIMESTAMPTZ,
     password_changed_at TIMESTAMPTZ,
-    must_change_password BOOLEAN NOT NULL DEFAULT FALSE
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+    external_id UUID UNIQUE NOT NULL
 );
 
 -- ============================================================
@@ -558,6 +573,11 @@ CREATE TABLE connector_credentials (
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     credential_key VARCHAR(128) NOT NULL,
     encrypted_value TEXT NOT NULL,
+    -- v1.5.0 #127: credential_type discriminates v1.3's connector_api_key
+    -- rows from future v2+ outbound flavours (outbound_oauth,
+    -- outbound_api_key, outbound_bearer). Inbound tokens live in
+    -- wms_tokens, not here.
+    credential_type VARCHAR(32) NOT NULL DEFAULT 'connector_api_key',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(connector_name, warehouse_id, credential_key)
@@ -586,3 +606,164 @@ CREATE TABLE sync_state (
 );
 
 CREATE INDEX ix_sync_state_connector ON sync_state(connector_name, warehouse_id);
+
+-- ============================================================
+-- CONNECTORS + CONSUMER GROUPS (v1.5.0 polling substrate)
+-- ============================================================
+-- connectors is deliberately minimal in v1.5.0. v1.9 expands it to
+-- the full framework-doc shape; landing the PK now lets consumer_groups
+-- (below), wms_tokens (migration 023), and webhook_deliveries (v1.6)
+-- all carry the same FK without a later rename.
+--
+-- consumer_groups tracks per-group cursor state for GET /api/v1/events
+-- polling. Decision T throttles last_heartbeat writes to once per 30s
+-- inside the handler to cut hot-path write amplification.
+--
+-- The identical DDL lives in db/migrations/021_consumer_groups.sql
+-- for deployments that were created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE connectors (
+    connector_id VARCHAR(64) PRIMARY KEY,
+    display_name VARCHAR(128) NOT NULL,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE consumer_groups (
+    consumer_group_id VARCHAR(64)  PRIMARY KEY,
+    connector_id      VARCHAR(64)  NOT NULL REFERENCES connectors(connector_id),
+    last_cursor       BIGINT       NOT NULL DEFAULT 0,
+    last_heartbeat    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    subscription      JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_consumer_groups_connector ON consumer_groups (connector_id);
+
+-- ============================================================
+-- WMS TOKENS (v1.5.0 inbound API tokens for X-WMS-Token auth)
+-- ============================================================
+-- Hash-only storage per Decision P. token_hash is
+-- SHA256(SENTRY_TOKEN_PEPPER || plaintext).hexdigest() per Decision Q.
+-- Scope columns are typed arrays per Decision S. Default expiry is
+-- one year per Decision R.
+--
+-- The identical DDL lives in db/migrations/023_wms_tokens.sql for
+-- deployments created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE wms_tokens (
+    token_id       BIGSERIAL     PRIMARY KEY,
+    token_name     VARCHAR(128)  NOT NULL,
+    token_hash     CHAR(64)      UNIQUE NOT NULL,
+    warehouse_ids  BIGINT[]      NOT NULL DEFAULT '{}',
+    event_types    TEXT[]        NOT NULL DEFAULT '{}',
+    endpoints      TEXT[]        NOT NULL DEFAULT '{}',
+    connector_id   VARCHAR(64)   REFERENCES connectors(connector_id),
+    status         VARCHAR(16)   NOT NULL DEFAULT 'active',
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    rotated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    expires_at     TIMESTAMPTZ   NOT NULL DEFAULT (NOW() + INTERVAL '1 year'),
+    revoked_at     TIMESTAMPTZ,
+    last_used_at   TIMESTAMPTZ
+);
+
+CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
+
+-- ============================================================
+-- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
+-- ============================================================
+-- Per-scan metadata for GET /api/v1/snapshot/inventory. The API tier
+-- INSERTs a 'pending' row; the snapshot-keeper daemon (#132) opens a
+-- REPEATABLE READ transaction, exports a pg_snapshot_id via
+-- pg_export_snapshot(), writes it back, and holds the transaction
+-- idle until the scan completes. Keeper wake-up is NOTIFY-driven
+-- (LISTEN on 'snapshot_scans_pending') with a 1s fallback poll.
+--
+-- The identical DDL lives in db/migrations/024_snapshot_scans.sql
+-- for deployments created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE snapshot_scans (
+    scan_id              UUID          PRIMARY KEY,
+    pg_snapshot_id       TEXT,
+    snapshot_event_id    BIGINT,
+    warehouse_id         INTEGER       NOT NULL,
+    started_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    last_accessed_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    status               VARCHAR(16)   NOT NULL DEFAULT 'pending',
+    created_by_token_id  BIGINT        REFERENCES wms_tokens(token_id)
+);
+
+CREATE INDEX snapshot_scans_status_started ON snapshot_scans (status, started_at);
+
+CREATE OR REPLACE FUNCTION notify_snapshot_scans_pending()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.status = 'pending' THEN
+        PERFORM pg_notify('snapshot_scans_pending', NEW.scan_id::text);
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER tr_snapshot_scans_notify
+    AFTER INSERT ON snapshot_scans
+    FOR EACH ROW EXECUTE FUNCTION notify_snapshot_scans_pending();
+
+-- ============================================================
+-- INTEGRATION EVENTS (v1.5.0 transactional outbox)
+-- ============================================================
+-- Every inventory-changing handler writes one row here inside its own
+-- transaction. External connectors poll /api/v1/events with a cursor
+-- over event_id. The visible_at deferred-constraint trigger sets
+-- visible_at at COMMIT time so readers see events in commit order even
+-- though BIGSERIAL may have assigned event_ids out of commit order.
+-- Readers filter "visible_at <= NOW() - INTERVAL '2 seconds'
+-- AND event_id > cursor"; the 2-second buffer tolerates the gap
+-- between a trigger firing and the COMMIT becoming visible to a
+-- separate session.
+--
+-- The identical DDL lives in db/migrations/020_integration_events.sql
+-- for deployments that were created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE integration_events (
+    event_id              BIGSERIAL    PRIMARY KEY,
+    event_type            VARCHAR(64)  NOT NULL,
+    event_version         SMALLINT     NOT NULL DEFAULT 1,
+    event_timestamp       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    aggregate_type        VARCHAR(32)  NOT NULL,
+    aggregate_id          BIGINT       NOT NULL,
+    aggregate_external_id UUID         NOT NULL,
+    warehouse_id          INT          NOT NULL REFERENCES warehouses(warehouse_id),
+    source_txn_id         UUID         NOT NULL,
+    visible_at            TIMESTAMPTZ,
+    payload               JSONB        NOT NULL,
+    CONSTRAINT integration_events_idempotency_key
+        UNIQUE (aggregate_type, aggregate_id, event_type, source_txn_id)
+);
+
+CREATE INDEX ix_integration_events_warehouse_event
+    ON integration_events (warehouse_id, event_id);
+CREATE INDEX ix_integration_events_type_event
+    ON integration_events (event_type, event_id);
+CREATE INDEX ix_integration_events_visible_at
+    ON integration_events (visible_at)
+    WHERE visible_at IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION set_integration_event_visible_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE integration_events
+       SET visible_at = clock_timestamp()
+     WHERE event_id = NEW.event_id;
+    RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER tr_integration_events_visible_at
+    AFTER INSERT ON integration_events
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION set_integration_event_visible_at();

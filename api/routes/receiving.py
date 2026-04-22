@@ -2,6 +2,7 @@
 Receiving endpoints: PO lookup and item receipt submission.
 """
 
+import uuid
 from datetime import datetime, timezone
 
 from flask import Blueprint, g, jsonify, request
@@ -16,6 +17,7 @@ from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.receiving import CancelReceivingRequest, ReceiveItemsRequest
 from services.audit_service import write_audit_log
+from services.events_service import emit_event, get_user_external_id
 from services.inventory_service import add_inventory
 from utils.validation import validate_body
 
@@ -108,12 +110,18 @@ def receive_items(validated):
     items = validated.items
 
     # Validate PO with warehouse scope at SELECT time (V-026).
+    # v1.5.0 #119: FOR UPDATE holds a row lock on the purchase_orders
+    # aggregate for the rest of this transaction so two concurrent
+    # receives against the same PO produce per-aggregate FIFO on the
+    # integration_events outbox. The PO line lock (V-029) below is
+    # stricter than this one on its own axis; both hold.
     scope_clause, scope_params = warehouse_scope_clause("warehouse_id")
     po = g.db.execute(
         text(
             f"""
-            SELECT po_id, status, warehouse_id FROM purchase_orders
+            SELECT po_id, status, warehouse_id, external_id FROM purchase_orders
             WHERE po_id = :po_id {scope_clause}
+            FOR UPDATE
             """
         ),
         {"po_id": po_id, **scope_params},
@@ -191,10 +199,10 @@ def receive_items(validated):
             text(
                 """
                 INSERT INTO item_receipts (po_id, po_line_id, item_id, quantity_received, bin_id,
-                                           warehouse_id, lot_number, serial_number, received_by, notes)
+                                           warehouse_id, lot_number, serial_number, received_by, notes, external_id)
                 VALUES (:po_id, :po_line_id, :item_id, :quantity, :bin_id,
-                        :warehouse_id, :lot_number, :serial_number, :received_by, :notes)
-                RETURNING receipt_id
+                        :warehouse_id, :lot_number, :serial_number, :received_by, :notes, :ext_id)
+                RETURNING receipt_id, external_id, received_at
                 """
             ),
             {
@@ -208,10 +216,23 @@ def receive_items(validated):
                 "serial_number": serial_number,
                 "received_by": username,
                 "notes": notes,
+                "ext_id": str(uuid.uuid4()),
             },
         )
-        receipt_id = result.fetchone()[0]
+        receipt_row = result.fetchone()
+        receipt_id = receipt_row.receipt_id
+        receipt_external_id = receipt_row.external_id
+        receipt_at = receipt_row.received_at
         receipt_ids.append(receipt_id)
+
+        # Look up the item's external_id for the wire payload. Cheap,
+        # one round-trip per receipt; a higher-volume emit site would
+        # memoize per-request.
+        item_row = g.db.execute(
+            text("SELECT external_id FROM items WHERE item_id = :iid"),
+            {"iid": item_id},
+        ).fetchone()
+        item_external_id = str(item_row.external_id) if item_row else None
 
         # 2 & 3. Update PO line quantity and status
         new_qty_received = po_line.quantity_received + quantity
@@ -239,6 +260,36 @@ def receive_items(validated):
             user_id=username,
             warehouse_id=warehouse_id,
             details={"item_id": item_id, "quantity": quantity, "bin_id": bin_id, "receipt_id": receipt_id},
+        )
+
+        # 6. v1.5.0 #112: emit receipt.completed on the integration_events
+        # outbox. One event per item_receipts row; lines[] is a
+        # single-element array in v1.5.0 (Sentry does not batch items
+        # into one receipt). Visible_at is set at COMMIT by the deferred
+        # trigger so readers see events in commit order.
+        emit_event(
+            g.db,
+            event_type="receipt.completed",
+            event_version=1,
+            aggregate_type="item_receipt",
+            aggregate_id=receipt_id,
+            aggregate_external_id=receipt_external_id,
+            warehouse_id=warehouse_id,
+            source_txn_id=g.source_txn_id,
+            payload={
+                "receipt_external_id": str(receipt_external_id),
+                "po_external_id": str(po.external_id),
+                "lines": [
+                    {
+                        "item_external_id": item_external_id,
+                        "quantity_received": quantity,
+                        "lot_number": lot_number,
+                        "serial_number": serial_number,
+                    }
+                ],
+                "completed_by_user_external_id": get_user_external_id(g.db, username),
+                "completed_at": receipt_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
         )
 
     # Update PO status based on all lines

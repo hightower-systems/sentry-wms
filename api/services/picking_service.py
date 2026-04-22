@@ -5,10 +5,12 @@ short picks, batch completion.
 
 from datetime import datetime, timezone
 
+from flask import g, has_request_context
 from sqlalchemy import text
 
 from services.audit_service import write_audit_log
 from services.connector_stub import enrich_order
+from services.events_service import emit_event, get_user_external_id
 
 from constants import (
     BATCH_OPEN, BATCH_IN_PROGRESS, BATCH_COMPLETED,
@@ -601,22 +603,83 @@ def complete_batch(db, batch_id, username):
     )
 
     # 3. Update each SO to PICKING
+    # v1.5.0 #119: FOR UPDATE OF so locks each sales_orders row for the
+    # rest of this transaction so two concurrent complete_batch calls
+    # that share an SO serialise on the SO aggregate. The lock scope
+    # is sales_orders only; pick_batch_orders rows are not locked.
     so_rows = db.execute(
         text(
             """
-            SELECT pbo.so_id, so.so_number
+            SELECT pbo.so_id, so.so_number, so.external_id, so.warehouse_id
             FROM pick_batch_orders pbo
             JOIN sales_orders so ON so.so_id = pbo.so_id
             WHERE pbo.batch_id = :bid
+            FOR UPDATE OF so
             """
         ),
         {"bid": batch_id},
     ).fetchall()
 
+    # v1.5.0 #116: one pick.confirmed emit per SO that flips to PICKED.
+    # All events share g.source_txn_id (the same request), but each has
+    # a distinct aggregate_id (so_id) so the integration_events
+    # idempotency constraint treats them as separate rows. Outside a
+    # Flask request context (unit tests that call complete_batch
+    # directly) emission is skipped; the HTTP-driven path is the only
+    # supported v1.5.0 emit trigger.
+    in_request = has_request_context()
+    source_txn_id = g.source_txn_id if in_request else None
+    user_ext_id = get_user_external_id(db, username) if in_request else None
+    completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     for so in so_rows:
         db.execute(
             text("UPDATE sales_orders SET status = :status, picked_at = NOW() WHERE so_id = :so_id"),
             {"so_id": so.so_id, "status": SO_PICKED},
+        )
+
+        if not in_request:
+            continue
+
+        # Fetch the SO's lines with item external_ids for the envelope.
+        line_rows = db.execute(
+            text(
+                """
+                SELECT i.external_id AS item_external_id, sol.quantity_picked
+                  FROM sales_order_lines sol
+                  JOIN items i ON i.item_id = sol.item_id
+                 WHERE sol.so_id = :sid
+                 ORDER BY sol.line_number
+                """
+            ),
+            {"sid": so.so_id},
+        ).fetchall()
+        emit_event(
+            db,
+            event_type="pick.confirmed",
+            event_version=1,
+            aggregate_type="sales_order",
+            aggregate_id=so.so_id,
+            aggregate_external_id=so.external_id,
+            warehouse_id=so.warehouse_id,
+            source_txn_id=source_txn_id,
+            payload={
+                "sales_order_external_id": str(so.external_id),
+                "lines": [
+                    {
+                        "item_external_id": str(line.item_external_id),
+                        "quantity_picked": line.quantity_picked,
+                        # sales_order_lines has no lot/serial columns in
+                        # v1.5.0; the wire contract keeps the fields
+                        # nullable for a future schema bump.
+                        "lot_number": None,
+                        "serial_number": None,
+                    }
+                    for line in line_rows
+                ],
+                "completed_by_user_external_id": user_ext_id,
+                "completed_at": completed_at,
+            },
         )
 
     # 4. Audit log

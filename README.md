@@ -3,8 +3,8 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.4.5-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-740%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-1.5.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-910%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.4.5 - Reverse-proxy hotfix follow-up (pass `TRUST_PROXY` to the api container in `docker-compose.yml`, log ProxyFix state at startup, expose `proxy_fix_active` on `/api/health`)**
+**v1.5.0 - Outbound Poll release. Transactional outbox + deferred visible_at trigger + seven event emissions (receipt, adjustment x2, transfer, pick, pack, ship, cycle_count) + GET /api/v1/events polling with consumer groups + bulk snapshot endpoint backed by a `pg_export_snapshot` keeper daemon + X-WMS-Token inbound auth with hash-only vault + admin panel CRUD for tokens and consumer groups. 910 backend tests passing.**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -309,6 +309,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | **v1.4.3** | **Mobile patch - put-away done screen no longer overlays the success checkmark on the title when session history grows (#103), scan inputs now allow keyboard fallback for manual entry and copy/paste without disturbing hardware-scan workflows (#104, #105, refs #70)** | ✅ **Released** |
 | **v1.4.4** | **Reverse-proxy hotfix - trust `X-Forwarded-*` headers behind a TLS-terminating reverse proxy when `TRUST_PROXY=true`, fixing CSRF `403` on every mutation in nginx / Caddy / Traefik / ALB deployments (#107, refs Fruxh #98), deployment docs expanded with annotated snippets and multi-hop guidance** | ✅ **Released** |
 | **v1.4.5** | **Reverse-proxy hotfix follow-up - pass `TRUST_PROXY` to the api container in `docker-compose.yml` (v1.4.4 added the Flask side but not the Compose wiring, so the env var never reached the container; #136, refs Fruxh #98), log ProxyFix state at startup for `docker compose logs api \| grep ProxyFix` verification, expose `proxy_fix_active` on `/api/health` so the wiring is observable from outside the container, deployment docs gain `.env` location and `up -d` vs `restart` clarifications** | ✅ **Released** |
+| **v1.5.0** | **Outbound Poll release - `integration_events` transactional outbox + deferred `visible_at` trigger + seven event emissions wired through the mobile / admin write paths + `GET /api/v1/events` cursor-paginated polling with consumer groups + `GET /api/v1/snapshot/inventory` for the initial load backed by a `pg_export_snapshot` keeper daemon + X-WMS-Token inbound auth with hash-only `wms_tokens` vault + admin panel CRUD for tokens and consumer groups. Five migrations (020-024) plus 025 to drop the `external_id` DEFAULT. New `SENTRY_TOKEN_PEPPER` env var and new `snapshot-keeper` compose service.** | ✅ **Released** |
 | v2.0.0 | First-party ERP + commerce connectors (NetSuite, QuickBooks, Shopify, Fabric) on top of the v1.3 connector framework | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -321,4 +322,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.4.5
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.5.0

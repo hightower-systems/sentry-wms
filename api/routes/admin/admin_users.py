@@ -1,6 +1,8 @@
 """Users, Audit Log, Dashboard Stats, Settings, Cycle Counts, and Adjustment Approval endpoints."""
 
 import math
+import uuid
+from datetime import datetime, timezone
 
 import bcrypt
 from flask import g, jsonify, request
@@ -18,6 +20,7 @@ from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustm
 from schemas.settings import UpdateSettingsRequest
 from schemas.users import CreateUserRequest, UpdateUserRequest
 from services.audit_service import write_audit_log
+from services.events_service import emit_event, get_user_external_id
 from services.auth_service import validate_password
 from services.inventory_service import add_inventory
 from utils.validation import validate_body
@@ -78,13 +81,13 @@ def create_user(validated):
     pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     result = g.db.execute(
         text("""
-            INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, allowed_functions)
-            VALUES (:u, :pw, :name, :role, :wid, :wids, :funcs)
+            INSERT INTO users (username, password_hash, full_name, role, warehouse_id, warehouse_ids, allowed_functions, external_id)
+            VALUES (:u, :pw, :name, :role, :wid, :wids, :funcs, :ext_id)
             RETURNING user_id, username, full_name, role, warehouse_id, warehouse_ids, allowed_functions, is_active, created_at
         """),
         {"u": data["username"], "pw": pw_hash, "name": data["full_name"],
          "role": data["role"], "wid": warehouse_id, "wids": warehouse_ids,
-         "funcs": allowed_functions},
+         "funcs": allowed_functions, "ext_id": str(uuid.uuid4())},
     )
     row = result.fetchone()
     g.db.commit()
@@ -652,8 +655,16 @@ def review_adjustments(validated):
         if not adj_id or action not in ("approve", "reject"):
             continue
 
+        # v1.5.0 #119: FOR UPDATE serialises concurrent approvals of the
+        # same adjustment so the status-check-then-update pattern is
+        # race-safe and the adjustment.applied / cycle_count.adjusted
+        # event emits in commit order on the integration_events outbox.
         row = g.db.execute(
-            text("SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change, status, adjusted_by, cycle_count_id FROM inventory_adjustments WHERE adjustment_id = :aid"),
+            text(
+                "SELECT adjustment_id, item_id, bin_id, warehouse_id, quantity_change,"
+                " reason_code, status, adjusted_by, cycle_count_id, external_id"
+                " FROM inventory_adjustments WHERE adjustment_id = :aid FOR UPDATE"
+            ),
             {"aid": adj_id},
         ).fetchone()
 
@@ -705,6 +716,87 @@ def review_adjustments(validated):
                     details={"cycle_count_id": row.cycle_count_id, "quantity_change": row.quantity_change},
                 )
 
+            # v1.5.0 #113: emit cycle_count.adjusted OR adjustment.applied
+            # per Decision C routing. cycle_count_id non-null => this row
+            # is the resolution of a variance count; otherwise it is a
+            # normal inventory correction. Fires only on APPROVE (once
+            # per approved variance); rejects emit nothing.
+            item_ext = g.db.execute(
+                text("SELECT external_id FROM items WHERE item_id = :iid"),
+                {"iid": row.item_id},
+            ).fetchone()
+            bin_ext = g.db.execute(
+                text("SELECT external_id FROM bins WHERE bin_id = :bid"),
+                {"bid": row.bin_id},
+            ).fetchone()
+            applied_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+            if row.cycle_count_id:
+                # Join cycle_counts (for its external_id) and
+                # cycle_count_lines (for counted qty + counter name) so
+                # the event payload carries the variance context.
+                cc = g.db.execute(
+                    text(
+                        """
+                        SELECT cc.external_id AS cycle_count_external_id,
+                               ccl.counted_quantity,
+                               ccl.expected_quantity,
+                               ccl.counted_by,
+                               ccl.counted_at
+                          FROM cycle_counts cc
+                          JOIN cycle_count_lines ccl
+                            ON ccl.count_id = cc.count_id
+                         WHERE cc.count_id = :cid
+                           AND ccl.item_id = :iid
+                         LIMIT 1
+                        """
+                    ),
+                    {"cid": row.cycle_count_id, "iid": row.item_id},
+                ).fetchone()
+                emit_event(
+                    g.db,
+                    event_type="cycle_count.adjusted",
+                    event_version=1,
+                    aggregate_type="inventory_adjustment",
+                    aggregate_id=adj_id,
+                    aggregate_external_id=row.external_id,
+                    warehouse_id=row.warehouse_id,
+                    source_txn_id=g.source_txn_id,
+                    payload={
+                        "cycle_count_external_id": str(cc.cycle_count_external_id),
+                        "item_external_id": str(item_ext.external_id),
+                        "bin_external_id": str(bin_ext.external_id),
+                        "counted_quantity": cc.counted_quantity,
+                        "system_quantity": cc.expected_quantity,
+                        "quantity_delta": row.quantity_change,
+                        "counted_by_user_external_id": get_user_external_id(g.db, cc.counted_by),
+                        "counted_at": cc.counted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    },
+                )
+            else:
+                emit_event(
+                    g.db,
+                    event_type="adjustment.applied",
+                    event_version=1,
+                    aggregate_type="inventory_adjustment",
+                    aggregate_id=adj_id,
+                    aggregate_external_id=row.external_id,
+                    warehouse_id=row.warehouse_id,
+                    source_txn_id=g.source_txn_id,
+                    payload={
+                        "adjustment_external_id": str(row.external_id),
+                        "item_external_id": str(item_ext.external_id),
+                        "bin_external_id": str(bin_ext.external_id),
+                        "quantity_delta": row.quantity_change,
+                        "reason_code": row.reason_code,
+                        # The APPROVER is the actor who effectuated the
+                        # change; row.adjusted_by is the submitter
+                        # (different person in the two-step flow).
+                        "applied_by_user_external_id": get_user_external_id(g.db, g.current_user["username"]),
+                        "applied_at": applied_at,
+                    },
+                )
+
             approved += 1
         else:
             g.db.execute(
@@ -734,13 +826,16 @@ def direct_adjustment(validated):
     reason = validated.reason
 
     # Validate item exists
-    item = g.db.execute(text("SELECT item_id, sku FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
+    item = g.db.execute(
+        text("SELECT item_id, sku, external_id FROM items WHERE item_id = :iid"),
+        {"iid": item_id},
+    ).fetchone()
     if not item:
         return jsonify({"error": "Item not found"}), 404
 
     # Validate bin exists and belongs to warehouse
     bin_row = g.db.execute(
-        text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
+        text("SELECT bin_id, bin_code, external_id FROM bins WHERE bin_id = :bid AND warehouse_id = :wid"),
         {"bid": bin_id, "wid": warehouse_id},
     ).fetchone()
     if not bin_row:
@@ -751,8 +846,13 @@ def direct_adjustment(validated):
         add_inventory(g.db, item_id, bin_id, warehouse_id, quantity)
     else:
         # REMOVE  -  validate sufficient stock
+        # v1.5.0 #119: FOR UPDATE on the inventory row is the
+        # serialisation point for concurrent direct-adjustment REMOVEs
+        # against the same item+bin. The ADD branch goes through
+        # add_inventory() which already locks the target row (V-030);
+        # this branch does its own SELECT so it needs its own lock.
         inv = g.db.execute(
-            text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid"),
+            text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid FOR UPDATE"),
             {"iid": item_id, "bid": bin_id},
         ).fetchone()
         available = inv.quantity_on_hand if inv else 0
@@ -772,9 +872,9 @@ def direct_adjustment(validated):
     # Create adjustment record as APPROVED
     adj = g.db.execute(
         text("""
-            INSERT INTO inventory_adjustments (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, adjusted_at)
-            VALUES (:iid, :bid, :wid, :qty_change, :reason_code, :reason_detail, :status, :user_id, NOW())
-            RETURNING adjustment_id, adjusted_at
+            INSERT INTO inventory_adjustments (item_id, bin_id, warehouse_id, quantity_change, reason_code, reason_detail, status, adjusted_by, adjusted_at, external_id)
+            VALUES (:iid, :bid, :wid, :qty_change, :reason_code, :reason_detail, :status, :user_id, NOW(), :ext_id)
+            RETURNING adjustment_id, adjusted_at, external_id
         """),
         {
             "iid": item_id, "bid": bin_id, "wid": warehouse_id,
@@ -783,6 +883,7 @@ def direct_adjustment(validated):
             "reason_detail": reason,
             "status": ADJ_APPROVED,
             "user_id": g.current_user["user_id"],
+            "ext_id": str(uuid.uuid4()),
         },
     ).fetchone()
 
@@ -796,6 +897,31 @@ def direct_adjustment(validated):
             "bin_id": bin_id,
             "quantity": quantity,
             "reason": reason,
+        },
+    )
+
+    # v1.5.0 #114: emit adjustment.applied on the integration_events
+    # outbox. direct_adjustment auto-approves inline so the admin doing
+    # the call is both proposer and effectuator; applied_by_user_external_id
+    # names that admin. cycle_count_id is always null on this path, so
+    # the event is never cycle_count.adjusted here.
+    emit_event(
+        g.db,
+        event_type="adjustment.applied",
+        event_version=1,
+        aggregate_type="inventory_adjustment",
+        aggregate_id=adj.adjustment_id,
+        aggregate_external_id=adj.external_id,
+        warehouse_id=warehouse_id,
+        source_txn_id=g.source_txn_id,
+        payload={
+            "adjustment_external_id": str(adj.external_id),
+            "item_external_id": str(item.external_id),
+            "bin_external_id": str(bin_row.external_id),
+            "quantity_delta": quantity_change,
+            "reason_code": "DIRECT_ADJUSTMENT",
+            "applied_by_user_external_id": get_user_external_id(g.db, g.current_user["username"]),
+            "applied_at": adj.adjusted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         },
     )
 
