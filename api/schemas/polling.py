@@ -1,8 +1,8 @@
-"""Pydantic query schemas for /api/v1/events (v1.5.0 #122)."""
+"""Pydantic schemas for /api/v1/events (v1.5.0 #122 + #123)."""
 
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PollQuery(BaseModel):
@@ -28,3 +28,18 @@ class PollQuery(BaseModel):
         if self.after is not None and self.consumer_group is not None:
             raise ValueError("after and consumer_group are mutually exclusive")
         return self
+
+
+class AckBody(BaseModel):
+    """POST /api/v1/events/ack body (plan 2.4).
+
+    ``cursor`` is the highest event_id the consumer has finished
+    processing. The server advances ``last_cursor = max(last_cursor,
+    cursor)`` via an atomic ``UPDATE ... WHERE last_cursor <= :cursor``
+    so out-of-order acks are no-ops without a separate race-free read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    consumer_group: str = Field(..., min_length=1, max_length=64)
+    cursor: int = Field(..., ge=0)

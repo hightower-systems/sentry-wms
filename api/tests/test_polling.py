@@ -416,6 +416,135 @@ class TestConsumerGroupMode:
         assert [e["event_id"] for e in resp.get_json()["events"]] == [ship]
 
 
+class TestAckCursor:
+    def _setup_group(
+        self,
+        consumer_group_id="ack-test-cg",
+        connector_id="test-connector",
+        last_cursor=0,
+    ):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO connectors (connector_id, display_name) VALUES (%s, 'Test') "
+            "ON CONFLICT DO NOTHING",
+            (connector_id,),
+        )
+        cur.execute(
+            "INSERT INTO consumer_groups (consumer_group_id, connector_id, last_cursor) "
+            "VALUES (%s, %s, %s)",
+            (consumer_group_id, connector_id, last_cursor),
+        )
+        cur.close()
+
+    def _cursor_value(self, consumer_group_id):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_cursor FROM consumer_groups WHERE consumer_group_id = %s",
+            (consumer_group_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+
+    def _ack(self, client, plaintext, consumer_group, cursor):
+        return client.post(
+            "/api/v1/events/ack",
+            json={"consumer_group": consumer_group, "cursor": cursor},
+            headers={"X-WMS-Token": plaintext},
+        )
+
+    def test_ack_advances_monotonic_cursor(self, client, scoped_token):
+        self._setup_group("ack-advance", last_cursor=10)
+        resp = self._ack(client, scoped_token["plaintext"], "ack-advance", 25)
+        assert resp.status_code == 200
+        assert resp.get_json() == {
+            "consumer_group": "ack-advance",
+            "last_cursor": 25,
+        }
+        assert self._cursor_value("ack-advance") == 25
+
+    def test_out_of_order_ack_is_noop(self, client, scoped_token):
+        """Plan 2.4: an ack lower than the current stored cursor is a
+        no-op via the UPDATE ... WHERE last_cursor <= :cursor clause.
+        The response echoes the unchanged last_cursor so the client
+        can see its stale ack did not regress the pointer."""
+        self._setup_group("ack-oow", last_cursor=50)
+        resp = self._ack(client, scoped_token["plaintext"], "ack-oow", 10)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["last_cursor"] == 50, (
+            "an out-of-order ack must not rewind the cursor"
+        )
+        assert self._cursor_value("ack-oow") == 50
+
+    def test_ack_equal_cursor_is_idempotent(self, client, scoped_token):
+        """Ack with the same value as the current cursor must succeed
+        (the WHERE clause is <=, not <) so a retried ack after a
+        client crash is idempotent."""
+        self._setup_group("ack-eq", last_cursor=42)
+        resp = self._ack(client, scoped_token["plaintext"], "ack-eq", 42)
+        assert resp.status_code == 200
+        assert resp.get_json()["last_cursor"] == 42
+
+    def test_ack_nonexistent_group_returns_404(self, client, scoped_token):
+        resp = self._ack(
+            client, scoped_token["plaintext"], "does-not-exist", 5
+        )
+        assert resp.status_code == 404
+
+    def test_ack_cross_connector_returns_403(self, client, seed_data):
+        """A token bound to connector A must not ack groups owned by
+        connector B. Tokens without a connector_id may ack any group
+        (legacy / admin shape)."""
+        # Set up connector B's group.
+        self._setup_group(
+            "ack-conn-b", connector_id="connector-b", last_cursor=0
+        )
+        # Issue a token bound to connector A.
+        plaintext = f"conn-a-token-{uuid.uuid4()}"
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO connectors (connector_id, display_name) VALUES ('connector-a', 'A') "
+            "ON CONFLICT DO NOTHING"
+        )
+        cur.execute(
+            "INSERT INTO wms_tokens (token_name, token_hash, connector_id, warehouse_ids, event_types) "
+            "VALUES (%s, %s, 'connector-a', %s, %s)",
+            (
+                f"conn-a-{uuid.uuid4()}",
+                _hash(plaintext),
+                [1],
+                ["receipt.completed"],
+            ),
+        )
+        cur.close()
+
+        resp = self._ack(client, plaintext, "ack-conn-b", 5)
+        assert resp.status_code == 403
+        assert resp.get_json()["error"] == "consumer_group_scope_violation"
+        # Cursor unchanged.
+        assert self._cursor_value("ack-conn-b") == 0
+
+    def test_ack_missing_fields_returns_400(self, client, scoped_token):
+        resp = client.post(
+            "/api/v1/events/ack",
+            json={"consumer_group": "ack-missing-cursor"},
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        assert resp.status_code == 400
+
+    def test_ack_requires_token(self, client, seed_data):
+        self._setup_group("ack-noauth", last_cursor=0)
+        resp = client.post(
+            "/api/v1/events/ack",
+            json={"consumer_group": "ack-noauth", "cursor": 1},
+        )
+        assert resp.status_code == 401
+
+
 class TestAggregateExternalIdIsDirect:
     def test_no_join_required_wire_reads_stored_uuid(
         self, client, scoped_token

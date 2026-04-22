@@ -30,8 +30,9 @@ from sqlalchemy import text
 
 from middleware.auth_middleware import require_wms_token
 from middleware.db import with_db
-from schemas.polling import PollQuery
+from schemas.polling import AckBody, PollQuery
 from services.rate_limit import limiter
+from utils.validation import validate_body
 
 
 polling_bp = Blueprint("polling", __name__)
@@ -241,3 +242,59 @@ def poll_events():
         g.db.commit()
 
     return jsonify({"events": events, "next_cursor": next_cursor})
+
+
+@polling_bp.route("/ack", methods=["POST"])
+@require_wms_token
+@limiter.limit("120 per minute")
+@validate_body(AckBody)
+@with_db
+def ack_cursor(validated: AckBody):
+    """Advance a consumer group's cursor atomically.
+
+    Semantics:
+    - 404 if the consumer group does not exist.
+    - 403 if the token has a connector_id that does not match the
+      group's connector_id (cross-connector isolation).
+    - UPDATE with ``WHERE last_cursor <= :cursor`` so an out-of-order
+      ack lower than the current stored value is a no-op. The
+      response always returns the row's current ``last_cursor`` so
+      the client can see whether its ack advanced the pointer.
+    """
+    cg_row = g.db.execute(
+        text(
+            "SELECT consumer_group_id, connector_id, last_cursor "
+            "  FROM consumer_groups WHERE consumer_group_id = :cgid"
+        ),
+        {"cgid": validated.consumer_group},
+    ).fetchone()
+    if cg_row is None:
+        return jsonify({"error": "consumer_group_not_found"}), 404
+
+    token_connector = g.current_token.get("connector_id")
+    if token_connector and token_connector != cg_row.connector_id:
+        # Cross-connector isolation: a token bound to connector A must
+        # not ack groups owned by connector B. Tokens without a
+        # connector_id (admin / legacy) can ack any group.
+        return jsonify({"error": "consumer_group_scope_violation"}), 403
+
+    g.db.execute(
+        text(
+            "UPDATE consumer_groups SET last_cursor = :cursor, updated_at = NOW() "
+            " WHERE consumer_group_id = :cgid AND last_cursor <= :cursor"
+        ),
+        {"cgid": validated.consumer_group, "cursor": validated.cursor},
+    )
+    refreshed = g.db.execute(
+        text(
+            "SELECT last_cursor FROM consumer_groups WHERE consumer_group_id = :cgid"
+        ),
+        {"cgid": validated.consumer_group},
+    ).fetchone()
+    g.db.commit()
+    return jsonify(
+        {
+            "consumer_group": validated.consumer_group,
+            "last_cursor": refreshed.last_cursor,
+        }
+    )
