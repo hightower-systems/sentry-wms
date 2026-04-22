@@ -15,6 +15,7 @@ VALID_ROLES = ("ADMIN", "USER")
 
 from routes.admin import (  # noqa: E402, F401
     admin_connectors,
+    admin_consumer_groups,
     admin_items,
     admin_orders,
     admin_tokens,
