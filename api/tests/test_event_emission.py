@@ -395,3 +395,90 @@ def _query_external_id(table, key_column, key_value):
     row = cur.fetchone()
     cur.close()
     return row[0] if row else None
+
+
+class TestTransferCompletedEmission:
+    def _seed_source_inventory(self, item_id, bin_id, warehouse_id, quantity):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (item_id, bin_id, lot_number) "
+            "DO UPDATE SET quantity_on_hand = EXCLUDED.quantity_on_hand",
+            (item_id, bin_id, warehouse_id, quantity),
+        )
+        cur.close()
+
+    def test_move_emits_transfer_completed(self, client, auth_headers, seed_data):
+        # Seed from-bin so the move has inventory to pull from.
+        self._seed_source_inventory(
+            item_id=1,
+            bin_id=seed_data["staging_bin_id"],
+            warehouse_id=seed_data["warehouse_id"],
+            quantity=15,
+        )
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/transfers/move",
+            json={
+                "item_id": 1,
+                "from_bin_id": seed_data["staging_bin_id"],
+                "to_bin_id": 3,
+                "quantity": 5,
+                "reason": "transfer emission test",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "transfer.completed"
+        assert row["aggregate_type"] == "inventory_transfer"
+        payload = row["payload"]
+        assert uuid.UUID(payload["transfer_external_id"])
+        assert payload["from_warehouse_id"] == seed_data["warehouse_id"]
+        assert payload["to_warehouse_id"] == seed_data["warehouse_id"]
+
+        # lines[] must be array-shaped even though Sentry is single-line.
+        assert isinstance(payload["lines"], list)
+        assert len(payload["lines"]) == 1
+        line = payload["lines"][0]
+        assert uuid.UUID(line["item_external_id"])
+        assert line["quantity"] == 5
+
+    def test_putaway_confirm_emits_nothing(self, client, auth_headers, seed_data):
+        """Decision K: putaway.confirm is an internal warehouse movement,
+        not a connector-visible transfer. The bin_transfers row it writes
+        is an audit record; the outbox must stay empty."""
+        # Receive 10 into the staging bin first so putaway has something
+        # to move.
+        receive_request_id = str(uuid.uuid4())
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [
+                    {"item_id": 1, "quantity": 10, "bin_id": seed_data["staging_bin_id"]},
+                ],
+            },
+            headers={**auth_headers, "X-Request-ID": receive_request_id},
+        )
+
+        putaway_request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/putaway/confirm",
+            json={
+                "item_id": 1,
+                "from_bin_id": seed_data["staging_bin_id"],
+                "to_bin_id": 3,
+                "quantity": 10,
+            },
+            headers={**auth_headers, "X-Request-ID": putaway_request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        # The receive call emits receipt.completed (different source_txn_id);
+        # the putaway call emits nothing.
+        assert _query_event_rows(putaway_request_id) == []
