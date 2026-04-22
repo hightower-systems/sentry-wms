@@ -25,6 +25,8 @@ if not os.path.exists(SEED_PATH):
 
 ALL_TABLES = [
     "integration_events",
+    "consumer_groups",
+    "connectors",
     "sync_state",
     "connector_credentials",
     "login_attempts",

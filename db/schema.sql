@@ -603,6 +603,41 @@ CREATE TABLE sync_state (
 CREATE INDEX ix_sync_state_connector ON sync_state(connector_name, warehouse_id);
 
 -- ============================================================
+-- CONNECTORS + CONSUMER GROUPS (v1.5.0 polling substrate)
+-- ============================================================
+-- connectors is deliberately minimal in v1.5.0. v1.9 expands it to
+-- the full framework-doc shape; landing the PK now lets consumer_groups
+-- (below), wms_tokens (migration 023), and webhook_deliveries (v1.6)
+-- all carry the same FK without a later rename.
+--
+-- consumer_groups tracks per-group cursor state for GET /api/v1/events
+-- polling. Decision T throttles last_heartbeat writes to once per 30s
+-- inside the handler to cut hot-path write amplification.
+--
+-- The identical DDL lives in db/migrations/021_consumer_groups.sql
+-- for deployments that were created before v1.5.0.
+-- ============================================================
+
+CREATE TABLE connectors (
+    connector_id VARCHAR(64) PRIMARY KEY,
+    display_name VARCHAR(128) NOT NULL,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE consumer_groups (
+    consumer_group_id VARCHAR(64)  PRIMARY KEY,
+    connector_id      VARCHAR(64)  NOT NULL REFERENCES connectors(connector_id),
+    last_cursor       BIGINT       NOT NULL DEFAULT 0,
+    last_heartbeat    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    subscription      JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_consumer_groups_connector ON consumer_groups (connector_id);
+
+-- ============================================================
 -- INTEGRATION EVENTS (v1.5.0 transactional outbox)
 -- ============================================================
 -- Every inventory-changing handler writes one row here inside its own
