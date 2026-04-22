@@ -4,7 +4,7 @@
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
   ![Version](https://img.shields.io/badge/version-1.5.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-903%20passing-34a853)
+  ![Tests](https://img.shields.io/badge/tests-910%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.5.0 - Outbound Poll release. Transactional outbox + deferred visible_at trigger + seven event emissions (receipt, adjustment x2, transfer, pick, pack, ship, cycle_count) + GET /api/v1/events polling with consumer groups + bulk snapshot endpoint backed by a `pg_export_snapshot` keeper daemon + X-WMS-Token inbound auth with hash-only vault + admin panel CRUD for tokens and consumer groups. 903 backend tests passing.**
+**v1.5.0 - Outbound Poll release. Transactional outbox + deferred visible_at trigger + seven event emissions (receipt, adjustment x2, transfer, pick, pack, ship, cycle_count) + GET /api/v1/events polling with consumer groups + bulk snapshot endpoint backed by a `pg_export_snapshot` keeper daemon + X-WMS-Token inbound auth with hash-only vault + admin panel CRUD for tokens and consumer groups. 910 backend tests passing.**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
