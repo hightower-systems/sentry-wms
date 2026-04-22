@@ -13,4 +13,11 @@ VALID_BIN_TYPES = ("Staging", "PickableStaging", "Pickable")
 VALID_ROLES = ("ADMIN", "USER")
 
 
-from routes.admin import admin_warehouse, admin_items, admin_orders, admin_users, admin_connectors  # noqa: E402, F401
+from routes.admin import (  # noqa: E402, F401
+    admin_connectors,
+    admin_items,
+    admin_orders,
+    admin_tokens,
+    admin_users,
+    admin_warehouse,
+)
