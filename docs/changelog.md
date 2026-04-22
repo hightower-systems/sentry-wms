@@ -6,6 +6,147 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.5.0 -- Outbound Poll (Pipe A Read)
+
+*2026-04-22.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.0).
+
+First `/api/v1/*` surface. External systems -- ERPs, commerce
+platforms, analytics pipelines -- can now consume every
+inventory-changing write Sentry performs via a cursor-paginated REST
+read. The release ships a transactional outbox, a commit-order
+visibility gate, a bulk-snapshot endpoint for the initial load, and
+X-WMS-Token auth with hash-only storage. Admin panel gains two new
+pages (API tokens, Consumer groups); mobile is untouched.
+
+Outbox + emission:
+
+- **`integration_events` transactional outbox** (migration 020).
+  `BIGSERIAL event_id`, `JSONB payload`, denormalized
+  `aggregate_external_id`, four btree indexes covering the v1.5.0
+  query shapes. Deferred-constraint `visible_at` trigger sets
+  `visible_at = clock_timestamp()` at COMMIT so readers ordering on
+  `(visible_at, event_id)` see events in commit order even when
+  BIGSERIAL assigned `event_id` values in a different order.
+- **Seven emissions pinned to the framework catalog**:
+  `receipt.completed`, `adjustment.applied` (approval + direct),
+  `cycle_count.adjusted`, `transfer.completed`, `pick.confirmed`
+  (one per SO in a pick batch), `pack.confirmed`, `ship.confirmed`.
+  JSON Schema files at `api/schemas_v1/events/<type>/1.json`
+  validated Draft 2020-12. Per-aggregate `SELECT ... FOR UPDATE`
+  retrofit gives FIFO on the outbox without behaviour change for
+  users.
+- **External UUID retrofit across ten aggregate / actor tables**
+  (`users`, `items`, `bins`, orders, receipts, adjustments,
+  transfers, counts, fulfillments). Every insert site supplies
+  `uuid.uuid4()` explicitly; migration 025 drops the
+  `DEFAULT gen_random_uuid()` after the retrofit so a new handler
+  that forgets the column fails loudly.
+- **Schema registry + CI validation.** `events_schema_registry.py`
+  loads every schema at `create_app` time; boot fails on a malformed
+  or missing file. A dedicated CI step imports the registry on a
+  fresh checkout so a broken schema fails the job before tests run.
+
+Polling + snapshot endpoints:
+
+- **`GET /api/v1/events`** -- cursor + consumer-group polling. Plain
+  `int64` cursor (Decision G: not base64, not opaque), no `has_more`
+  field (full page implies more; partial implies caught up). Mutual
+  exclusion of `after` + `consumer_group` returns 400. Strict-subset
+  scope enforcement (Decision H): a filter asking for anything
+  outside the token's scope returns 403, never a silent intersection.
+- **`POST /api/v1/events/ack`** -- consumer-group cursor advance.
+  Atomic UPDATE with a `last_cursor <= :cursor` guard; out-of-order
+  ack is a no-op, retried ack is idempotent.
+- **`GET /api/v1/events/types`** and
+  **`GET /api/v1/events/schema/<type>/<version>`** -- in-process
+  catalog + raw JSON Schema body served as `application/schema+json`.
+- **`GET /api/v1/snapshot/inventory`** -- bulk-snapshot endpoint for
+  the initial load, backed by a new `snapshot-keeper` daemon that
+  holds REPEATABLE READ transactions and exports a `pg_snapshot_id`
+  via `pg_export_snapshot()`. API tier imports the same snapshot on
+  short-lived connections via `SET TRANSACTION SNAPSHOT '<id>'`.
+  Keyset-paginated by `(warehouse_id, item_id, bin_id)` so page cost
+  is O(limit) regardless of scan size.
+- **Per-token rate limits.** 120 req/min on polling routes,
+  2 req/min on the snapshot endpoint. Bucket key prefers
+  `token:<id>` over `user:<id>` over remote IP so a noisy connector
+  cannot starve interactive cookie users.
+
+Auth + token vault:
+
+- **`wms_tokens` hash-only vault** (migration 023). `CHAR(64)`
+  `token_hash` UNIQUE, typed-array scope columns
+  (`warehouse_ids BIGINT[]`, `event_types TEXT[]`,
+  `endpoints TEXT[]`), default `expires_at = NOW() + INTERVAL '1 year'`.
+  No `encrypted_token` column -- lost plaintext means rotate,
+  matching the GitHub / Stripe / AWS standard.
+- **`SENTRY_TOKEN_PEPPER` env var.**
+  `token_hash = SHA256(pepper || plaintext).hex()`. Pepper is
+  env-only (never in the DB), required at boot. Rotating it is an
+  emergency-only control that invalidates every issued token at
+  once; runbook at `docs/runbooks/token-pepper-rotation.md`.
+- **`@require_wms_token` decorator + per-worker 60s TTL cache.**
+  Applied only to `/api/v1/events*` and `/api/v1/snapshot/*`;
+  cookie-auth routes keep `@require_auth`. Revocation is visible
+  within 60 seconds across every API worker.
+
+Admin panel:
+
+- **API tokens page** (`/api-tokens`) with rotation badges +
+  per-row rotate / revoke / delete actions, one-time plaintext
+  reveal with copy-to-clipboard and a save-confirmation checkbox.
+- **Consumer groups page** (`/consumer-groups`) with subscription
+  preview + heartbeat freshness, create + edit modals.
+- **Connector registry endpoints** under
+  `/api/admin/connector-registry` (distinct from the v1.3
+  `connector_credentials` vault; the two concepts converge in v1.9).
+
+Migrations: 020 (`integration_events`), 021 (`connectors`,
+`consumer_groups`), 022 (`credential_type`), 023 (`wms_tokens`),
+024 (`snapshot_scans` + NOTIFY trigger), 025 (drops the
+`external_id` DEFAULT post-retrofit).
+
+Tests: 910 backend passing (up from 740 at v1.4.5, +170 new cases),
+58 admin unchanged, 32 mobile unchanged. CI gains a dedicated
+schema-validation step that imports the registry on every push so
+a broken schema file fails the job before tests run.
+
+Operator notes:
+
+- **First `/api/v1/*` surface.** This is the outbound read side for
+  Pipe A. Cookie-authed admin/mobile routes under `/api/*` keep
+  their existing contract.
+- **`SENTRY_TOKEN_PEPPER` is required at boot.** Generate with
+  `python -c "import secrets; print(secrets.token_hex(32))"` and set
+  it in `.env` before `docker compose up -d`. The api container
+  refuses to boot without it. Rotating the pepper invalidates every
+  issued token; see
+  [`token-pepper-rotation.md`](runbooks/token-pepper-rotation.md)
+  for the procedure.
+- **New `snapshot-keeper` service in `docker-compose.yml`.** After
+  upgrading, `docker compose up -d` starts one additional container
+  alongside the existing `db`, `redis`, `api`, `celery-worker`, and
+  `admin`. The keeper is required for
+  `GET /api/v1/snapshot/inventory`; a downed keeper surfaces as 503
+  `snapshot_keeper_unavailable` on the first page of a scan.
+- **No APK update.** The v1.4.3 APK on Chainway C6000 devices stays
+  current; v1.5.0 has no mobile code changes beyond the version
+  string in the login / home screen footers.
+- **`TRUST_PROXY` behavior unchanged from v1.4.5.** Fresh-install
+  operators who run Sentry behind a TLS-terminating reverse proxy
+  set `TRUST_PROXY=true` in `.env`; direct-connect deployments leave
+  it unset.
+
+Migration guidance for production deployments (multi-million-row
+aggregate tables) lives at
+[`docs/runbooks/v1.5.0-migration.md`](runbooks/v1.5.0-migration.md).
+The apartment-lab seed applies all six migrations in seconds; larger
+tables should use the documented two-step "add nullable column,
+batch backfill, then add UNIQUE + NOT NULL" alternative for
+migration 020's external_id backfill.
+
+---
+
 ## v1.4.5 -- Reverse Proxy Hotfix Follow-up
 
 *2026-04-21.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.5).
