@@ -397,6 +397,95 @@ def _query_external_id(table, key_column, key_value):
     return row[0] if row else None
 
 
+class TestPickConfirmedEmission:
+    def _pick_all_tasks(self, client, auth_headers, batch_id):
+        """Replicated from test_picking.TestCompleteBatch: pick or short every
+        pending task in the batch. Called before complete_batch so the batch
+        has no pending tasks left."""
+        while True:
+            next_resp = client.get(
+                f"/api/picking/batch/{batch_id}/next", headers=auth_headers
+            )
+            data = next_resp.get_json()
+            if "message" in data:
+                break
+            client.post(
+                "/api/picking/confirm",
+                json={
+                    "pick_task_id": data["pick_task_id"],
+                    "scanned_barcode": data["upc"],
+                    "quantity_picked": data["quantity_to_pick"],
+                },
+                headers=auth_headers,
+            )
+
+    def test_complete_batch_emits_one_pick_confirmed_per_so(
+        self, client, auth_headers, seed_data
+    ):
+        """A 2-SO batch produces exactly two pick.confirmed events, each
+        with a distinct aggregate_id but all sharing the one source_txn_id
+        of the complete-batch call. Same pattern the outbox already uses
+        for multi-item receive (see TestReceiptCompletedEmission)."""
+        create_resp = client.post(
+            "/api/picking/create-batch",
+            json={
+                "so_identifiers": ["SO-2026-001", "SO-2026-002"],
+                "warehouse_id": 1,
+            },
+            headers=auth_headers,
+        )
+        batch_id = create_resp.get_json()["batch_id"]
+        self._pick_all_tasks(client, auth_headers, batch_id)
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/picking/complete-batch",
+            json={"batch_id": batch_id},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 2
+        assert all(r["event_type"] == "pick.confirmed" for r in rows)
+        assert all(r["aggregate_type"] == "sales_order" for r in rows)
+        assert {r["aggregate_id"] for r in rows} == {1, 2}
+        assert {r["source_txn_id"] for r in rows} == {request_id}
+
+    def test_pick_confirmed_payload_matches_schema(
+        self, client, auth_headers, seed_data
+    ):
+        create_resp = client.post(
+            "/api/picking/create-batch",
+            json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1},
+            headers=auth_headers,
+        )
+        batch_id = create_resp.get_json()["batch_id"]
+        self._pick_all_tasks(client, auth_headers, batch_id)
+
+        request_id = str(uuid.uuid4())
+        client.post(
+            "/api/picking/complete-batch",
+            json={"batch_id": batch_id},
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        payload = rows[0]["payload"]
+        assert uuid.UUID(payload["sales_order_external_id"])
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+        assert payload["completed_at"].endswith("Z") or "+" in payload["completed_at"]
+
+        assert isinstance(payload["lines"], list)
+        assert len(payload["lines"]) >= 1
+        for line in payload["lines"]:
+            assert uuid.UUID(line["item_external_id"])
+            assert isinstance(line["quantity_picked"], int)
+            # sales_order_lines does not carry lot / serial today.
+            assert line["lot_number"] is None
+            assert line["serial_number"] is None
+
+
 class TestTransferCompletedEmission:
     def _seed_source_inventory(self, item_id, bin_id, warehouse_id, quantity):
         conn = get_raw_connection()
