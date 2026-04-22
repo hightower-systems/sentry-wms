@@ -65,6 +65,10 @@ Production-sized deployments should consult `docs/runbooks/v1.5.0-migration.md` 
 - **`api/services/rate_limit.py`** preference chain: `token:<id>` > `user:<id>` > `ip:<addr>`.
 - **Conftest** `ALL_TABLES` extended with `integration_events`, `snapshot_scans`, `wms_tokens`, `consumer_groups`, `connectors` in FK-safe TRUNCATE order.
 
+### Developer experience
+
+- Added `docker-compose.proxied.yml` for local TLS reverse-proxy testing (#138). Run with `docker compose -f docker-compose.yml -f docker-compose.proxied.yml up -d` to reproduce reverse-proxy deployment behavior locally without remote infrastructure. Requires mkcert.
+
 ### Tests
 
 - **Backend: 910 passing (up from 740 at v1.4.5).** +170 new cases across: migration self-tests (020, 021, 022+023, 024), emit_event unit tests, seven per-handler emission integration tests, per-aggregate FIFO + visible_at trigger concurrency, polling contract (12 cases: empty, single event, cursor advance, limit bounds, types filter, warehouse filter, scope 403, visibility gate, mutual exclusion, plain-int cursor, no has_more, direct aggregate_external_id), consumer-group ack (monotonic, out-of-order no-op, equal-cursor idempotent, 404, cross-connector 403), types + schema endpoints, admin token CRUD, admin consumer-groups CRUD, wms_tokens decorator, token cache TTL + revocation window, rate-limit key preference, boot guard, snapshot-keeper subprocess handoff, snapshot endpoint (cursor tamper, 410 expired, 503 unavailable, keyset paging, handoff invariant).
