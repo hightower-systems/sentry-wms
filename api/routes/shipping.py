@@ -3,6 +3,7 @@ Shipping / fulfillment endpoint: records tracking info and creates fulfillment r
 """
 
 import uuid
+from datetime import timezone
 
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
@@ -11,6 +12,7 @@ from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.shipping import FulfillRequest
 from services.audit_service import write_audit_log
+from services.events_service import emit_event, get_user_external_id
 from constants import SO_PICKED, SO_PACKED, SO_SHIPPED, ACTION_SHIP, TASK_PICKED, TASK_SHORT
 from utils.validation import validate_body
 
@@ -128,7 +130,7 @@ def fulfill(validated):
     so = g.db.execute(
         text(
             f"""
-            SELECT so_id, so_number, status, warehouse_id FROM sales_orders
+            SELECT so_id, so_number, status, warehouse_id, external_id FROM sales_orders
             WHERE so_id = :so_id {scope_clause}
             FOR UPDATE
             """
@@ -153,7 +155,7 @@ def fulfill(validated):
             """
             INSERT INTO item_fulfillments (so_id, warehouse_id, tracking_number, carrier, ship_method, shipped_by, status, external_id)
             VALUES (:so_id, :wh, :tracking, :carrier, :ship_method, :shipped_by, :shipped_status, :ext_id)
-            RETURNING fulfillment_id
+            RETURNING fulfillment_id, shipped_at
             """
         ),
         {
@@ -167,7 +169,9 @@ def fulfill(validated):
             "ext_id": str(uuid.uuid4()),
         },
     )
-    fulfillment_id = result.fetchone()[0]
+    fulfillment_row = result.fetchone()
+    fulfillment_id = fulfillment_row.fulfillment_id
+    shipped_at = fulfillment_row.shipped_at
 
     # 2. Create fulfillment lines for each SO line with quantity_picked > 0
     so_lines = g.db.execute(
@@ -252,6 +256,69 @@ def fulfill(validated):
             "tracking_number": tracking_number,
             "carrier": carrier,
             "fulfillment_id": fulfillment_id,
+        },
+    )
+
+    # 6. v1.5.0 #118: emit ship.confirmed on the integration_events
+    # outbox. tracking_numbers[] is array-shaped (Sentry creates one
+    # fulfillment per SO today, so exactly one entry). Sentry's internal
+    # column is ship_method; the wire contract renames it to
+    # service_level per plan 1.7.1. packages[] mirrors the single
+    # synthesised package from pack.confirmed.
+    pack_lines = g.db.execute(
+        text(
+            """
+            SELECT i.external_id AS item_external_id, sol.quantity_packed
+              FROM sales_order_lines sol
+              JOIN items i ON i.item_id = sol.item_id
+             WHERE sol.so_id = :sid
+             ORDER BY sol.line_number
+            """
+        ),
+        {"sid": so_id},
+    ).fetchall()
+    stats = g.db.execute(
+        text(
+            """
+            SELECT COALESCE(SUM(i.weight_lbs * sol.quantity_picked), 0) AS total_weight
+              FROM sales_order_lines sol
+              JOIN items i ON i.item_id = sol.item_id
+             WHERE sol.so_id = :sid
+            """
+        ),
+        {"sid": so_id},
+    ).fetchone()
+    so_external_id_str = str(so.external_id)
+    emit_event(
+        g.db,
+        event_type="ship.confirmed",
+        event_version=1,
+        aggregate_type="sales_order",
+        aggregate_id=so_id,
+        aggregate_external_id=so.external_id,
+        warehouse_id=so.warehouse_id,
+        source_txn_id=g.source_txn_id,
+        payload={
+            "sales_order_external_id": so_external_id_str,
+            "tracking_numbers": [tracking_number],
+            "carrier": carrier,
+            "service_level": ship_method,
+            "packages": [
+                {
+                    "package_external_id": f"{so_external_id_str}-pkg-1",
+                    "weight_lb": float(stats.total_weight) if stats.total_weight is not None else None,
+                    "dimensions_in": None,
+                    "lines": [
+                        {
+                            "item_external_id": str(line.item_external_id),
+                            "quantity_packed": line.quantity_packed,
+                        }
+                        for line in pack_lines
+                    ],
+                },
+            ],
+            "completed_by_user_external_id": get_user_external_id(g.db, username),
+            "completed_at": shipped_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         },
     )
 

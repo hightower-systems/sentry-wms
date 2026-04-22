@@ -23,8 +23,8 @@
     },
     "carrier": { "type": "string" },
     "service_level": {
-      "type": "string",
-      "description": "Sentry internal column is item_fulfillments.ship_method; renamed on the wire."
+      "type": ["string", "null"],
+      "description": "Sentry internal column is item_fulfillments.ship_method; renamed on the wire. Optional in the FulfillRequest schema, so null is allowed."
     },
     "packages": {
       "type": "array",

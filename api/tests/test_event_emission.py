@@ -575,6 +575,65 @@ class TestPackConfirmedEmission:
             assert isinstance(line["quantity_packed"], int)
 
 
+def _advance_so_to_packed(client, auth_headers, so_number="SO-2026-001"):
+    """Picking + packing so the SO lands in PACKED ready for fulfill."""
+    _advance_so_through_picking(client, auth_headers, so_number)
+    order_resp = client.get(
+        f"/api/packing/order/{so_number}", headers=auth_headers
+    )
+    so_id = order_resp.get_json()["sales_order"]["so_id"]
+    _verify_pack_all(client, auth_headers, so_id=so_id, so_number=so_number)
+    client.post(
+        "/api/packing/complete",
+        json={"so_id": so_id},
+        headers=auth_headers,
+    )
+    return so_id
+
+
+class TestShipConfirmedEmission:
+    def test_fulfill_emits_ship_confirmed(self, client, auth_headers, seed_data):
+        so_id = _advance_so_to_packed(client, auth_headers, "SO-2026-001")
+
+        request_id = str(uuid.uuid4())
+        resp = client.post(
+            "/api/shipping/fulfill",
+            json={
+                "so_id": so_id,
+                "tracking_number": "1Z999AA10123456784",
+                "carrier": "UPS",
+                "ship_method": "GROUND",
+            },
+            headers={**auth_headers, "X-Request-ID": request_id},
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        rows = _query_event_rows(request_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["event_type"] == "ship.confirmed"
+        assert row["aggregate_type"] == "sales_order"
+        assert row["aggregate_id"] == so_id
+        payload = row["payload"]
+        assert uuid.UUID(payload["sales_order_external_id"])
+        # tracking_numbers[] is array-shaped even though Sentry emits
+        # exactly one fulfillment per SO today.
+        assert payload["tracking_numbers"] == ["1Z999AA10123456784"]
+        assert payload["carrier"] == "UPS"
+        # service_level on the wire = Sentry's ship_method column
+        # (documented rename in the JSON Schema).
+        assert payload["service_level"] == "GROUND"
+        assert uuid.UUID(payload["completed_by_user_external_id"])
+
+        # Single synthesised package, same shape as pack.confirmed.
+        assert isinstance(payload["packages"], list)
+        assert len(payload["packages"]) == 1
+        pkg = payload["packages"][0]
+        assert pkg["package_external_id"] == f"{payload['sales_order_external_id']}-pkg-1"
+        assert pkg["dimensions_in"] is None
+        assert isinstance(pkg["lines"], list) and len(pkg["lines"]) >= 1
+
+
 class TestTransferCompletedEmission:
     def _seed_source_inventory(self, item_id, bin_id, warehouse_id, quantity):
         conn = get_raw_connection()
