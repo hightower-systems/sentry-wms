@@ -45,6 +45,13 @@ def _insert_pending_scan(scan_id, warehouse_id=1):
     conn = _make_conn()
     try:
         cur = conn.cursor()
+        # Suppress the snapshot_scans_pending NOTIFY trigger for this
+        # session so a co-running live snapshot-keeper container (which
+        # LISTENs on that channel) cannot race the in-test keeper and
+        # flip status='pending' -> 'active' before the test's _promote
+        # reaches the row. session_replication_role is session-local;
+        # the trigger still fires normally in production.
+        cur.execute("SET session_replication_role = replica")
         cur.execute(
             "INSERT INTO snapshot_scans (scan_id, warehouse_id, status) "
             "VALUES (%s, %s, 'pending')",
