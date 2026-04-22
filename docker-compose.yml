@@ -38,6 +38,10 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-false}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8080,http://localhost:8081"
       SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
+      # v1.5.0 #128: pepper for the X-WMS-Token SHA-256 hash. The app
+      # fails to boot without it so a misconfigured deployment never
+      # silently falls back to an empty pepper.
+      SENTRY_TOKEN_PEPPER: ${SENTRY_TOKEN_PEPPER:?Set SENTRY_TOKEN_PEPPER in .env -- see .env.example}
       # The API enqueues Celery tasks (manual sync trigger, fulfillment
       # push) so it needs the authenticated broker URL too.
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0

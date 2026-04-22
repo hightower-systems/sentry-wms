@@ -40,7 +40,20 @@ DEFAULT_LIMITS = ["300 per minute"]
 
 
 def _rate_limit_key() -> str:
-    """Prefer the authenticated user_id; fall back to the remote IP."""
+    """Prefer the authenticated X-WMS-Token or JWT user; fall back to the remote IP.
+
+    Buckets are namespaced by source so a noisy v1.5.0 connector token
+    cannot starve interactive cookie users and vice versa. Evaluation
+    order matches the request lifecycle: @require_wms_token runs on
+    /api/v1/* routes and populates g.current_token; @require_auth on
+    cookie-auth routes populates g.current_user with a user_id.
+    """
+    try:
+        token = getattr(g, "current_token", None)
+        if token and token.get("token_id") is not None:
+            return f"token:{token['token_id']}"
+    except Exception:
+        pass
     try:
         user = getattr(g, "current_user", None)
         if user and user.get("user_id") is not None:

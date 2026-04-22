@@ -110,6 +110,19 @@ def create_app():
         raise RuntimeError("JWT_SECRET environment variable is required")
     app.config["JWT_SECRET"] = jwt_secret
 
+    # v1.5.0 #128: SENTRY_TOKEN_PEPPER is concatenated with every
+    # inbound X-WMS-Token plaintext before the SHA-256 hash step
+    # (Decision Q). Boot fails without it rather than silently falling
+    # back to an empty pepper; a token hash computed with an empty
+    # pepper differs from every hash stored by a correctly-configured
+    # deployment, which would look like a blanket auth failure rather
+    # than a config problem.
+    if not os.getenv("SENTRY_TOKEN_PEPPER"):
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER environment variable is required for "
+            "X-WMS-Token auth (v1.5.0). See .env.example for details."
+        )
+
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
         "CORS_ORIGINS",

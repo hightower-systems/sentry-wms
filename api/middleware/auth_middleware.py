@@ -2,6 +2,9 @@
 Route protection decorators for JWT authentication and role-based access.
 """
 
+import hashlib
+import os
+from datetime import datetime, timezone
 from functools import wraps
 
 from flask import g, jsonify, request
@@ -13,6 +16,7 @@ from services.cookie_auth import (
     CSRF_PROTECTED_METHODS,
     csrf_token_matches,
 )
+from services import token_cache
 
 
 # Endpoints a user with must_change_password=true is allowed to call.
@@ -204,3 +208,62 @@ def require_role(*roles):
         return decorated
 
     return decorator
+
+
+def _load_pepper() -> bytes:
+    """Read SENTRY_TOKEN_PEPPER from the environment or raise.
+
+    Looked up lazily (first request, not module import) so importing
+    this module from unit tests does not require the env var; the
+    app-level boot guard in ``app.py`` raises at ``create_app`` time
+    for real deployments.
+    """
+    pepper = os.environ.get("SENTRY_TOKEN_PEPPER")
+    if not pepper:
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER environment variable is required for X-WMS-Token auth"
+        )
+    return pepper.encode("utf-8")
+
+
+def _hash_token(raw: str) -> str:
+    """token_hash per Decision Q: SHA256(pepper || plaintext).hexdigest()."""
+    return hashlib.sha256(_load_pepper() + raw.encode("utf-8")).hexdigest()
+
+
+def require_wms_token(f):
+    """Gate the decorated endpoint on a valid X-WMS-Token header.
+
+    Applied only to v1.5.0 /api/v1/events* and /api/v1/snapshot/*
+    routes. Cookie-auth routes keep @require_auth; the two decorators
+    do not interact.
+
+    On success:
+    - ``g.current_token`` = the full wms_tokens row as a dict
+    - ``g.current_user`` = a sentinel {"token_id": ..., "kind": "wms_token"}
+      so downstream rate-limit keys and audit logs have something to
+      attribute the request to without conflating with cookie users.
+
+    Failures:
+    - 401 missing_token when the header is absent
+    - 401 invalid_token when the hash does not resolve, or the row's
+      status is not 'active' (revoked tokens stay rejected for up to
+      60s after revoke via the token_cache TTL)
+    - 401 token_expired when expires_at is in the past
+    """
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        raw = request.headers.get("X-WMS-Token")
+        if not raw:
+            return jsonify({"error": "missing_token"}), 401
+        token_hash = _hash_token(raw)
+        row = token_cache.get_by_hash(token_hash)
+        if not row or row["status"] != "active":
+            return jsonify({"error": "invalid_token"}), 401
+        if row.get("expires_at") and datetime.now(timezone.utc) > row["expires_at"]:
+            return jsonify({"error": "token_expired"}), 401
+        g.current_token = row
+        g.current_user = {"token_id": row["token_id"], "kind": "wms_token"}
+        return f(*args, **kwargs)
+
+    return wrapper
