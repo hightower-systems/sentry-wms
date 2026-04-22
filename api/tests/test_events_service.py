@@ -28,7 +28,7 @@ def _engine():
 
 
 def _valid_payload():
-    """A payload that validates against docs/events/adjustment.applied/1.json."""
+    """A payload that validates against api/schemas_v1/events/adjustment.applied/1.json."""
     return {
         "adjustment_external_id": str(uuid.uuid4()),
         "item_external_id": str(uuid.uuid4()),

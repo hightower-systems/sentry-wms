@@ -236,8 +236,8 @@ def create_app():
     import connectors.example  # noqa: F401
 
     # v1.5.0: load the v1.5.0 event-schema registry eagerly so a malformed
-    # docs/events/*/*.json file or a catalog entry without a matching
-    # schema fails boot loudly, not lazily on the first emit.
+    # api/schemas_v1/events/*/*.json file or a catalog entry without a
+    # matching schema fails boot loudly, not lazily on the first emit.
     import services.events_schema_registry  # noqa: F401
 
     @app.route("/api/health")

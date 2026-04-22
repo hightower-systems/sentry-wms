@@ -129,7 +129,7 @@ class TestReceiptCompletedEmission:
         assert len(rows) == 1
         payload = rows[0]["payload"]
 
-        # Field-by-field checks against docs/events/receipt.completed/1.json.
+        # Field-by-field checks against api/schemas_v1/events/receipt.completed/1.json.
         assert uuid.UUID(payload["receipt_external_id"])
         assert uuid.UUID(payload["po_external_id"])
         assert uuid.UUID(payload["completed_by_user_external_id"])

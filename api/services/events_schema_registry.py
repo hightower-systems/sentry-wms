@@ -1,8 +1,9 @@
 """JSON Schema registry for v1.5.0 integration events.
 
-Loads every ``docs/events/<event_type>/<version>.json`` at import time,
-validates each as JSON Schema Draft 2020-12, and exposes ``get_validator``
-for ``emit_event`` to call before inserting into ``integration_events``.
+Loads every ``api/schemas_v1/events/<event_type>/<version>.json`` at
+import time, validates each as JSON Schema Draft 2020-12, and exposes
+``get_validator`` for ``emit_event`` to call before inserting into
+``integration_events``.
 
 Boot-time guarantees:
 
@@ -22,10 +23,10 @@ from jsonschema import Draft202012Validator
 
 # Seven v1.5.0 event types. Each entry is (event_type, version,
 # aggregate_type) and the registry requires a matching
-# docs/events/<event_type>/<version>.json file. Adding a type here
-# without shipping the file fails boot. The aggregate_type value
-# surfaces on the /api/v1/events/types endpoint so consumers can
-# build their aggregate index without parsing every schema body.
+# api/schemas_v1/events/<event_type>/<version>.json file. Adding a
+# type here without shipping the file fails boot. The aggregate_type
+# value surfaces on the /api/v1/events/types endpoint so consumers
+# can build their aggregate index without parsing every schema body.
 V150_CATALOG: Tuple[Tuple[str, int, str], ...] = (
     ("receipt.completed",    1, "item_receipt"),
     ("adjustment.applied",   1, "inventory_adjustment"),
@@ -36,10 +37,12 @@ V150_CATALOG: Tuple[Tuple[str, int, str], ...] = (
     ("cycle_count.adjusted", 1, "inventory_adjustment"),
 )
 
-# Resolved once at module import from <repo>/docs/events. The api/
-# package sits at <repo>/api, so docs/ is two levels up from this file.
+# Resolved once at module import from api/schemas_v1/events. The
+# schemas live inside the api/ package so they travel with the image
+# that loads them (fixed in #137; previously at repo-root docs/events
+# which the api Dockerfile's ./api/ build context never copied in).
 _SCHEMAS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "docs", "events")
+    os.path.join(os.path.dirname(__file__), "..", "schemas_v1", "events")
 )
 
 _validators: Dict[Tuple[str, int], Draft202012Validator] = {}
@@ -122,5 +125,5 @@ def schema_path(event_type: str, version: int) -> str:
 
 
 def schemas_dir() -> str:
-    """Absolute path to docs/events; used by the schema-serving endpoint in #124."""
+    """Absolute path to the schemas directory; used by the schema-serving endpoint in #124."""
     return _SCHEMAS_DIR
