@@ -342,6 +342,195 @@ def _tombstone_for(cgid):
     return row
 
 
+def _latest_audit_rows(action_types, consumer_group_id=None, limit=5):
+    """Return audit_log rows with action_type in the given set,
+    newest first. Optional consumer_group_id filter reads the
+    details JSONB so tests can bind to a specific entity despite
+    the entity_id=0 sentinel V-221 uses for string-keyed rows.
+    """
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    if consumer_group_id is not None:
+        cur.execute(
+            "SELECT action_type, entity_type, entity_id, user_id, "
+            "       warehouse_id, details "
+            "  FROM audit_log "
+            " WHERE action_type = ANY(%s) "
+            "   AND details->>'consumer_group_id' = %s "
+            " ORDER BY log_id DESC LIMIT %s",
+            (list(action_types), consumer_group_id, limit),
+        )
+    else:
+        cur.execute(
+            "SELECT action_type, entity_type, entity_id, user_id, "
+            "       warehouse_id, details "
+            "  FROM audit_log "
+            " WHERE action_type = ANY(%s) "
+            " ORDER BY log_id DESC LIMIT %s",
+            (list(action_types), limit),
+        )
+    rows = cur.fetchall()
+    cur.close()
+    return rows
+
+
+class TestAuditLogLifecycle:
+    """v1.5.1 V-221 (#154): every consumer-group + connector-registry
+    mutation writes one audit_log row. Structurally identical to the
+    V-208 token CRUD coverage. entity_id is the 0 sentinel because
+    the real id is a VARCHAR; the id lives in details.
+    """
+
+    def _seed(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+
+    def test_connector_registry_create_writes_audit_row(
+        self, client, auth_headers
+    ):
+        self._seed(client, auth_headers)
+        resp = client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "auditable", "display_name": "Audit Me"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        rows = _latest_audit_rows(["CONNECTOR_REGISTRY_CREATE"], limit=1)
+        assert len(rows) == 1
+        action, entity_type, entity_id, _user, warehouse_id, details = rows[0]
+        assert entity_type == "CONNECTOR_REGISTRY"
+        assert entity_id == 0
+        assert warehouse_id is None
+        assert details["connector_id"] == "auditable"
+        assert details["display_name"] == "Audit Me"
+
+    def test_consumer_group_create_writes_audit_row(
+        self, client, auth_headers
+    ):
+        self._seed(client, auth_headers)
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "cg-audit", "display_name": "CG Audit"},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "cg-create-audit",
+                "connector_id": "cg-audit",
+                "subscription": {"event_types": ["ship.confirmed"]},
+            },
+            headers=auth_headers,
+        )
+        rows = _latest_audit_rows(
+            ["CONSUMER_GROUP_CREATE"],
+            consumer_group_id="cg-create-audit",
+            limit=1,
+        )
+        assert len(rows) == 1
+        details = rows[0][5]
+        assert details["connector_id"] == "cg-audit"
+        assert details["subscription"] == {"event_types": ["ship.confirmed"]}
+        assert details["acknowledged_replay"] is False
+
+    def test_consumer_group_update_writes_audit_row(
+        self, client, auth_headers
+    ):
+        self._seed(client, auth_headers)
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "upd-audit", "display_name": "Upd Audit"},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={"consumer_group_id": "cg-upd-audit", "connector_id": "upd-audit"},
+            headers=auth_headers,
+        )
+        client.patch(
+            "/api/admin/consumer-groups/cg-upd-audit",
+            json={"subscription": {"warehouse_ids": [1, 2]}},
+            headers=auth_headers,
+        )
+        rows = _latest_audit_rows(
+            ["CONSUMER_GROUP_UPDATE"],
+            consumer_group_id="cg-upd-audit",
+            limit=1,
+        )
+        assert len(rows) == 1
+        assert rows[0][5]["subscription"] == {"warehouse_ids": [1, 2]}
+
+    def test_consumer_group_delete_writes_audit_row_with_snapshot(
+        self, client, auth_headers
+    ):
+        self._seed(client, auth_headers)
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "del-audit", "display_name": "Del Audit"},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "cg-del-audit",
+                "connector_id": "del-audit",
+                "subscription": {"event_types": ["receipt.completed"]},
+            },
+            headers=auth_headers,
+        )
+        client.delete(
+            "/api/admin/consumer-groups/cg-del-audit", headers=auth_headers
+        )
+        rows = _latest_audit_rows(
+            ["CONSUMER_GROUP_DELETE"],
+            consumer_group_id="cg-del-audit",
+            limit=1,
+        )
+        assert len(rows) == 1
+        details = rows[0][5]
+        assert details["consumer_group_id"] == "cg-del-audit"
+        assert details["connector_id"] == "del-audit"
+        assert details["subscription_at_delete"] == {
+            "event_types": ["receipt.completed"]
+        }
+
+    def test_acknowledged_replay_recreate_flags_audit_detail(
+        self, client, auth_headers
+    ):
+        """When acknowledge_replay=true clears a tombstone, the
+        create's audit row records acknowledged_replay=True so
+        forensics can spot replays without cross-referencing
+        tombstones."""
+        self._seed(client, auth_headers)
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "ack-audit", "display_name": "Ack Audit"},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={"consumer_group_id": "cg-ack-audit", "connector_id": "ack-audit"},
+            headers=auth_headers,
+        )
+        client.delete(
+            "/api/admin/consumer-groups/cg-ack-audit", headers=auth_headers
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "cg-ack-audit",
+                "connector_id": "ack-audit",
+                "acknowledge_replay": True,
+            },
+            headers=auth_headers,
+        )
+        rows = _latest_audit_rows(
+            ["CONSUMER_GROUP_CREATE"],
+            consumer_group_id="cg-ack-audit",
+            limit=1,
+        )
+        assert rows[0][5]["acknowledged_replay"] is True
+
+
 class TestReplayGuard:
     """v1.5.1 V-207 (#148): deleting then recreating a consumer_group
     under the same id resets last_cursor=0 and replays every event.

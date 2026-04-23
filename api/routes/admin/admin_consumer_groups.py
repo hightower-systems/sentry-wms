@@ -24,6 +24,12 @@ from flask import g, jsonify
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from constants import (
+    ACTION_CONNECTOR_REGISTRY_CREATE,
+    ACTION_CONSUMER_GROUP_CREATE,
+    ACTION_CONSUMER_GROUP_UPDATE,
+    ACTION_CONSUMER_GROUP_DELETE,
+)
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
@@ -32,6 +38,7 @@ from schemas.consumer_groups import (
     ConsumerGroupCreateRequest,
     ConsumerGroupUpdateRequest,
 )
+from services.audit_service import write_audit_log
 from utils.validation import validate_body
 
 
@@ -80,6 +87,21 @@ def create_registered_connector(validated):
     except IntegrityError:
         g.db.rollback()
         return jsonify({"error": "duplicate_connector_id"}), 409
+    # v1.5.1 V-221 (#154): audit the registry write. entity_id=0
+    # sentinel because connector_id is string; the real id lives in
+    # details so the trail remains bindable.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_CONNECTOR_REGISTRY_CREATE,
+        entity_type="CONNECTOR_REGISTRY",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "connector_id": validated.connector_id,
+            "display_name": validated.display_name,
+        },
+    )
     g.db.commit()
     return jsonify(_row_to_connector(row)), 201
 
@@ -191,6 +213,25 @@ def create_consumer_group(validated):
             {"cgid": validated.consumer_group_id},
         )
 
+    # v1.5.1 V-221 (#154): audit the create. acknowledged_replay
+    # records whether this create came out of an acknowledged
+    # tombstone so post-incident reviewers can spot replays at a
+    # glance.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_CONSUMER_GROUP_CREATE,
+        entity_type="CONSUMER_GROUP",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "consumer_group_id": validated.consumer_group_id,
+            "connector_id": validated.connector_id,
+            "subscription": validated.subscription.model_dump(exclude_none=True),
+            "acknowledged_replay": tombstone is not None,
+        },
+    )
+
     g.db.commit()
     return jsonify(_row_to_group(row)), 201
 
@@ -236,6 +277,27 @@ def update_consumer_group(validated, consumer_group_id):
     row = g.db.execute(text(sql), params).fetchone()
     if row is None:
         return jsonify({"error": "consumer_group_not_found"}), 404
+    # v1.5.1 V-221 (#154): audit the patch. Only subscription is
+    # mutable in v1.5 (last_cursor + connector_id are explicitly
+    # not operator-editable from the wire); the audit row captures
+    # the new subscription so forensics can diff against the prior
+    # CREATE / UPDATE entries.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_CONSUMER_GROUP_UPDATE,
+        entity_type="CONSUMER_GROUP",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "consumer_group_id": consumer_group_id,
+            "subscription": (
+                validated.subscription.model_dump(exclude_none=True)
+                if validated.subscription is not None
+                else None
+            ),
+        },
+    )
     g.db.commit()
     return jsonify(_row_to_group(row))
 
@@ -248,10 +310,13 @@ def delete_consumer_group(consumer_group_id):
     # v1.5.1 V-207 (#148): RETURNING the connector_id + last_cursor so
     # the tombstone UPSERT below has the values it needs to build a
     # useful 409 response if the admin later recreates this group.
+    # v1.5.1 V-221 (#154): also RETURN subscription so the audit
+    # row captures the shape being erased without a second SELECT.
     row = g.db.execute(
         text(
             "DELETE FROM consumer_groups WHERE consumer_group_id = :cgid "
-            "RETURNING consumer_group_id, connector_id, last_cursor"
+            "RETURNING consumer_group_id, connector_id, last_cursor, "
+            "subscription"
         ),
         {"cgid": consumer_group_id},
     ).fetchone()
@@ -283,5 +348,29 @@ def delete_consumer_group(consumer_group_id):
             "deleted_by": g.current_user["username"],
         },
     )
+
+    # v1.5.1 V-221 (#154): audit the delete with the full state
+    # snapshot before the row disappears. Mirrors the V-208 delete
+    # pattern for wms_tokens. The subscription snapshot lets a
+    # reviewer reconstruct "what filter did this group carry at
+    # deletion" without joining to tombstones or audit history.
+    subscription_snapshot = row.subscription or {}
+    if isinstance(subscription_snapshot, str):
+        subscription_snapshot = json.loads(subscription_snapshot)
+    write_audit_log(
+        g.db,
+        action_type=ACTION_CONSUMER_GROUP_DELETE,
+        entity_type="CONSUMER_GROUP",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "consumer_group_id": row.consumer_group_id,
+            "connector_id": row.connector_id,
+            "last_cursor_at_delete": row.last_cursor,
+            "subscription_at_delete": subscription_snapshot,
+        },
+    )
+
     g.db.commit()
     return ("", 204)
