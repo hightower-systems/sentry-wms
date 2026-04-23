@@ -117,11 +117,14 @@ def create_app():
     # pepper differs from every hash stored by a correctly-configured
     # deployment, which would look like a blanket auth failure rather
     # than a config problem.
-    if not os.getenv("SENTRY_TOKEN_PEPPER"):
-        raise RuntimeError(
-            "SENTRY_TOKEN_PEPPER environment variable is required for "
-            "X-WMS-Token auth (v1.5.0). See .env.example for details."
-        )
+    #
+    # v1.5.1 V-201 (#142): the guard now rejects weak values too
+    # (short, whitespace-only, placeholder). Centralised in
+    # middleware.auth_middleware.validate_pepper_config so the boot
+    # check, the request-time hasher, and the admin issuance hasher
+    # all apply the same rule.
+    from middleware.auth_middleware import validate_pepper_config
+    validate_pepper_config(os.getenv("SENTRY_TOKEN_PEPPER"))
 
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(

@@ -28,7 +28,11 @@ from constants import (
     ACTION_TOKEN_REVOKE,
     ACTION_TOKEN_DELETE,
 )
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import (
+    require_auth,
+    require_role,
+    validate_pepper_config,
+)
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.tokens import CreateTokenRequest, UpdateTokenRequest
@@ -43,13 +47,15 @@ _OVERDUE_DAYS = 90
 
 
 def _hash_for_storage(plaintext: str) -> str:
-    """SHA256(pepper || plaintext).hexdigest() per Decision Q."""
-    pepper = os.environ.get("SENTRY_TOKEN_PEPPER")
-    if not pepper:
-        # Mirrors the app boot guard; a misconfigured request-time state
-        # would otherwise silently hash with an empty pepper.
-        raise RuntimeError("SENTRY_TOKEN_PEPPER is required for token issuance")
-    return hashlib.sha256((pepper + plaintext).encode("utf-8")).hexdigest()
+    """SHA256(pepper || plaintext).hexdigest() per Decision Q.
+
+    v1.5.1 V-201 (#142): routed through the shared validator so a
+    weak pepper (short, whitespace-only, placeholder) cannot
+    silently produce a weakly-peppered hash at issuance time even
+    if the boot guard was bypassed.
+    """
+    pepper_bytes = validate_pepper_config(os.environ.get("SENTRY_TOKEN_PEPPER"))
+    return hashlib.sha256(pepper_bytes + plaintext.encode("utf-8")).hexdigest()
 
 
 def _rotation_status(rotated_at: datetime) -> str:

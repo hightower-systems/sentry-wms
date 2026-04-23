@@ -210,20 +210,63 @@ def require_role(*roles):
     return decorator
 
 
+# v1.5.1 V-201 (#142): the v1.5.0 guard rejected only unset / empty
+# pepper values; a 1-byte pepper passed silently. A weak pepper
+# collapses the precomputation defense pepper exists to provide.
+# Cross-site consistency here ensures the boot guard (app.py), the
+# request-time hasher (_load_pepper), and the admin issuance hasher
+# (admin_tokens._hash_for_storage) all reject the same bad inputs.
+_PEPPER_PLACEHOLDER = "replace-me-with-secrets-token-hex-32"
+_MIN_PEPPER_CHARS = 32
+
+
+def validate_pepper_config(raw) -> bytes:
+    """Return the UTF-8 bytes of ``raw`` or raise RuntimeError when
+    the value is unset, empty, whitespace-only, the ``.env.example``
+    placeholder, or shorter than 32 characters.
+
+    The returned bytes are the exact inbound bytes so existing
+    wms_tokens.token_hash values computed from a well-formed pepper
+    continue to match after upgrade; this helper is a gate, not a
+    normaliser.
+    """
+    if raw is None or raw == "":
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER environment variable is required for "
+            "X-WMS-Token auth. Generate with "
+            "python -c 'import secrets; print(secrets.token_hex(32))' "
+            "(see .env.example)."
+        )
+    if not raw.strip():
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER is whitespace-only. Generate a real "
+            "value with python -c 'import secrets; print(secrets.token_hex(32))'."
+        )
+    if raw == _PEPPER_PLACEHOLDER or raw.strip() == _PEPPER_PLACEHOLDER:
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER is set to the .env.example placeholder "
+            "string. Generate a real value with "
+            "python -c 'import secrets; print(secrets.token_hex(32))'."
+        )
+    if len(raw) < _MIN_PEPPER_CHARS:
+        raise RuntimeError(
+            f"SENTRY_TOKEN_PEPPER must be at least {_MIN_PEPPER_CHARS} "
+            f"characters (got {len(raw)}). Generate with "
+            "python -c 'import secrets; print(secrets.token_hex(32))'."
+        )
+    return raw.encode("utf-8")
+
+
 def _load_pepper() -> bytes:
     """Read SENTRY_TOKEN_PEPPER from the environment or raise.
 
     Looked up lazily (first request, not module import) so importing
     this module from unit tests does not require the env var; the
     app-level boot guard in ``app.py`` raises at ``create_app`` time
-    for real deployments.
+    for real deployments. v1.5.1 (#142) extends the guard with
+    length + placeholder checks.
     """
-    pepper = os.environ.get("SENTRY_TOKEN_PEPPER")
-    if not pepper:
-        raise RuntimeError(
-            "SENTRY_TOKEN_PEPPER environment variable is required for X-WMS-Token auth"
-        )
-    return pepper.encode("utf-8")
+    return validate_pepper_config(os.environ.get("SENTRY_TOKEN_PEPPER"))
 
 
 def _hash_token(raw: str) -> str:

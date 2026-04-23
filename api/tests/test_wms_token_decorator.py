@@ -140,6 +140,94 @@ class TestBootGuard:
                 os.environ["SENTRY_TOKEN_PEPPER"] = original
 
 
+class TestPepperValidation:
+    """v1.5.1 V-201 (#142): the guard rejects weak pepper values, not
+    just empty / unset. Short, whitespace-only, and the .env.example
+    placeholder all fail boot and request-time hashing.
+    """
+
+    def _run(self, value):
+        """Temporarily set the pepper to ``value``, call
+        validate_pepper_config, restore the original env.
+        """
+        from middleware.auth_middleware import validate_pepper_config
+
+        return validate_pepper_config(value)
+
+    def test_none_raises(self):
+        with pytest.raises(RuntimeError, match="required"):
+            self._run(None)
+
+    def test_empty_string_raises(self):
+        with pytest.raises(RuntimeError, match="required"):
+            self._run("")
+
+    def test_whitespace_only_raises(self):
+        with pytest.raises(RuntimeError, match="whitespace-only"):
+            self._run("   \t\n  ")
+
+    def test_placeholder_from_env_example_raises(self):
+        with pytest.raises(RuntimeError, match="placeholder"):
+            self._run("replace-me-with-secrets-token-hex-32")
+
+    def test_short_pepper_raises(self):
+        with pytest.raises(RuntimeError, match="at least 32"):
+            self._run("tooshort")
+
+    def test_edge_one_under_minimum_raises(self):
+        # 31 chars.
+        with pytest.raises(RuntimeError, match="at least 32"):
+            self._run("a" * 31)
+
+    def test_exactly_minimum_passes(self):
+        # 32 chars: allowed. Returns bytes form of input unchanged.
+        assert self._run("a" * 32) == b"a" * 32
+
+    def test_long_pepper_passes(self):
+        # secrets.token_hex(32) produces 64 hex chars, the recommended form.
+        import secrets
+        val = secrets.token_hex(32)
+        assert self._run(val) == val.encode("utf-8")
+
+    def test_bytes_are_returned_verbatim(self):
+        """Whitespace inside a valid pepper is preserved; the helper
+        is a gate not a normaliser. A deployment that set a pepper
+        with embedded whitespace must keep hashing against the exact
+        byte sequence it started with."""
+        val = "valid_pepper_with space and chars 0123456789"
+        assert len(val) >= 32
+        assert self._run(val) == val.encode("utf-8")
+
+    def test_create_app_rejects_placeholder(self):
+        """End-to-end: the boot guard in app.py calls the validator."""
+        from app import create_app
+
+        original = os.environ.get("SENTRY_TOKEN_PEPPER")
+        os.environ["SENTRY_TOKEN_PEPPER"] = "replace-me-with-secrets-token-hex-32"
+        try:
+            with pytest.raises(RuntimeError, match="placeholder"):
+                create_app()
+        finally:
+            if original is not None:
+                os.environ["SENTRY_TOKEN_PEPPER"] = original
+            else:
+                os.environ.pop("SENTRY_TOKEN_PEPPER", None)
+
+    def test_create_app_rejects_short_pepper(self):
+        from app import create_app
+
+        original = os.environ.get("SENTRY_TOKEN_PEPPER")
+        os.environ["SENTRY_TOKEN_PEPPER"] = "x"
+        try:
+            with pytest.raises(RuntimeError, match="at least 32"):
+                create_app()
+        finally:
+            if original is not None:
+                os.environ["SENTRY_TOKEN_PEPPER"] = original
+            else:
+                os.environ.pop("SENTRY_TOKEN_PEPPER", None)
+
+
 @pytest.fixture()
 def two_route_app():
     """Flask app with two v1 endpoints so endpoint-scope tests can
