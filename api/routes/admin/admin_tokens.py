@@ -38,7 +38,14 @@ from routes.admin import admin_bp
 from schemas.tokens import CreateTokenRequest, UpdateTokenRequest
 from services import token_cache
 from services.audit_service import write_audit_log
+from services.events_schema_registry import V150_CATALOG
 from utils.validation import validate_body
+
+# v1.5.1 V-210 (#150): event_types scope accepts only known catalog
+# entries; unknown strings are silent no-ops on the poll path and
+# destroy audit intent. Compute once at module load; adding an event
+# type means extending V150_CATALOG in events_schema_registry.
+_KNOWN_EVENT_TYPES = {entry[0] for entry in V150_CATALOG}
 
 # Match the plan's thresholds; admin panel renders whatever status the
 # server returns so no code dupes the boundary values.
@@ -94,6 +101,46 @@ def _row_to_listing(row) -> dict:
 @with_db
 def create_token(validated):
     """Issue a new inbound API token. Returns plaintext once."""
+    # v1.5.1 V-210 (#150): reject scope values that point at
+    # non-existent entities. Previously a typo'd warehouse_id or
+    # event_type was stored silently; the token polled empty forever
+    # and the audit trail showed a scope that looked valid on paper.
+    if validated.warehouse_ids:
+        found_rows = g.db.execute(
+            text(
+                "SELECT warehouse_id FROM warehouses "
+                " WHERE warehouse_id = ANY(:ids)"
+            ),
+            {"ids": list(validated.warehouse_ids)},
+        ).fetchall()
+        found = {r.warehouse_id for r in found_rows}
+        missing = sorted(set(validated.warehouse_ids) - found)
+        if missing:
+            return (
+                jsonify(
+                    {
+                        "error": "unknown_warehouse_ids",
+                        "missing": missing,
+                    }
+                ),
+                400,
+            )
+    if validated.event_types:
+        unknown = sorted(
+            set(validated.event_types) - _KNOWN_EVENT_TYPES
+        )
+        if unknown:
+            return (
+                jsonify(
+                    {
+                        "error": "unknown_event_types",
+                        "unknown": unknown,
+                        "valid": sorted(_KNOWN_EVENT_TYPES),
+                    }
+                ),
+                400,
+            )
+
     plaintext = secrets.token_urlsafe(32)
     token_hash = _hash_for_storage(plaintext)
 

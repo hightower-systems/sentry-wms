@@ -389,6 +389,77 @@ class TestAuditLogLifecycle:
         assert snap["status_at_delete"] == "active"
 
 
+class TestScopeExistenceValidation:
+    """v1.5.1 V-210 (#150): warehouse_ids must reference real rows
+    in ``warehouses``; event_types must appear in V150_CATALOG.
+    Unknown values fail 400 with the offending entries enumerated
+    in the response body.
+    """
+
+    def test_unknown_warehouse_id_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "bad-wh",
+                "warehouse_ids": [1, 9_999_999],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["error"] == "unknown_warehouse_ids"
+        assert body["missing"] == [9_999_999]
+
+    def test_unknown_event_type_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "bad-et",
+                "warehouse_ids": [1],
+                "event_types": ["ship.confirmed", "not.a.real.event"],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["error"] == "unknown_event_types"
+        assert body["unknown"] == ["not.a.real.event"]
+
+    def test_known_scope_accepted(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "ok-scope",
+                "warehouse_ids": [1],
+                "event_types": ["receipt.completed", "ship.confirmed"],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+    def test_empty_scope_arrays_bypass_existence_check(
+        self, client, auth_headers
+    ):
+        """An empty warehouse_ids list is "no warehouse access"
+        per Decision S; there is nothing to validate. Same for
+        event_types. The existence check fires only when values
+        are present."""
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "empty-scope",
+                "warehouse_ids": [],
+                "event_types": [],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+
+
 class TestCrossWorkerInvalidation:
     """v1.5.1 V-205 (#146): admin rotate / revoke / delete call
     ``token_cache.invalidate(token_id)`` which publishes on the
