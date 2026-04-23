@@ -14,6 +14,8 @@ Security patch release. Closes findings from the v1.5.1 post-v1.5.0 audit.
   - Migration 026 backfills existing tokens whose `endpoints = '{}'` with the full slug set so pre-v1.5.1 tokens keep authenticating after the upgrade.
   - Endpoint-scope enforcement is covered by four new decorator tests + three admin validation tests + one migration-backfill test.
 
+- **V-208 (#141) -- Admin token CRUD now writes the `audit_log` hash chain.** Pre-v1.5.1 `POST /api/admin/tokens`, `POST /tokens/<id>/rotate`, `POST /tokens/<id>/revoke`, and `DELETE /tokens/<id>` all mutated `wms_tokens` without appending to `audit_log`. Post-incident forensics on a compromised admin account had no way to determine which tokens existed, who issued or rotated them, or what scope was erased on delete. v1.5.1 adds one audit row per call at every mutation site. Entity type is `WMS_TOKEN`; action types are `TOKEN_ISSUE`, `TOKEN_ROTATE`, `TOKEN_REVOKE`, `TOKEN_DELETE`. The issue row captures the full granted scope; delete captures a `previous_scope` snapshot so the trail survives the row's removal. Plaintext token values are never written to `details`. The v1.4 hash-chain trigger keeps the new rows tamper-evident; `verify_audit_log_chain()` still passes with the extra writes.
+
 ### Dependency hygiene
 
 - **`@xmldom/xmldom` override to `^0.9.10`** (#158). Four newly-disclosed GHSAs against `@xmldom/xmldom <= 0.8.12` (GHSA-2v35-w6hq-6mfw DoS via recursion, GHSA-f6ww-3ggp-fr8h XML injection via DocumentType, GHSA-x6wf-f3px-wcqx + GHSA-j759-j44w-7fr8 XML node injection) reachable at 5 transitive paths under Expo 54. Same override pattern as the pre-existing `tar` pin. xmldom is build-time only (Expo config plugins), not runtime on the device.

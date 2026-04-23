@@ -56,6 +56,18 @@ ACTION_TRANSFER = "TRANSFER"
 ACTION_ADJUST = "ADJUST"
 ACTION_COUNT = "COUNT"
 
+# v1.5.1 V-208 (#141): wms_tokens lifecycle actions. Admin token CRUD
+# (issue, rotate, revoke, delete) writes one audit_log row per call
+# so post-incident forensics can reconstruct "who issued what and
+# when" even if the DB row itself is later deleted. The v1.4 hash
+# chain trigger on audit_log makes the trail tamper-evident.
+# Plaintext token values NEVER appear in `details`; scope snapshots
+# do, so delete can be audited after the row is gone.
+ACTION_TOKEN_ISSUE = "TOKEN_ISSUE"
+ACTION_TOKEN_ROTATE = "TOKEN_ROTATE"
+ACTION_TOKEN_REVOKE = "TOKEN_REVOKE"
+ACTION_TOKEN_DELETE = "TOKEN_DELETE"
+
 # Bin types
 BIN_STAGING = "Staging"
 BIN_PICKABLE_STAGING = "PickableStaging"

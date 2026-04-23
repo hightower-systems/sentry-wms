@@ -264,6 +264,131 @@ class TestDelete:
         assert resp.status_code == 404
 
 
+def _audit_rows_for_token(token_id: int):
+    """Return audit_log rows tagged for the given wms_tokens entity,
+    newest first. Uses a raw connection so the assertion sees rows
+    committed by the handler even when the test lives inside a
+    rollback-isolated fixture."""
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT action_type, entity_type, entity_id, user_id, warehouse_id, "
+        "       details "
+        "  FROM audit_log "
+        " WHERE entity_type = 'WMS_TOKEN' AND entity_id = %s "
+        " ORDER BY log_id DESC",
+        (token_id,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    return rows
+
+
+class TestAuditLogLifecycle:
+    """v1.5.1 V-208 (#141): every token CRUD mutation writes one
+    audit_log row. The v1.4 hash chain trigger keeps the trail
+    tamper-evident. Plaintext NEVER appears in `details`; only the
+    scope snapshot does.
+    """
+
+    def test_issue_writes_token_issue_row(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-issue",
+                "warehouse_ids": [1],
+                "event_types": ["receipt.completed"],
+                "endpoints": ["events.poll", "events.ack"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        rows = _audit_rows_for_token(body["token_id"])
+        assert len(rows) == 1
+        action, entity_type, entity_id, user_id, warehouse_id, details = rows[0]
+        assert action == "TOKEN_ISSUE"
+        assert entity_type == "WMS_TOKEN"
+        assert entity_id == body["token_id"]
+        assert warehouse_id is None
+        assert details["token_name"] == "audited-issue"
+        assert details["warehouse_ids"] == [1]
+        assert details["event_types"] == ["receipt.completed"]
+        assert details["endpoints"] == ["events.poll", "events.ack"]
+        # Plaintext must never leak to audit_log.
+        assert body["token"] not in str(details)
+
+    def test_rotate_writes_token_rotate_row(self, client, auth_headers):
+        created = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-rotate",
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+        original_plaintext = created["token"]
+
+        rotated = client.post(
+            f"/api/admin/tokens/{token_id}/rotate", headers=auth_headers
+        ).get_json()
+        new_plaintext = rotated["token"]
+
+        rows = _audit_rows_for_token(token_id)
+        actions = [r[0] for r in rows]
+        assert actions == ["TOKEN_ROTATE", "TOKEN_ISSUE"], actions
+        # Plaintext of either value must not appear.
+        details_blob = str([r[5] for r in rows])
+        assert original_plaintext not in details_blob
+        assert new_plaintext not in details_blob
+
+    def test_revoke_writes_token_revoke_row(self, client, auth_headers):
+        created = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-revoke",
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+        client.post(f"/api/admin/tokens/{token_id}/revoke", headers=auth_headers)
+        rows = _audit_rows_for_token(token_id)
+        actions = [r[0] for r in rows]
+        assert actions == ["TOKEN_REVOKE", "TOKEN_ISSUE"], actions
+        revoke_details = rows[0][5]
+        assert revoke_details["token_name"] == "audited-revoke"
+
+    def test_delete_writes_token_delete_row_with_scope_snapshot(
+        self, client, auth_headers
+    ):
+        created = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-delete",
+                "warehouse_ids": [1, 2],
+                "event_types": ["ship.confirmed"],
+                "endpoints": ["events.poll", "snapshot.inventory"],
+            },
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+        client.delete(f"/api/admin/tokens/{token_id}", headers=auth_headers)
+        # After delete the row is gone but the audit trail remains.
+        assert _row_by_id(token_id) is None
+        rows = _audit_rows_for_token(token_id)
+        actions = [r[0] for r in rows]
+        assert actions == ["TOKEN_DELETE", "TOKEN_ISSUE"], actions
+        delete_details = rows[0][5]
+        assert delete_details["token_name"] == "audited-delete"
+        snap = delete_details["previous_scope"]
+        assert snap["warehouse_ids"] == [1, 2]
+        assert snap["event_types"] == ["ship.confirmed"]
+        assert set(snap["endpoints"]) == {"events.poll", "snapshot.inventory"}
+        assert snap["status_at_delete"] == "active"
+
+
 class TestEndpointsValidation:
     """v1.5.1 V-200 (#140): CreateTokenRequest now requires a
     non-empty ``endpoints`` array of known slugs. Pre-v1.5.1 the

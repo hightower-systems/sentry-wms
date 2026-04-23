@@ -22,11 +22,18 @@ from typing import Optional
 from flask import g, jsonify, request
 from sqlalchemy import text
 
+from constants import (
+    ACTION_TOKEN_ISSUE,
+    ACTION_TOKEN_ROTATE,
+    ACTION_TOKEN_REVOKE,
+    ACTION_TOKEN_DELETE,
+)
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.tokens import CreateTokenRequest, UpdateTokenRequest
 from services import token_cache
+from services.audit_service import write_audit_log
 from utils.validation import validate_body
 
 # Match the plan's thresholds; admin panel renders whatever status the
@@ -136,6 +143,26 @@ def create_token(validated):
             },
         )
     row = result.fetchone()
+    # v1.5.1 V-208 (#141): one audit row per issuance. Scope snapshot
+    # in details so a later delete does not erase forensic context.
+    # Plaintext never appears here; the stored hash lives in wms_tokens
+    # and does not need to be duplicated to audit_log.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_ISSUE,
+        entity_type="WMS_TOKEN",
+        entity_id=row.token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "token_name": validated.token_name,
+            "warehouse_ids": list(validated.warehouse_ids),
+            "event_types": list(validated.event_types),
+            "endpoints": list(validated.endpoints),
+            "connector_id": validated.connector_id,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        },
+    )
     g.db.commit()
     return (
         jsonify(
@@ -206,6 +233,17 @@ def rotate_token(token_id):
         ),
         {"h": new_hash, "tid": token_id},
     ).fetchone()
+    # v1.5.1 V-208 (#141): audit the rotation. No scope change on
+    # rotate, so details captures only the affected token.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_ROTATE,
+        entity_type="WMS_TOKEN",
+        entity_id=token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={"token_name": existing.token_name},
+    )
     g.db.commit()
 
     # Drop any cached row so the next request re-fetches with the new hash.
@@ -237,13 +275,23 @@ def revoke_token(token_id):
                SET status = 'revoked',
                    revoked_at = NOW()
              WHERE token_id = :tid
-             RETURNING token_id, status, revoked_at
+             RETURNING token_id, token_name, status, revoked_at
             """
         ),
         {"tid": token_id},
     ).fetchone()
     if not row:
         return jsonify({"error": "Token not found"}), 404
+    # v1.5.1 V-208 (#141): audit the revocation.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_REVOKE,
+        entity_type="WMS_TOKEN",
+        entity_id=row.token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={"token_name": row.token_name},
+    )
     g.db.commit()
     token_cache.clear()
     return jsonify(
@@ -262,12 +310,38 @@ def revoke_token(token_id):
 def delete_token(token_id):
     """Hard delete a token row. The decorator already rejects the hash
     on the next request; deletion removes the row from the admin list."""
+    # v1.5.1 V-208 (#141): RETURNING the scope snapshot before the row
+    # disappears so the audit trail survives the delete. Plaintext is
+    # not stored so nothing sensitive beyond what the admin already
+    # configured gets logged.
     result = g.db.execute(
-        text("DELETE FROM wms_tokens WHERE token_id = :tid RETURNING token_id"),
+        text(
+            "DELETE FROM wms_tokens WHERE token_id = :tid "
+            "RETURNING token_id, token_name, warehouse_ids, event_types, "
+            "endpoints, connector_id, status"
+        ),
         {"tid": token_id},
     ).fetchone()
     if not result:
         return jsonify({"error": "Token not found"}), 404
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_DELETE,
+        entity_type="WMS_TOKEN",
+        entity_id=result.token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "token_name": result.token_name,
+            "previous_scope": {
+                "warehouse_ids": list(result.warehouse_ids) if result.warehouse_ids else [],
+                "event_types": list(result.event_types) if result.event_types else [],
+                "endpoints": list(result.endpoints) if result.endpoints else [],
+                "connector_id": result.connector_id,
+                "status_at_delete": result.status,
+            },
+        },
+    )
     g.db.commit()
     token_cache.clear()
     return ("", 204)
