@@ -298,14 +298,35 @@ def create_app():
 
     @app.route("/api/health")
     def health():
-        # #136: expose ProxyFix state so operators can verify the
-        # TRUST_PROXY wiring reached the container, without reading logs
-        # or execing into the container. Curl-friendly from the proxy.
-        return {
-            "status": "ok",
-            "service": "sentry-wms",
-            "proxy_fix_active": app.config.get("PROXY_FIX_ACTIVE", False),
-        }
+        # v1.5.1 V-215 (umbrella #156): /api/health is reachable
+        # unauthenticated (Docker healthcheck, upstream monitors) so
+        # the response MUST NOT include state that helps an attacker
+        # shape their approach. proxy_fix_active moved to the
+        # authenticated /api/admin/system-info endpoint below.
+        return {"status": "ok", "service": "sentry-wms"}
+
+    # v1.5.1 V-215: admin-only surface for operator-useful state
+    # that was previously on /api/health. Registered on the app
+    # directly (not the admin blueprint) because register_blueprint
+    # has already run by this point in create_app; adding a route
+    # to admin_bp after registration does not propagate to the
+    # app's URL map. Auth is enforced via the standard decorators
+    # so the wiring matches every other admin-only endpoint.
+    from middleware.auth_middleware import require_auth as _require_auth
+    from middleware.auth_middleware import require_role as _require_role
+    from flask import jsonify as _jsonify
+
+    @app.route("/api/admin/system-info", methods=["GET"])
+    @_require_auth
+    @_require_role("ADMIN")
+    def system_info():
+        return _jsonify(
+            {
+                "proxy_fix_active": app.config.get(
+                    "PROXY_FIX_ACTIVE", False
+                ),
+            }
+        )
 
     return app
 
