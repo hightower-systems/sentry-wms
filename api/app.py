@@ -211,6 +211,16 @@ def create_app():
         # key. Prefer an inbound X-Request-ID header when it parses as a
         # UUID (supports distributed tracing across services); otherwise
         # mint a fresh one.
+        #
+        # v1.5.1 V-211 (#155) -- contract: source_txn_id is a
+        # Sentry-internal idempotency key exposed on the wire for
+        # tracing, NOT a safe consumer dedupe key. Authenticated
+        # callers can set it to an arbitrary UUID via X-Request-ID;
+        # consumers MUST dedupe on event_id (server-side BIGSERIAL)
+        # instead. Documented in docs/events/README.md. The
+        # passthrough is retained for the tracing use case; the
+        # attacker-controlled surface is accepted as low-impact so
+        # long as the consumer contract is followed.
         inbound = request.headers.get("X-Request-ID", "").strip()
         if inbound:
             try:
