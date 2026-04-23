@@ -642,6 +642,18 @@ CREATE TABLE consumer_groups (
 
 CREATE INDEX ix_consumer_groups_connector ON consumer_groups (connector_id);
 
+-- v1.5.1 V-207 (#148): tombstones so recreating a consumer_group
+-- under an id that was previously deleted forces explicit
+-- acknowledgement of the cursor=0 replay. See
+-- db/migrations/027_consumer_groups_tombstones.sql.
+CREATE TABLE consumer_groups_tombstones (
+    consumer_group_id      VARCHAR(64)  PRIMARY KEY,
+    last_cursor_at_delete  BIGINT       NOT NULL DEFAULT 0,
+    connector_id           VARCHAR(64),
+    deleted_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_by             VARCHAR(100)
+);
+
 -- ============================================================
 -- WMS TOKENS (v1.5.0 inbound API tokens for X-WMS-Token auth)
 -- ============================================================

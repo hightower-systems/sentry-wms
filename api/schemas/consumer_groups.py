@@ -42,6 +42,11 @@ class ConsumerGroupCreateRequest(BaseModel):
     # "no subscription filter" (both fields default to None); the
     # polling handler treats absent keys as "no narrowing".
     subscription: SubscriptionFilter = Field(default_factory=SubscriptionFilter)
+    # v1.5.1 V-207 (#148): explicit opt-in required to recreate a
+    # consumer_group whose id carries a tombstone from a prior
+    # deletion. Default False forces the admin to confirm the
+    # cursor=0 replay is intended.
+    acknowledge_replay: bool = False
 
 
 class ConsumerGroupUpdateRequest(BaseModel):

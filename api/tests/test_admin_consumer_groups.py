@@ -13,6 +13,10 @@ from db_test_context import get_raw_connection
 def _delete_all_cg_and_connectors():
     conn = get_raw_connection()
     cur = conn.cursor()
+    # v1.5.1 V-207 (#148): tombstones must be cleared too so tests
+    # that reuse a previously-deleted consumer_group_id don't 409
+    # on the replay guard.
+    cur.execute("DELETE FROM consumer_groups_tombstones")
     cur.execute("DELETE FROM consumer_groups")
     cur.execute("DELETE FROM connectors")
     cur.close()
@@ -276,6 +280,7 @@ class TestSubscriptionValidation:
 class TestConsumerGroupDelete:
     def test_delete_removes_row(self, client, auth_headers):
         _delete_all_cg_and_connectors()
+        _delete_all_tombstones()
         client.post(
             "/api/admin/connector-registry",
             json={"connector_id": "del", "display_name": "Del"},
@@ -301,3 +306,159 @@ class TestConsumerGroupDelete:
             "/api/admin/consumer-groups/does-not-exist", headers=auth_headers
         )
         assert resp.status_code == 404
+
+
+def _delete_all_tombstones():
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM consumer_groups_tombstones")
+    cur.close()
+
+
+def _advance_cursor_directly(cgid, new_cursor):
+    """Simulate cursor advance without going through the ack
+    endpoint, so V-207 tests do not depend on V-202 behaviour."""
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE consumer_groups SET last_cursor = %s WHERE consumer_group_id = %s",
+        (new_cursor, cgid),
+    )
+    cur.close()
+
+
+def _tombstone_for(cgid):
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT consumer_group_id, last_cursor_at_delete, connector_id, "
+        "deleted_by "
+        "  FROM consumer_groups_tombstones "
+        " WHERE consumer_group_id = %s",
+        (cgid,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return row
+
+
+class TestReplayGuard:
+    """v1.5.1 V-207 (#148): deleting then recreating a consumer_group
+    under the same id resets last_cursor=0 and replays every event.
+    v1.5.1 records a tombstone on DELETE and refuses the recreate
+    with 409 replay_would_skip_history unless the admin sends
+    acknowledge_replay=true.
+    """
+
+    def _seed(self, client, auth_headers, cgid="replay-cg", cursor=123):
+        _delete_all_cg_and_connectors()
+        _delete_all_tombstones()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "replay-c", "display_name": "Replay"},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={"consumer_group_id": cgid, "connector_id": "replay-c"},
+            headers=auth_headers,
+        )
+        _advance_cursor_directly(cgid, cursor)
+
+    def test_delete_records_tombstone_with_last_cursor(
+        self, client, auth_headers
+    ):
+        self._seed(client, auth_headers, cgid="tomb-target", cursor=99)
+        resp = client.delete(
+            "/api/admin/consumer-groups/tomb-target", headers=auth_headers
+        )
+        assert resp.status_code == 204
+        row = _tombstone_for("tomb-target")
+        assert row is not None
+        assert row[0] == "tomb-target"
+        assert row[1] == 99
+        assert row[2] == "replay-c"
+
+    def test_recreate_without_ack_returns_409(self, client, auth_headers):
+        self._seed(client, auth_headers, cgid="ack-required", cursor=500)
+        client.delete(
+            "/api/admin/consumer-groups/ack-required", headers=auth_headers
+        )
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "ack-required",
+                "connector_id": "replay-c",
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["error"] == "replay_would_skip_history"
+        assert body["last_cursor_at_delete"] == 500
+
+    def test_recreate_with_ack_succeeds_and_clears_tombstone(
+        self, client, auth_headers
+    ):
+        self._seed(client, auth_headers, cgid="ack-ok", cursor=250)
+        client.delete(
+            "/api/admin/consumer-groups/ack-ok", headers=auth_headers
+        )
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "ack-ok",
+                "connector_id": "replay-c",
+                "acknowledge_replay": True,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        # Tombstone cleared so a fresh DELETE later starts a new
+        # tombstone cycle cleanly.
+        assert _tombstone_for("ack-ok") is None
+
+    def test_recreate_with_fresh_id_is_unaffected(
+        self, client, auth_headers
+    ):
+        """A tombstone must only gate the EXACT id it was created
+        for; a different new id sails through with no 409."""
+        self._seed(client, auth_headers, cgid="one-tomb", cursor=10)
+        client.delete(
+            "/api/admin/consumer-groups/one-tomb", headers=auth_headers
+        )
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "totally-different",
+                "connector_id": "replay-c",
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+
+    def test_repeated_delete_refreshes_tombstone_cursor(
+        self, client, auth_headers
+    ):
+        """delete -> recreate (ack) -> advance -> delete again: the
+        second tombstone reflects the newest cursor, not the first."""
+        self._seed(client, auth_headers, cgid="repeat-tomb", cursor=77)
+        client.delete(
+            "/api/admin/consumer-groups/repeat-tomb", headers=auth_headers
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "repeat-tomb",
+                "connector_id": "replay-c",
+                "acknowledge_replay": True,
+            },
+            headers=auth_headers,
+        )
+        _advance_cursor_directly("repeat-tomb", 400)
+        client.delete(
+            "/api/admin/consumer-groups/repeat-tomb", headers=auth_headers
+        )
+        row = _tombstone_for("repeat-tomb")
+        assert row is not None
+        assert row[1] == 400

@@ -107,6 +107,42 @@ def list_registered_connectors():
 @validate_body(ConsumerGroupCreateRequest)
 @with_db
 def create_consumer_group(validated):
+    # v1.5.1 V-207 (#148): check for a tombstone from a prior
+    # deletion under the same consumer_group_id. Recreating would
+    # reset last_cursor to 0 and replay every event since the
+    # outbox dawn; force the admin to acknowledge the gap
+    # explicitly before we proceed.
+    tombstone = g.db.execute(
+        text(
+            "SELECT last_cursor_at_delete, connector_id, deleted_at, deleted_by "
+            "  FROM consumer_groups_tombstones "
+            " WHERE consumer_group_id = :cgid"
+        ),
+        {"cgid": validated.consumer_group_id},
+    ).fetchone()
+    if tombstone is not None and not validated.acknowledge_replay:
+        return (
+            jsonify(
+                {
+                    "error": "replay_would_skip_history",
+                    "consumer_group_id": validated.consumer_group_id,
+                    "last_cursor_at_delete": tombstone.last_cursor_at_delete,
+                    "deleted_at": tombstone.deleted_at.isoformat(),
+                    "deleted_by": tombstone.deleted_by,
+                    "message": (
+                        "This consumer_group_id was deleted at "
+                        f"last_cursor={tombstone.last_cursor_at_delete}. "
+                        "Recreating it starts a fresh scan from event_id=0 "
+                        "and replays every event in the outbox. If that "
+                        "is intended, resubmit with "
+                        "{\"acknowledge_replay\": true}. To avoid replay "
+                        "entirely, pick a new consumer_group_id."
+                    ),
+                }
+            ),
+            409,
+        )
+
     try:
         row = g.db.execute(
             text(
@@ -142,6 +178,19 @@ def create_consumer_group(validated):
         if pgcode == "23503":
             return jsonify({"error": "unknown_connector_id"}), 400
         raise
+
+    # v1.5.1 V-207 (#148): an acknowledged-replay create clears the
+    # tombstone so a subsequent DELETE of this group starts a new
+    # tombstone cycle cleanly.
+    if tombstone is not None:
+        g.db.execute(
+            text(
+                "DELETE FROM consumer_groups_tombstones "
+                " WHERE consumer_group_id = :cgid"
+            ),
+            {"cgid": validated.consumer_group_id},
+        )
+
     g.db.commit()
     return jsonify(_row_to_group(row)), 201
 
@@ -196,14 +245,43 @@ def update_consumer_group(validated, consumer_group_id):
 @require_role("ADMIN")
 @with_db
 def delete_consumer_group(consumer_group_id):
+    # v1.5.1 V-207 (#148): RETURNING the connector_id + last_cursor so
+    # the tombstone UPSERT below has the values it needs to build a
+    # useful 409 response if the admin later recreates this group.
     row = g.db.execute(
         text(
             "DELETE FROM consumer_groups WHERE consumer_group_id = :cgid "
-            "RETURNING consumer_group_id"
+            "RETURNING consumer_group_id, connector_id, last_cursor"
         ),
         {"cgid": consumer_group_id},
     ).fetchone()
     if row is None:
         return jsonify({"error": "consumer_group_not_found"}), 404
+
+    # Tombstone UPSERT: repeated delete cycles on the same id always
+    # reflect the most recent cursor at deletion so the 409 response
+    # on recreate is accurate regardless of how many times this has
+    # happened. deleted_at + deleted_by refresh on every delete.
+    g.db.execute(
+        text(
+            """
+            INSERT INTO consumer_groups_tombstones
+                (consumer_group_id, last_cursor_at_delete,
+                 connector_id, deleted_by)
+            VALUES (:cgid, :lc, :cid, :deleted_by)
+            ON CONFLICT (consumer_group_id) DO UPDATE
+               SET last_cursor_at_delete = EXCLUDED.last_cursor_at_delete,
+                   connector_id          = EXCLUDED.connector_id,
+                   deleted_at            = NOW(),
+                   deleted_by            = EXCLUDED.deleted_by
+            """
+        ),
+        {
+            "cgid": row.consumer_group_id,
+            "lc": row.last_cursor,
+            "cid": row.connector_id,
+            "deleted_by": g.current_user["username"],
+        },
+    )
     g.db.commit()
     return ("", 204)
