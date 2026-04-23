@@ -6,6 +6,10 @@ All notable changes to Sentry WMS will be documented in this file.
 
 Security patch release. Closes findings from the v1.5.1 post-v1.5.0 audit.
 
+### Investigation instrumentation
+
+- **v1.5.0 post-mortem guardrail (#157) -- wms_tokens DELETE / TRUNCATE forensic trail.** The v1.5.0 pre-merge gate (#135) saw `wms_tokens` unexpectedly emptied between Gate 11 and Gate 12; root cause was never established because no trail captured who issued the deletion. v1.5.1 adds migration 028 + schema.sql mirror: a new `wms_tokens_audit` table plus AFTER DELETE (statement-level, counts transition rows) and AFTER TRUNCATE (statement-level) triggers on `wms_tokens`. Every deletion now lands a row with `event_type`, `rows_affected`, `session_user`, `current_user`, `backend_pid`, `application_name`, `event_at (clock_timestamp)`. A repeat of the incident is immediately bindable to a specific role + backend. The #157 acceptance criteria require the instrumentation to run for at least 10 cycles before closing; the trigger ships here and the analysis window opens with the v1.5.1 release.
+
 ### Security fixes
 
 - **V-200 (#140) -- `wms_tokens.endpoints` scope is now enforced.** Pre-v1.5.1 the column was stored and surfaced in the admin UI as a scope boundary, but `@require_wms_token` never consulted it; every token with any-or-no endpoint list could hit every `/api/v1/*` route the warehouse / event-type scope allowed. v1.5.1 closes the gap: the decorator maps the Flask endpoint to a user-facing slug (`events.poll`, `events.ack`, `events.types`, `events.schema`, `snapshot.inventory`) and returns `403 endpoint_scope_violation` when the token's slug list does not include the current route. Empty list denies every v1 route (plan Decision S: empty = no access; matches `warehouse_ids` / `event_types` semantics).

@@ -684,6 +684,64 @@ CREATE TABLE wms_tokens (
 
 CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
 
+-- v1.5.1 #157: forensic instrumentation for wms_tokens deletions.
+-- Every DELETE + TRUNCATE fires a trigger that writes who / when /
+-- how-many to wms_tokens_audit. Fresh installs get the same shape
+-- migration 028 adds to upgrade paths. See the migration file for
+-- the background on the Gate 11 / 12 incident this is mitigating.
+CREATE TABLE wms_tokens_audit (
+    audit_id        BIGSERIAL    PRIMARY KEY,
+    event_type      VARCHAR(16)  NOT NULL,  -- 'DELETE' | 'TRUNCATE'
+    rows_affected   INTEGER,
+    session_user    TEXT         NOT NULL,
+    current_user    TEXT         NOT NULL,
+    backend_pid     INTEGER      NOT NULL,
+    application_name TEXT,
+    event_at        TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX wms_tokens_audit_event_at ON wms_tokens_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION wms_tokens_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO wms_tokens_audit (
+        event_type, rows_affected, session_user, current_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_wms_tokens_audit_delete
+    AFTER DELETE ON wms_tokens
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_delete();
+
+CREATE OR REPLACE FUNCTION wms_tokens_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO wms_tokens_audit (
+        event_type, rows_affected, session_user, current_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_wms_tokens_audit_truncate
+    AFTER TRUNCATE ON wms_tokens
+    FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_truncate();
+
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
 -- ============================================================
