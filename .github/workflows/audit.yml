@@ -99,13 +99,12 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
   npm-audit-mobile-dev:
-    # Informational audit: full tree including devDependencies. The
-    # advisories here all trace to eas-cli's transitive tree and are
-    # deferred to the eas-cli@0.52.0 upgrade (#61). Step-level
-    # continue-on-error keeps the step amber (vulns still print in the
-    # log) while the job reports green, so GitHub's commit-status UI
-    # does not show a red X for expected-deferred state. Remove
-    # continue-on-error when #61 is fixed.
+    # Gating audit: full tree including devDependencies. v1.4-deferred
+    # eas-cli dev-tree highs (minimatch + node-forge) were closed in
+    # v1.5.1 (#61) via overrides, so this job is no longer
+    # informational -- high-severity advisories anywhere in the
+    # mobile tree now block merges, matching the prod-tree job's
+    # behaviour.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -122,6 +121,5 @@ jobs:
       - name: Install mobile dependencies
         run: npm ci --ignore-scripts
 
-      - name: Audit mobile full dependency tree (informational)
-        continue-on-error: true
+      - name: Audit mobile full dependency tree
         run: npm audit --audit-level=high
