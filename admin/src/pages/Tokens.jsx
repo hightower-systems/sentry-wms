@@ -88,11 +88,19 @@ export default function Tokens() {
       setCreateError('Warehouse IDs must be comma-separated positive integers');
       return;
     }
+    const endpoints = parseCsv(form.endpoints);
+    // v1.5.1 V-200 (#140): endpoints is a required non-empty list of
+    // known slugs. The server validates but we short-circuit here so
+    // the admin gets immediate feedback instead of a generic 400.
+    if (endpoints.length === 0) {
+      setCreateError('Endpoints is required. Use "Grant all v1 endpoints" or list the slugs explicitly.');
+      return;
+    }
     const payload = {
       token_name: form.token_name.trim(),
       warehouse_ids: wh_ids,
       event_types: parseCsv(form.event_types),
-      endpoints: parseCsv(form.endpoints),
+      endpoints,
     };
     const res = await api.post('/admin/tokens', payload);
     const body = await res?.json();
@@ -104,6 +112,21 @@ export default function Tokens() {
     } else {
       setCreateError(body?.error || 'Failed to create token');
     }
+  }
+
+  // v1.5.1 V-200 (#140): one-click preset so operators who want a
+  // token with no endpoint restriction don't have to hand-type five
+  // slugs. Matches the set the server validates against; update
+  // both sides when a new /api/v1/* route ships.
+  const ALL_V1_ENDPOINT_SLUGS = [
+    'events.poll',
+    'events.ack',
+    'events.types',
+    'events.schema',
+    'snapshot.inventory',
+  ];
+  function grantAllEndpoints() {
+    setForm((f) => ({ ...f, endpoints: ALL_V1_ENDPOINT_SLUGS.join(', ') }));
   }
 
   async function rotate(row) {
@@ -261,6 +284,22 @@ export default function Tokens() {
               onChange={(e) => setForm({ ...form, endpoints: e.target.value })}
               placeholder="events.poll, snapshot.inventory"
             />
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Required. Comma-separated slugs; the token can hit only the v1 routes listed.
+              Valid: <span className="mono">events.poll</span>,{' '}
+              <span className="mono">events.ack</span>,{' '}
+              <span className="mono">events.types</span>,{' '}
+              <span className="mono">events.schema</span>,{' '}
+              <span className="mono">snapshot.inventory</span>.
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={grantAllEndpoints}
+                style={{ marginLeft: 8 }}
+              >
+                Grant all v1 endpoints
+              </button>
+            </div>
           </div>
         </Modal>
       )}

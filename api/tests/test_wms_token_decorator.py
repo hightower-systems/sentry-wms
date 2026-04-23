@@ -32,10 +32,18 @@ from services import token_cache
 
 @pytest.fixture()
 def probe_app():
-    """Minimal Flask app + X-WMS-Token-gated probe route."""
+    """Minimal Flask app + X-WMS-Token-gated probe route.
+
+    v1.5.1 V-200 (#140): the decorator now enforces endpoint scope
+    against the Flask endpoint name. Register the probe under a real
+    v1 endpoint name (``polling.poll_events``) so tokens seeded with
+    DEFAULT_TEST_ENDPOINTS (which contains ``events.poll``) pass the
+    endpoint-scope check. Tests that exercise scope-denial explicitly
+    override endpoints at insert time and probe a different route.
+    """
     app = Flask("test-wms-decorator")
 
-    @app.route("/probe")
+    @app.route("/probe", endpoint="polling.poll_events")
     @require_wms_token
     def probe():
         return jsonify(
@@ -130,3 +138,101 @@ class TestBootGuard:
         finally:
             if original is not None:
                 os.environ["SENTRY_TOKEN_PEPPER"] = original
+
+
+@pytest.fixture()
+def two_route_app():
+    """Flask app with two v1 endpoints so endpoint-scope tests can
+    exercise "allowed here, denied there" without crossing fixture
+    boundaries. Each route is registered under a real V150_ENDPOINT_SLUGS
+    Flask-endpoint name so the decorator's map lookup succeeds.
+    """
+    app = Flask("test-endpoint-scope")
+
+    @app.route("/poll", endpoint="polling.poll_events")
+    @require_wms_token
+    def poll():
+        return jsonify({"route": "poll"})
+
+    @app.route("/snap", endpoint="snapshot.snapshot_inventory")
+    @require_wms_token
+    def snap():
+        return jsonify({"route": "snap"})
+
+    return app.test_client()
+
+
+class TestEndpointScopeEnforcement:
+    """v1.5.1 V-200 (#140): the decorator enforces wms_tokens.endpoints.
+    Empty list = deny everything; populated list = allow only listed
+    slugs. Pre-v1.5.1 the field was stored but never consulted.
+    """
+
+    def test_empty_endpoints_denies_every_v1_route(self, two_route_app):
+        token_id = insert_token(plaintext="empty-endpoints", endpoints=[])
+        try:
+            for path in ("/poll", "/snap"):
+                resp = two_route_app.get(
+                    path, headers={"X-WMS-Token": "empty-endpoints"}
+                )
+                assert resp.status_code == 403, path
+                assert resp.get_json() == {"error": "endpoint_scope_violation"}
+        finally:
+            delete_token(token_id)
+
+    def test_single_slug_allows_that_route_only(self, two_route_app):
+        token_id = insert_token(
+            plaintext="poll-only", endpoints=["events.poll"]
+        )
+        try:
+            ok = two_route_app.get(
+                "/poll", headers={"X-WMS-Token": "poll-only"}
+            )
+            assert ok.status_code == 200
+
+            denied = two_route_app.get(
+                "/snap", headers={"X-WMS-Token": "poll-only"}
+            )
+            assert denied.status_code == 403
+            assert denied.get_json() == {"error": "endpoint_scope_violation"}
+        finally:
+            delete_token(token_id)
+
+    def test_unknown_slug_in_db_is_treated_as_not_allowed(self, two_route_app):
+        """Garbage slugs smuggled in via pre-v1.5.1 tokens (or direct DB
+        inserts) never map to any real Flask endpoint, so they silently
+        fail the scope check. The CreateTokenRequest validator keeps
+        this from happening via the admin UI path; this test covers the
+        direct-DB-insert path (which still exists in seed scripts /
+        migration test fixtures)."""
+        token_id = insert_token(
+            plaintext="garbage-slug", endpoints=["not.a.real.slug"]
+        )
+        try:
+            resp = two_route_app.get(
+                "/poll", headers={"X-WMS-Token": "garbage-slug"}
+            )
+            assert resp.status_code == 403
+            assert resp.get_json() == {"error": "endpoint_scope_violation"}
+        finally:
+            delete_token(token_id)
+
+    def test_full_slug_set_passes_every_route(self, two_route_app):
+        token_id = insert_token(
+            plaintext="full-scope",
+            endpoints=[
+                "events.poll",
+                "events.ack",
+                "events.types",
+                "events.schema",
+                "snapshot.inventory",
+            ],
+        )
+        try:
+            for path in ("/poll", "/snap"):
+                resp = two_route_app.get(
+                    path, headers={"X-WMS-Token": "full-scope"}
+                )
+                assert resp.status_code == 200, path
+        finally:
+            delete_token(token_id)

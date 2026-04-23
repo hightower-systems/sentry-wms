@@ -40,14 +40,22 @@ def _direct_conn(autocommit=True):
     return conn
 
 
-def _insert_token(plaintext: str, warehouse_ids=(1,), token_name=None):
+def _insert_token(plaintext: str, warehouse_ids=(1,), token_name=None, endpoints=None):
+    # v1.5.1 V-200 (#140): @require_wms_token enforces endpoints slug
+    # scope; default to the full set so snapshot tests pass auth
+    # without additional setup.
+    if endpoints is None:
+        endpoints = [
+            "events.poll", "events.ack", "events.types",
+            "events.schema", "snapshot.inventory",
+        ]
     conn = _direct_conn()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO wms_tokens (token_name, token_hash, warehouse_ids, event_types) "
-            "VALUES (%s, %s, %s, %s) RETURNING token_id",
-            (token_name or f"snap-{uuid.uuid4()}", _hash(plaintext), list(warehouse_ids), []),
+            "INSERT INTO wms_tokens (token_name, token_hash, warehouse_ids, event_types, endpoints) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING token_id",
+            (token_name or f"snap-{uuid.uuid4()}", _hash(plaintext), list(warehouse_ids), [], list(endpoints)),
         )
         return cur.fetchone()[0]
     finally:

@@ -2,6 +2,26 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [Unreleased] - v1.5.1
+
+Security patch release. Closes findings from the v1.5.1 post-v1.5.0 audit.
+
+### Security fixes
+
+- **V-200 (#140) -- `wms_tokens.endpoints` scope is now enforced.** Pre-v1.5.1 the column was stored and surfaced in the admin UI as a scope boundary, but `@require_wms_token` never consulted it; every token with any-or-no endpoint list could hit every `/api/v1/*` route the warehouse / event-type scope allowed. v1.5.1 closes the gap: the decorator maps the Flask endpoint to a user-facing slug (`events.poll`, `events.ack`, `events.types`, `events.schema`, `snapshot.inventory`) and returns `403 endpoint_scope_violation` when the token's slug list does not include the current route. Empty list denies every v1 route (plan Decision S: empty = no access; matches `warehouse_ids` / `event_types` semantics).
+  - `CreateTokenRequest` now requires a non-empty `endpoints` list and rejects unknown slugs with a 400 that names the offending value.
+  - Admin UI `Tokens.jsx` gains helper text listing valid slugs and a "Grant all v1 endpoints" one-click preset so the common-case "unrestricted" token still takes one click.
+  - Migration 026 backfills existing tokens whose `endpoints = '{}'` with the full slug set so pre-v1.5.1 tokens keep authenticating after the upgrade.
+  - Endpoint-scope enforcement is covered by four new decorator tests + three admin validation tests + one migration-backfill test.
+
+### Dependency hygiene
+
+- **`@xmldom/xmldom` override to `^0.9.10`** (#158). Four newly-disclosed GHSAs against `@xmldom/xmldom <= 0.8.12` (GHSA-2v35-w6hq-6mfw DoS via recursion, GHSA-f6ww-3ggp-fr8h XML injection via DocumentType, GHSA-x6wf-f3px-wcqx + GHSA-j759-j44w-7fr8 XML node injection) reachable at 5 transitive paths under Expo 54. Same override pattern as the pre-existing `tar` pin. xmldom is build-time only (Expo config plugins), not runtime on the device.
+
+### Migrations
+
+- **Migration 026** -- `UPDATE wms_tokens SET endpoints = ARRAY['events.poll', ..., 'snapshot.inventory'] WHERE endpoints = '{}'`. Idempotent. Fresh installs have no pre-existing empty arrays to backfill so the migration is a no-op there; upgrade deployments get grandfathered for every token created before v1.5.1.
+
 ## [v1.5.0] - 2026-04-22
 
 "Outbound Poll" release. External systems can now consume every inventory-changing write Sentry performs via a cursor-paginated REST read. Introduces a transactional outbox (`integration_events`) populated by seven emission sites in the same DB transaction as the state change that caused it, a visibility gate that keeps the poll in commit order even when BIGSERIAL allocates `event_id` out of commit order, a bulk-snapshot endpoint for the initial load, X-WMS-Token inbound auth with hash-only storage, and admin-panel CRUD for both the connector registry and consumer groups. 170 new backend tests (910 passing, up from 740 at v1.4.5).

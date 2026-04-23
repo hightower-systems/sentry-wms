@@ -16,12 +16,24 @@ from db_test_context import get_raw_connection
 
 PEPPER = os.environ.get("SENTRY_TOKEN_PEPPER", "NEVER_USE_THIS_PEPPER_IN_PRODUCTION")
 
+# v1.5.1 V-200 (#140): @require_wms_token now enforces endpoints
+# scope. Polling tests default to the full v1 slug set so auth passes
+# on every /api/v1/* route; tests that exercise endpoint-scope
+# behaviour override explicitly.
+DEFAULT_TEST_ENDPOINTS = [
+    "events.poll",
+    "events.ack",
+    "events.types",
+    "events.schema",
+    "snapshot.inventory",
+]
+
 
 def hash_token(plaintext: str) -> str:
     return hashlib.sha256((PEPPER + plaintext).encode("utf-8")).hexdigest()
 
 
-def insert_token(plaintext: str, warehouse_ids, event_types):
+def insert_token(plaintext: str, warehouse_ids, event_types, endpoints=None):
     """Insert a wms_tokens row via the fixture's raw connection so the
     row is visible to the handler's SessionLocal through the shared
     outer transaction. Returns the new token_id.
@@ -29,13 +41,14 @@ def insert_token(plaintext: str, warehouse_ids, event_types):
     conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO wms_tokens (token_name, token_hash, warehouse_ids, event_types) "
-        "VALUES (%s, %s, %s, %s) RETURNING token_id",
+        "INSERT INTO wms_tokens (token_name, token_hash, warehouse_ids, event_types, endpoints) "
+        "VALUES (%s, %s, %s, %s, %s) RETURNING token_id",
         (
             f"polling-test-{uuid.uuid4()}",
             hash_token(plaintext),
             warehouse_ids,
             event_types,
+            list(DEFAULT_TEST_ENDPOINTS) if endpoints is None else endpoints,
         ),
     )
     token_id = cur.fetchone()[0]

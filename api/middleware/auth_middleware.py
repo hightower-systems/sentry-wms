@@ -231,6 +231,23 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(_load_pepper() + raw.encode("utf-8")).hexdigest()
 
 
+# v1.5.1 V-200 (#140): map user-facing endpoint slugs to the Flask
+# endpoint names @require_wms_token sees at request time. The
+# wms_tokens.endpoints column stores slug form (what admins type and
+# see in the UI); the decorator maps to request.endpoint for the
+# scope check. Adding a new /api/v1/* route means adding one entry
+# here plus updating the admin UI helper text. Slugs are a stable
+# wire surface; Flask endpoint names may change if blueprints are
+# renamed, so the public contract lives on the slug side.
+V150_ENDPOINT_SLUGS = {
+    "events.poll":       "polling.poll_events",
+    "events.ack":        "polling.ack_cursor",
+    "events.types":      "polling.list_event_types",
+    "events.schema":     "polling.serve_schema",
+    "snapshot.inventory": "snapshot.snapshot_inventory",
+}
+
+
 def require_wms_token(f):
     """Gate the decorated endpoint on a valid X-WMS-Token header.
 
@@ -250,6 +267,10 @@ def require_wms_token(f):
       status is not 'active' (revoked tokens stay rejected for up to
       60s after revoke via the token_cache TTL)
     - 401 token_expired when expires_at is in the past
+    - 403 endpoint_scope_violation when the token's endpoints slug
+      list does not include the route being accessed. Empty list
+      denies every v1 route (plan Decision S: empty = no access).
+      Matches warehouse_ids / event_types semantics.
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -262,6 +283,19 @@ def require_wms_token(f):
             return jsonify({"error": "invalid_token"}), 401
         if row.get("expires_at") and datetime.now(timezone.utc) > row["expires_at"]:
             return jsonify({"error": "token_expired"}), 401
+        # v1.5.1 V-200: resolve the request's Flask endpoint to the
+        # set of slugs it belongs to, intersect with the token's
+        # allowed slugs. Unknown Flask endpoint here would be a code
+        # bug (a new @require_wms_token route without a matching
+        # V150_ENDPOINT_SLUGS entry); treat as 403 fail-closed rather
+        # than letting an unlisted route bypass scope.
+        allowed_flask = {
+            V150_ENDPOINT_SLUGS[slug]
+            for slug in (row.get("endpoints") or [])
+            if slug in V150_ENDPOINT_SLUGS
+        }
+        if request.endpoint not in allowed_flask:
+            return jsonify({"error": "endpoint_scope_violation"}), 403
         g.current_token = row
         g.current_user = {"token_id": row["token_id"], "kind": "wms_token"}
         return f(*args, **kwargs)

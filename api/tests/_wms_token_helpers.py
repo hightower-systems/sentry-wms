@@ -17,6 +17,20 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry"
 )
 
+# v1.5.1 V-200 (#140): the @require_wms_token decorator now enforces
+# the endpoints slug list ("empty = deny" matches warehouse_ids /
+# event_types). Tests that only care about auth/TTL/rate semantics
+# pass endpoints=None and get the full v1 slug set by default so
+# they keep passing the endpoint-scope check. Tests that specifically
+# exercise endpoint-scope behaviour override this explicitly.
+DEFAULT_TEST_ENDPOINTS = [
+    "events.poll",
+    "events.ack",
+    "events.types",
+    "events.schema",
+    "snapshot.inventory",
+]
+
 
 def sha256_with_pepper(plaintext: str) -> str:
     return hashlib.sha256((PEPPER + plaintext).encode("utf-8")).hexdigest()
@@ -58,7 +72,7 @@ def insert_token(
                     status,
                     warehouse_ids or [1],
                     event_types or [],
-                    endpoints or [],
+                    list(DEFAULT_TEST_ENDPOINTS) if endpoints is None else endpoints,
                     connector_id,
                 ),
             )
@@ -78,7 +92,7 @@ def insert_token(
                     status,
                     warehouse_ids or [1],
                     event_types or [],
-                    endpoints or [],
+                    list(DEFAULT_TEST_ENDPOINTS) if endpoints is None else endpoints,
                     connector_id,
                     expires_at,
                 ),

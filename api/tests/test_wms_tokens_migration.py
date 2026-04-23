@@ -202,3 +202,75 @@ class TestWmsTokensShape:
             conn.close()
         assert nullable == "YES"
         assert fk_count == 1
+
+
+class TestEndpointsBackfill:
+    """v1.5.1 V-200 (#140): migration 026 backfills empty endpoints on
+    pre-v1.5.1 tokens so they keep working after the decorator starts
+    enforcing the slug list. Tokens that already had an explicit list
+    are left alone."""
+
+    _MIGRATION_SQL = """
+        UPDATE wms_tokens
+           SET endpoints = ARRAY[
+                 'events.poll',
+                 'events.ack',
+                 'events.types',
+                 'events.schema',
+                 'snapshot.inventory'
+               ]::TEXT[]
+         WHERE endpoints = '{}'::TEXT[]
+    """
+
+    def _insert_with_endpoints(self, conn, name_suffix, endpoints):
+        import hashlib
+        cur = conn.cursor()
+        # Each test uses a unique hash to avoid UNIQUE collision when
+        # re-running against a populated DB.
+        import uuid
+        unique_hash = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+        cur.execute(
+            "INSERT INTO wms_tokens (token_name, token_hash, endpoints) "
+            "VALUES (%s, %s, %s) RETURNING token_id",
+            (f"endpoints-backfill-{name_suffix}", unique_hash, endpoints),
+        )
+        token_id = cur.fetchone()[0]
+        conn.commit()
+        return token_id
+
+    def _cleanup(self, conn, token_ids):
+        cur = conn.cursor()
+        for tid in token_ids:
+            cur.execute("DELETE FROM wms_tokens WHERE token_id = %s", (tid,))
+        conn.commit()
+
+    def test_empty_endpoints_are_backfilled_to_full_slug_set(self):
+        conn = _make_conn()
+        try:
+            empty_id = self._insert_with_endpoints(conn, "empty", [])
+            keep_id = self._insert_with_endpoints(
+                conn, "keep", ["events.poll"]
+            )
+            cur = conn.cursor()
+            cur.execute(self._MIGRATION_SQL)
+            conn.commit()
+            cur.execute(
+                "SELECT endpoints FROM wms_tokens WHERE token_id = %s",
+                (empty_id,),
+            )
+            backfilled = list(cur.fetchone()[0])
+            cur.execute(
+                "SELECT endpoints FROM wms_tokens WHERE token_id = %s",
+                (keep_id,),
+            )
+            preserved = list(cur.fetchone()[0])
+            self._cleanup(conn, [empty_id, keep_id])
+        finally:
+            conn.close()
+        assert set(backfilled) == {
+            "events.poll", "events.ack", "events.types",
+            "events.schema", "snapshot.inventory",
+        }
+        assert preserved == ["events.poll"], (
+            "migration must not overwrite tokens that already set an explicit slug list"
+        )

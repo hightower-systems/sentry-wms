@@ -73,7 +73,10 @@ class TestCreate:
                 "token_name": "hash-probe",
                 "warehouse_ids": [1],
                 "event_types": [],
-                "endpoints": [],
+                # v1.5.1 V-200 (#140): endpoints is required and
+                # non-empty; the hash-storage probe only needs one
+                # valid slug to pass schema validation.
+                "endpoints": ["events.poll"],
             },
             headers=auth_headers,
         )
@@ -88,7 +91,11 @@ class TestCreate:
     def test_default_expires_at_is_about_one_year_out(self, client, auth_headers):
         resp = client.post(
             "/api/admin/tokens",
-            json={"token_name": "expiry-default", "warehouse_ids": [1]},
+            json={
+                "token_name": "expiry-default",
+                "warehouse_ids": [1],
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         )
         body = resp.get_json()
@@ -111,7 +118,11 @@ class TestList:
     def test_list_never_contains_plaintext(self, client, auth_headers):
         client.post(
             "/api/admin/tokens",
-            json={"token_name": "list-target-1", "warehouse_ids": [1]},
+            json={
+                "token_name": "list-target-1",
+                "warehouse_ids": [1],
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         )
         resp = client.get("/api/admin/tokens", headers=auth_headers)
@@ -185,7 +196,10 @@ class TestRotate:
     def test_rotate_revoked_rejected(self, client, auth_headers):
         created = client.post(
             "/api/admin/tokens",
-            json={"token_name": "revoke-then-rotate"},
+            json={
+                "token_name": "revoke-then-rotate",
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         ).get_json()
         token_id = created["token_id"]
@@ -200,7 +214,10 @@ class TestRevoke:
     ):
         created = client.post(
             "/api/admin/tokens",
-            json={"token_name": "revokable"},
+            json={
+                "token_name": "revokable",
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         ).get_json()
         token_id = created["token_id"]
@@ -227,7 +244,10 @@ class TestDelete:
     def test_delete_removes_row(self, client, auth_headers):
         created = client.post(
             "/api/admin/tokens",
-            json={"token_name": "deletable"},
+            json={
+                "token_name": "deletable",
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         ).get_json()
         token_id = created["token_id"]
@@ -242,3 +262,64 @@ class TestDelete:
             "/api/admin/tokens/99999999", headers=auth_headers
         )
         assert resp.status_code == 404
+
+
+class TestEndpointsValidation:
+    """v1.5.1 V-200 (#140): CreateTokenRequest now requires a
+    non-empty ``endpoints`` array of known slugs. Pre-v1.5.1 the
+    field was accepted silently and never enforced by the decorator.
+    """
+
+    def test_missing_endpoints_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "no-endpoints", "warehouse_ids": [1]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_empty_endpoints_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "empty-endpoints",
+                "warehouse_ids": [1],
+                "endpoints": [],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_slug_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "bogus-slug",
+                "warehouse_ids": [1],
+                "endpoints": ["events.poll", "not.a.real.route"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        # The error body should surface the invalid slug so the admin
+        # can correct it without digging through server logs.
+        assert "not.a.real.route" in str(body)
+
+    def test_every_known_slug_is_accepted(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "all-endpoints",
+                "warehouse_ids": [1],
+                "endpoints": [
+                    "events.poll",
+                    "events.ack",
+                    "events.types",
+                    "events.schema",
+                    "snapshot.inventory",
+                ],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()

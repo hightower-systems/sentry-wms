@@ -240,13 +240,17 @@ class TestAckCursor:
             "ON CONFLICT DO NOTHING"
         )
         cur.execute(
-            "INSERT INTO wms_tokens (token_name, token_hash, connector_id, warehouse_ids, event_types) "
-            "VALUES (%s, %s, 'connector-a', %s, %s)",
+            "INSERT INTO wms_tokens (token_name, token_hash, connector_id, warehouse_ids, event_types, endpoints) "
+            "VALUES (%s, %s, 'connector-a', %s, %s, %s)",
             (
                 f"conn-a-{uuid.uuid4()}",
                 hash_token(plaintext),
                 [1],
                 ["receipt.completed"],
+                # v1.5.1 V-200 (#140): endpoints is enforced; this test
+                # exercises cross-connector ack isolation, not endpoint
+                # scope, so grant the full slug set.
+                ["events.poll", "events.ack", "events.types", "events.schema", "snapshot.inventory"],
             ),
         )
         cur.close()
