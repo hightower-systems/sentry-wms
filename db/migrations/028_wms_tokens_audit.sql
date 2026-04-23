@@ -46,8 +46,8 @@ CREATE TABLE IF NOT EXISTS wms_tokens_audit (
     audit_id        BIGSERIAL    PRIMARY KEY,
     event_type      VARCHAR(16)  NOT NULL,  -- 'DELETE' | 'TRUNCATE'
     rows_affected   INTEGER,
-    session_user    TEXT         NOT NULL,
-    current_user    TEXT         NOT NULL,
+    sess_user       TEXT         NOT NULL,
+    curr_user       TEXT         NOT NULL,
     backend_pid     INTEGER      NOT NULL,
     application_name TEXT,
     event_at        TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
@@ -67,7 +67,7 @@ DECLARE
 BEGIN
     SELECT COUNT(*) INTO _count FROM deleted_rows;
     INSERT INTO wms_tokens_audit (
-        event_type, rows_affected, session_user, current_user,
+        event_type, rows_affected, sess_user, curr_user,
         backend_pid, application_name
     ) VALUES (
         'DELETE', _count, SESSION_USER, CURRENT_USER,
@@ -89,7 +89,7 @@ CREATE OR REPLACE FUNCTION wms_tokens_audit_truncate()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO wms_tokens_audit (
-        event_type, rows_affected, session_user, current_user,
+        event_type, rows_affected, sess_user, curr_user,
         backend_pid, application_name
     ) VALUES (
         'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,

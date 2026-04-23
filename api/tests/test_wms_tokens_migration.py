@@ -247,7 +247,7 @@ class TestDeletionAudit:
                 (f"audit-probe-{suffix}-%",),
             )
             cur.execute(
-                "SELECT event_type, rows_affected, session_user, current_user, "
+                "SELECT event_type, rows_affected, sess_user, curr_user, "
                 "       backend_pid "
                 "  FROM wms_tokens_audit "
                 " ORDER BY audit_id DESC LIMIT 1"
