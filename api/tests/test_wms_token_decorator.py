@@ -228,6 +228,93 @@ class TestPepperValidation:
                 os.environ.pop("SENTRY_TOKEN_PEPPER", None)
 
 
+class TestUnsafeBindBootGuard:
+    """v1.5.1 V-206 (#147): create_app refuses to boot when
+    TRUST_PROXY=true is combined with API_BIND_HOST=0.0.0.0.
+    SENTRY_ALLOW_OPEN_BIND=1 is the documented escape hatch.
+    """
+
+    def _with_env(self, **overrides):
+        """Apply env overrides, snapshot/restore the originals, yield
+        the create_app reference."""
+        saved = {k: os.environ.get(k) for k in overrides}
+
+        def _restore():
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+        for k, v in overrides.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        return _restore
+
+    def test_rejects_trust_proxy_true_with_open_bind(self):
+        from app import create_app
+
+        restore = self._with_env(
+            TRUST_PROXY="true",
+            API_BIND_HOST="0.0.0.0",
+            SENTRY_ALLOW_OPEN_BIND=None,
+        )
+        try:
+            with pytest.raises(RuntimeError, match="Unsafe deployment"):
+                create_app()
+        finally:
+            restore()
+
+    def test_accepts_trust_proxy_true_with_loopback_bind(self):
+        from app import create_app
+
+        restore = self._with_env(
+            TRUST_PROXY="true",
+            API_BIND_HOST="127.0.0.1",
+            SENTRY_ALLOW_OPEN_BIND=None,
+        )
+        try:
+            # Must not raise.
+            create_app()
+        finally:
+            restore()
+
+    def test_accepts_trust_proxy_false_with_open_bind(self):
+        """A deployment that does not trust X-Forwarded-* is safe
+        regardless of the bind shape -- the api sees only the direct
+        client IP, no header spoofing to poison."""
+        from app import create_app
+
+        restore = self._with_env(
+            TRUST_PROXY="false",
+            API_BIND_HOST="0.0.0.0",
+            SENTRY_ALLOW_OPEN_BIND=None,
+        )
+        try:
+            create_app()
+        finally:
+            restore()
+
+    def test_opt_in_override_allows_unsafe_combo(self):
+        """SENTRY_ALLOW_OPEN_BIND=1 lets the operator acknowledge the
+        risk for deployments that apply network-level protection
+        elsewhere (e.g. a VPC lock-down)."""
+        from app import create_app
+
+        restore = self._with_env(
+            TRUST_PROXY="true",
+            API_BIND_HOST="0.0.0.0",
+            SENTRY_ALLOW_OPEN_BIND="1",
+        )
+        try:
+            # Must not raise even though the combo is the unsafe one.
+            create_app()
+        finally:
+            restore()
+
+
 @pytest.fixture()
 def two_route_app():
     """Flask app with two v1 endpoints so endpoint-scope tests can

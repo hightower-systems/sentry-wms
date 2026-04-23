@@ -68,6 +68,37 @@ def create_app():
     # via docs/deployment.md that the app sits on a network the proxy
     # controls before setting TRUST_PROXY=true.
     proxy_fix_active = os.getenv("TRUST_PROXY", "").lower() in ("true", "1", "yes")
+
+    # v1.5.1 V-206 (#147): TRUST_PROXY=true means the api honours
+    # X-Forwarded-* from the nearest hop. API_BIND_HOST=0.0.0.0 means
+    # the container port is reachable on every host interface. Both
+    # together let an attacker who reaches port 5000 directly (cloud
+    # misconfig, Security Group error, bastion misroute) spoof
+    # X-Forwarded-For and poison every rate-limit bucket, audit-log
+    # user_id attribution, and any downstream IP-based allowlist.
+    # Refuse boot unless the operator explicitly opts in via
+    # SENTRY_ALLOW_OPEN_BIND=1 (documented escape hatch for deployments
+    # that do the network-level protection themselves).
+    api_bind_host = os.getenv("API_BIND_HOST", "").strip()
+    allow_open_bind = os.getenv("SENTRY_ALLOW_OPEN_BIND", "").lower() in (
+        "true", "1", "yes"
+    )
+    if proxy_fix_active and api_bind_host == "0.0.0.0":
+        message = (
+            "Unsafe deployment: TRUST_PROXY=true combined with "
+            "API_BIND_HOST=0.0.0.0 exposes the api to X-Forwarded-For "
+            "spoofing from any client that can reach port 5000. Set "
+            "API_BIND_HOST=127.0.0.1 and put a reverse proxy in front, "
+            "or set TRUST_PROXY=false if the api is directly reachable. "
+            "If this combination is intentional (network-level "
+            "protection applied elsewhere), set SENTRY_ALLOW_OPEN_BIND=1 "
+            "to acknowledge the risk and continue. See V-206 in "
+            "docs/deployment.md."
+        )
+        if not allow_open_bind:
+            raise RuntimeError(message)
+        logger.critical("ACK via SENTRY_ALLOW_OPEN_BIND=1: %s", message)
+
     if proxy_fix_active:
         # One proxy hop is the standard nginx / Caddy / Traefik / ALB
         # shape. Deployments that terminate TLS at multiple proxies in

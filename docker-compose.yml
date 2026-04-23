@@ -36,6 +36,13 @@ services:
       # setting TRUST_PROXY=true in .env when Sentry runs behind a TLS-
       # terminating reverse proxy. See docs/deployment.md.
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      # v1.5.1 V-206 (#147): forward API_BIND_HOST into the container
+      # so the Flask boot guard can refuse the
+      # "TRUST_PROXY=true + API_BIND_HOST=0.0.0.0" combination. Without
+      # forwarding, the guard sees None and cannot detect the unsafe
+      # shape. The value is informational inside the container; Docker
+      # applies the bind at the host level.
+      API_BIND_HOST: ${API_BIND_HOST:-127.0.0.1}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8080,http://localhost:8081"
       SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
       # v1.5.0 #128: pepper for the X-WMS-Token SHA-256 hash. The app
