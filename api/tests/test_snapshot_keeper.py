@@ -179,6 +179,49 @@ class TestKeeperUnitBehaviour:
             # The shutdown path marks scans aborted + deletes them.
             assert _read_scan(sid) is None
 
+    def test_snapshot_keeper_database_url_overrides_database_url(
+        self, monkeypatch
+    ):
+        """v1.5.1 V-214 (#153): operators who set up a dedicated
+        least-privilege DB role point the keeper at it via
+        SNAPSHOT_KEEPER_DATABASE_URL. The keeper prefers that value
+        over the shared DATABASE_URL so a compromised api role does
+        not bring the keeper's perms with it."""
+        monkeypatch.setenv(
+            "SNAPSHOT_KEEPER_DATABASE_URL",
+            "postgresql://sentry_keeper:test-pw@db:5432/sentry",
+        )
+        keeper = SnapshotKeeper(heartbeat_file="/tmp/keeper-env-probe")
+        assert keeper.database_url == (
+            "postgresql://sentry_keeper:test-pw@db:5432/sentry"
+        )
+
+    def test_falls_back_to_database_url_when_keeper_url_unset(
+        self, monkeypatch
+    ):
+        """Dev / single-role deployments keep working: when
+        SNAPSHOT_KEEPER_DATABASE_URL is not set, the keeper uses
+        DATABASE_URL like before."""
+        monkeypatch.delenv("SNAPSHOT_KEEPER_DATABASE_URL", raising=False)
+        keeper = SnapshotKeeper(heartbeat_file="/tmp/keeper-fallback-probe")
+        assert keeper.database_url == os.environ["DATABASE_URL"]
+
+    def test_explicit_argument_wins_over_env(self, monkeypatch):
+        """Test-only code path: an explicit database_url= kwarg
+        overrides both env vars. Matters for injecting a test DB
+        URL into unit tests."""
+        monkeypatch.setenv(
+            "SNAPSHOT_KEEPER_DATABASE_URL",
+            "postgresql://ignored:ignored@db:5432/ignored",
+        )
+        keeper = SnapshotKeeper(
+            database_url="postgresql://explicit:explicit@db:5432/explicit",
+            heartbeat_file="/tmp/keeper-arg-probe",
+        )
+        assert keeper.database_url == (
+            "postgresql://explicit:explicit@db:5432/explicit"
+        )
+
 
 class TestKeeperSubprocessSnapshotHandover:
     """The load-bearing test: prove the exported pg_snapshot_id is
