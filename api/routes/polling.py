@@ -257,6 +257,15 @@ def ack_cursor(validated: AckBody):
     - 404 if the consumer group does not exist.
     - 403 if the token has a connector_id that does not match the
       group's connector_id (cross-connector isolation).
+    - v1.5.1 V-202 (#143): 400 when the requested cursor exceeds the
+      greatest event_id in the outbox (``cursor_beyond_horizon``).
+      Impossible-future cursors were previously accepted and advanced
+      the group past every future event, causing silent data loss.
+    - v1.5.1 V-202 (#143): 403 ``ack_scope_violation`` when any event
+      in (last_cursor, cursor] falls outside the token's warehouse_ids
+      or event_types scope. "You can only ack what you can read"
+      applies on both axes; a NULL-connector admin token cannot use
+      ack to jump past events it could not have polled.
     - UPDATE with ``WHERE last_cursor <= :cursor`` so an out-of-order
       ack lower than the current stored value is a no-op. The
       response always returns the row's current ``last_cursor`` so
@@ -278,6 +287,52 @@ def ack_cursor(validated: AckBody):
         # not ack groups owned by connector B. Tokens without a
         # connector_id (admin / legacy) can ack any group.
         return jsonify({"error": "consumer_group_scope_violation"}), 403
+
+    # v1.5.1 V-202 (#143): only advancing acks can cause data loss or
+    # scope skip; a backwards ack is a pure no-op via the existing
+    # ``WHERE last_cursor <= :cursor`` clause. Skip the extra round
+    # trips when cursor <= last_cursor.
+    if validated.cursor > cg_row.last_cursor:
+        horizon = g.db.execute(
+            text(
+                "SELECT COALESCE(MAX(event_id), 0) AS max_id "
+                "  FROM integration_events"
+            )
+        ).scalar()
+        if validated.cursor > horizon:
+            return jsonify({"error": "cursor_beyond_horizon"}), 400
+
+        allowed_warehouses = list(g.current_token.get("warehouse_ids") or [])
+        allowed_event_types = list(g.current_token.get("event_types") or [])
+        # "You can only ack what you can read": if any event in
+        # (last_cursor, cursor] falls outside the token's scope on
+        # either axis, the ack would implicitly claim the consumer
+        # processed an event it could not have polled. Reject 403.
+        # Empty scope arrays match no rows on ANY(...) so the check
+        # naturally triggers for deny-all tokens.
+        out_of_scope = g.db.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM integration_events
+                     WHERE event_id > :last_cursor
+                       AND event_id <= :cursor
+                       AND NOT (
+                             warehouse_id = ANY(:allowed_warehouses)
+                         AND event_type  = ANY(:allowed_event_types)
+                       )
+                )
+                """
+            ),
+            {
+                "last_cursor": cg_row.last_cursor,
+                "cursor": validated.cursor,
+                "allowed_warehouses": allowed_warehouses,
+                "allowed_event_types": allowed_event_types,
+            },
+        ).scalar()
+        if out_of_scope:
+            return jsonify({"error": "ack_scope_violation"}), 403
 
     g.db.execute(
         text(

@@ -52,9 +52,13 @@ class AckBody(BaseModel):
     processing. The server advances ``last_cursor = max(last_cursor,
     cursor)`` via an atomic ``UPDATE ... WHERE last_cursor <= :cursor``
     so out-of-order acks are no-ops without a separate race-free read.
+
+    v1.5.1 V-202 (#143): ``cursor`` is capped at BIGINT max so an int64
+    overflow (cursor = 2**63) fails the schema validator with 400
+    instead of reaching the DB layer and surfacing a 500 DataError.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     consumer_group: str = Field(..., min_length=1, max_length=64)
-    cursor: int = Field(..., ge=0)
+    cursor: int = Field(..., ge=0, le=9_223_372_036_854_775_807)

@@ -191,14 +191,19 @@ class TestAckCursor:
         )
 
     def test_ack_advances_monotonic_cursor(self, client, scoped_token):
-        _setup_group("ack-advance", last_cursor=10)
-        resp = self._ack(client, scoped_token["plaintext"], "ack-advance", 25)
+        # v1.5.1 V-202 (#143): ack now rejects cursors past the outbox
+        # horizon; the test seeds real events whose ids land at or
+        # above the target cursor so the advance is reachable.
+        e1 = insert_event(event_type="receipt.completed", warehouse_id=1)
+        e2 = insert_event(event_type="ship.confirmed", warehouse_id=1)
+        _setup_group("ack-advance", last_cursor=e1 - 1)
+        resp = self._ack(client, scoped_token["plaintext"], "ack-advance", e2)
         assert resp.status_code == 200
         assert resp.get_json() == {
             "consumer_group": "ack-advance",
-            "last_cursor": 25,
+            "last_cursor": e2,
         }
-        assert _group_field("ack-advance", "last_cursor") == 25
+        assert _group_field("ack-advance", "last_cursor") == e2
 
     def test_out_of_order_ack_is_noop(self, client, scoped_token):
         """Plan 2.4: an ack lower than the current stored cursor is a
@@ -275,3 +280,110 @@ class TestAckCursor:
             json={"consumer_group": "ack-noauth", "cursor": 1},
         )
         assert resp.status_code == 401
+
+
+class TestAckHorizonAndScope:
+    """v1.5.1 V-202 (#143): ack rejects cursors past the outbox
+    horizon and rejects any advance whose event range contains
+    events outside the token's warehouse_ids or event_types scope.
+    "You can only ack what you can read."
+    """
+
+    def _ack(self, client, plaintext, consumer_group, cursor):
+        return client.post(
+            "/api/v1/events/ack",
+            json={"consumer_group": consumer_group, "cursor": cursor},
+            headers={"X-WMS-Token": plaintext},
+        )
+
+    def test_cursor_beyond_max_event_id_returns_400(
+        self, client, scoped_token
+    ):
+        """Picking an impossible-future cursor previously advanced the
+        group past every real event, causing silent data loss on the
+        next legitimate poll. Now it returns 400 cursor_beyond_horizon.
+        """
+        e1 = insert_event(event_type="receipt.completed", warehouse_id=1)
+        _setup_group("ack-future", last_cursor=0)
+        resp = self._ack(
+            client, scoped_token["plaintext"], "ack-future", e1 + 10**9
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "cursor_beyond_horizon"
+        assert _group_field("ack-future", "last_cursor") == 0
+
+    def test_int64_overflow_cursor_returns_400_not_500(
+        self, client, scoped_token
+    ):
+        """Pydantic le=BIGINT_MAX rejects 2**63 at the schema layer so
+        a psycopg2 DataError never reaches the response path."""
+        _setup_group("ack-overflow", last_cursor=0)
+        resp = self._ack(
+            client, scoped_token["plaintext"], "ack-overflow", 2**63
+        )
+        assert resp.status_code == 400
+        assert _group_field("ack-overflow", "last_cursor") == 0
+
+    def test_ack_past_wrong_warehouse_event_returns_403(
+        self, client, scoped_token
+    ):
+        """Token scope is warehouse_ids=[1]. An event in warehouse 2
+        exists and is in the (last_cursor, cursor] range: the ack
+        would implicitly claim it was processed despite the token
+        not being allowed to poll it. Reject."""
+        # Seed one in-scope and one out-of-scope event; the ack range
+        # covers both. The out-of-scope row trips the 403.
+        in_scope = insert_event(event_type="receipt.completed", warehouse_id=1)
+        out_scope = insert_event(event_type="receipt.completed", warehouse_id=2)
+        _setup_group("ack-scope-wh", last_cursor=in_scope - 1)
+        resp = self._ack(
+            client, scoped_token["plaintext"], "ack-scope-wh", out_scope
+        )
+        assert resp.status_code == 403
+        assert resp.get_json()["error"] == "ack_scope_violation"
+        assert _group_field("ack-scope-wh", "last_cursor") == in_scope - 1
+
+    def test_ack_past_wrong_event_type_returns_403(
+        self, client, scoped_token
+    ):
+        """Token event_types = {receipt.completed, ship.confirmed}.
+        A pick.confirmed event in the range trips the 403 even
+        though the warehouse matches."""
+        receipt_id = insert_event(event_type="receipt.completed", warehouse_id=1)
+        pick_id = insert_event(event_type="pick.confirmed", warehouse_id=1)
+        _setup_group("ack-scope-type", last_cursor=receipt_id - 1)
+        resp = self._ack(
+            client, scoped_token["plaintext"], "ack-scope-type", pick_id
+        )
+        assert resp.status_code == 403
+        assert resp.get_json()["error"] == "ack_scope_violation"
+        assert _group_field("ack-scope-type", "last_cursor") == receipt_id - 1
+
+    def test_ack_within_scope_succeeds(self, client, scoped_token):
+        """Every event in (last_cursor, cursor] falls inside the
+        token's scope -> ack advances normally."""
+        e1 = insert_event(event_type="receipt.completed", warehouse_id=1)
+        e2 = insert_event(event_type="ship.confirmed", warehouse_id=1)
+        _setup_group("ack-scope-ok", last_cursor=e1 - 1)
+        resp = self._ack(
+            client, scoped_token["plaintext"], "ack-scope-ok", e2
+        )
+        assert resp.status_code == 200
+        assert _group_field("ack-scope-ok", "last_cursor") == e2
+
+    def test_backwards_ack_skips_horizon_check(self, client, scoped_token):
+        """An ack whose cursor is <= last_cursor is a pure no-op and
+        must not trigger the horizon / scope queries. This matters
+        for groups that were advanced when no events existed and
+        then receive idempotent retries."""
+        # Note: last_cursor=50 with no events is now impossible to
+        # reach via a fresh ack; but the group row can be in that
+        # state via direct setup (legacy migration data, admin
+        # tooling). A backwards ack against such a row still
+        # succeeds as a no-op.
+        _setup_group("ack-backwards", last_cursor=50)
+        resp = self._ack(
+            client, scoped_token["plaintext"], "ack-backwards", 10
+        )
+        assert resp.status_code == 200
+        assert _group_field("ack-backwards", "last_cursor") == 50
