@@ -183,6 +183,96 @@ class TestConsumerGroupUpdate:
         assert resp.status_code == 400
 
 
+class TestSubscriptionValidation:
+    """v1.5.1 V-204 (#145): subscription is strict-typed. Unknown
+    keys and wrong-typed values fail 400 at the admin endpoint
+    instead of silently persisting and crashing the next poll."""
+
+    def _seed(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "sv", "display_name": "Sub-Validate"},
+            headers=auth_headers,
+        )
+
+    def test_create_rejects_string_where_array_expected(self, client, auth_headers):
+        self._seed(client, auth_headers)
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "sv-bad-string",
+                "connector_id": "sv",
+                "subscription": {"warehouse_ids": "abc"},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_rejects_unknown_subscription_keys(self, client, auth_headers):
+        self._seed(client, auth_headers)
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "sv-extra-key",
+                "connector_id": "sv",
+                "subscription": {
+                    "event_types": ["ship.confirmed"],
+                    "__proto__": "malicious",
+                },
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_rejects_non_integer_warehouse_id(self, client, auth_headers):
+        self._seed(client, auth_headers)
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "sv-bad-int",
+                "connector_id": "sv",
+                "subscription": {"warehouse_ids": ["one", "two"]},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_accepts_valid_subscription(self, client, auth_headers):
+        self._seed(client, auth_headers)
+        resp = client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "sv-ok",
+                "connector_id": "sv",
+                "subscription": {
+                    "event_types": ["ship.confirmed"],
+                    "warehouse_ids": [1, 2],
+                },
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        assert resp.get_json()["subscription"] == {
+            "event_types": ["ship.confirmed"],
+            "warehouse_ids": [1, 2],
+        }
+
+    def test_patch_rejects_malformed_subscription(self, client, auth_headers):
+        self._seed(client, auth_headers)
+        client.post(
+            "/api/admin/consumer-groups",
+            json={"consumer_group_id": "sv-patch", "connector_id": "sv"},
+            headers=auth_headers,
+        )
+        resp = client.patch(
+            "/api/admin/consumer-groups/sv-patch",
+            json={"subscription": {"event_types": 42}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+
 class TestConsumerGroupDelete:
     def test_delete_removes_row(self, client, auth_headers):
         _delete_all_cg_and_connectors()

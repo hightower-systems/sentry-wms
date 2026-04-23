@@ -121,7 +121,13 @@ def create_consumer_group(validated):
             {
                 "cgid": validated.consumer_group_id,
                 "cid": validated.connector_id,
-                "sub": json.dumps(validated.subscription),
+                # v1.5.1 V-204 (#145): exclude_none so an empty
+                # SubscriptionFilter persists as {} not
+                # {"event_types": null, "warehouse_ids": null},
+                # matching the pre-v1.5.1 storage shape.
+                "sub": json.dumps(
+                    validated.subscription.model_dump(exclude_none=True)
+                ),
             },
         ).fetchone()
     except IntegrityError as e:
@@ -166,7 +172,9 @@ def update_consumer_group(validated, consumer_group_id):
     params = {"cgid": consumer_group_id}
     if validated.subscription is not None:
         updates.append("subscription = CAST(:sub AS JSONB)")
-        params["sub"] = json.dumps(validated.subscription)
+        params["sub"] = json.dumps(
+            validated.subscription.model_dump(exclude_none=True)
+        )
     if not updates:
         return jsonify({"error": "no_fields_to_update"}), 400
     updates.append("updated_at = NOW()")

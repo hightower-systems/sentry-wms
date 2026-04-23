@@ -1,6 +1,6 @@
-"""Pydantic schemas for /api/admin/consumer-groups + /api/admin/connector-registry (v1.5.0 #125)."""
+"""Pydantic schemas for /api/admin/consumer-groups + /api/admin/connector-registry (v1.5.0 #125, v1.5.1 #145)."""
 
-from typing import Any, Dict, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,20 +12,39 @@ class ConnectorCreateRequest(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=128)
 
 
+class SubscriptionFilter(BaseModel):
+    """v1.5.1 V-204 (#145): strict schema for consumer_groups.subscription.
+
+    Pre-v1.5.1 the subscription was a free-form Dict[str, Any]. An
+    admin could save {"event_types": "string-not-array"} and the next
+    poll would crash with 500 when the handler iterated over the
+    string's chars and hit ValueError on int() of a non-digit. Tightening
+    the shape + rejecting unknown keys stops that class of mistake
+    (and the associated persistence-shaped attack) at the admin
+    endpoint rather than at poll time.
+
+    Supported keys are additive; adding a new filter key means
+    extending this model, not loosening it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_types: Optional[List[str]] = Field(None, max_length=64)
+    warehouse_ids: Optional[List[int]] = Field(None, max_length=64)
+
+
 class ConsumerGroupCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     consumer_group_id: str = Field(..., min_length=1, max_length=64)
     connector_id: str = Field(..., min_length=1, max_length=64)
-    # Empty dict means "no subscription filter"; the polling handler
-    # treats absent keys the same as "no extra narrowing" so this is
-    # a safe default. Structured fields (warehouse_ids, event_types)
-    # are the only keys the polling query currently honours; any
-    # other keys are accepted and stored but ignored on the hot path.
-    subscription: Dict[str, Any] = Field(default_factory=dict)
+    # v1.5.1 V-204 (#145): strict nested schema. Empty object means
+    # "no subscription filter" (both fields default to None); the
+    # polling handler treats absent keys as "no narrowing".
+    subscription: SubscriptionFilter = Field(default_factory=SubscriptionFilter)
 
 
 class ConsumerGroupUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    subscription: Optional[Dict[str, Any]] = None
+    subscription: Optional[SubscriptionFilter] = None

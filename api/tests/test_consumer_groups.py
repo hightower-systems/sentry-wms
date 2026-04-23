@@ -110,6 +110,25 @@ class TestConsumerGroupReadMode:
         )
         assert [e["event_id"] for e in resp.get_json()["events"]] == [ship]
 
+    def test_legacy_malformed_subscription_returns_409(self, client, scoped_token):
+        """v1.5.1 V-204 (#145): the admin endpoints now reject
+        malformed subscriptions at write time, but a row written
+        before the upgrade can still carry a bad shape (e.g.
+        warehouse_ids as a string). The handler returns 409
+        subscription_invalid rather than 500 so the consumer sees
+        a recoverable contract error.
+        """
+        _setup_group(
+            "group-bad-sub",
+            last_cursor=0,
+            subscription={"warehouse_ids": "abc"},
+        )
+        resp = poll(
+            client, scoped_token["plaintext"], consumer_group="group-bad-sub"
+        )
+        assert resp.status_code == 409
+        assert resp.get_json()["error"] == "subscription_invalid"
+
 
 class TestHeartbeatThrottling:
     """Decision T: last_heartbeat UPDATEs are capped at one per 30

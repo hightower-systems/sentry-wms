@@ -215,12 +215,22 @@ def poll_events():
         subscription = cg_row.subscription or {}
         if isinstance(subscription, str):
             subscription = json.loads(subscription)
+        # v1.5.1 V-204 (#145): the admin endpoints reject malformed
+        # subscriptions at write time, but a pre-v1.5.1 row may still
+        # carry a shape the handler cannot parse (e.g. warehouse_ids
+        # as a string). Return 409 subscription_invalid so the
+        # caller sees a recoverable contract error instead of a 500.
+        if not isinstance(subscription, dict):
+            return jsonify({"error": "subscription_invalid"}), 409
         sub_wh = subscription.get("warehouse_ids")
         sub_et = subscription.get("event_types")
-        if sub_wh:
-            subscription_warehouse_ids = [int(w) for w in sub_wh]
-        if sub_et:
-            subscription_event_types = [str(t) for t in sub_et]
+        try:
+            if sub_wh:
+                subscription_warehouse_ids = [int(w) for w in sub_wh]
+            if sub_et:
+                subscription_event_types = [str(t) for t in sub_et]
+        except (TypeError, ValueError):
+            return jsonify({"error": "subscription_invalid"}), 409
 
     sql, params = _build_events_query(
         after=after,
