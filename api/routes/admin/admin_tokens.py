@@ -252,8 +252,12 @@ def rotate_token(token_id):
     )
     g.db.commit()
 
-    # Drop any cached row so the next request re-fetches with the new hash.
-    token_cache.clear()
+    # v1.5.1 V-205 (#146): targeted cross-worker invalidation. Evicts
+    # the entry on this worker AND publishes a Redis pubsub message
+    # that every other worker's subscriber thread evicts on within
+    # one round-trip, replacing the v1.5.0 up-to-60s per-worker
+    # revocation window. The 60s TTL remains as a backstop.
+    token_cache.invalidate(token_id)
 
     return jsonify(
         {
@@ -299,7 +303,8 @@ def revoke_token(token_id):
         details={"token_name": row.token_name},
     )
     g.db.commit()
-    token_cache.clear()
+    # v1.5.1 V-205 (#146): targeted cross-worker invalidation.
+    token_cache.invalidate(row.token_id)
     return jsonify(
         {
             "token_id": row.token_id,
@@ -349,5 +354,6 @@ def delete_token(token_id):
         },
     )
     g.db.commit()
-    token_cache.clear()
+    # v1.5.1 V-205 (#146): targeted cross-worker invalidation.
+    token_cache.invalidate(result.token_id)
     return ("", 204)

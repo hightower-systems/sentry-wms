@@ -389,6 +389,75 @@ class TestAuditLogLifecycle:
         assert snap["status_at_delete"] == "active"
 
 
+class TestCrossWorkerInvalidation:
+    """v1.5.1 V-205 (#146): admin rotate / revoke / delete call
+    ``token_cache.invalidate(token_id)`` which publishes on the
+    Redis channel so every other worker evicts the matching entry
+    within one round-trip. The test patches the publisher to capture
+    calls; cross-worker propagation itself requires a live Redis
+    and is covered by the unit tests in test_token_cache.py.
+    """
+
+    def _capture_invalidations(self, monkeypatch):
+        """Return a list that records every (token_id,) passed to
+        invalidate during the test."""
+        from services import token_cache
+
+        captured = []
+        real_invalidate = token_cache.invalidate
+
+        def _spy(token_id):
+            captured.append(int(token_id))
+            return real_invalidate(token_id)
+
+        monkeypatch.setattr(token_cache, "invalidate", _spy)
+        # admin_tokens imported invalidate by attribute at call time
+        # (via ``from services import token_cache``), so the
+        # monkeypatch above covers both read paths.
+        return captured
+
+    def test_rotate_calls_invalidate(self, client, auth_headers, monkeypatch):
+        captured = self._capture_invalidations(monkeypatch)
+        created = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "rot-inv", "endpoints": ["events.poll"]},
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+
+        client.post(f"/api/admin/tokens/{token_id}/rotate", headers=auth_headers)
+
+        assert token_id in captured, (
+            f"rotate must invalidate the token across workers; captured={captured}"
+        )
+
+    def test_revoke_calls_invalidate(self, client, auth_headers, monkeypatch):
+        captured = self._capture_invalidations(monkeypatch)
+        created = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "rev-inv", "endpoints": ["events.poll"]},
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+
+        client.post(f"/api/admin/tokens/{token_id}/revoke", headers=auth_headers)
+
+        assert token_id in captured
+
+    def test_delete_calls_invalidate(self, client, auth_headers, monkeypatch):
+        captured = self._capture_invalidations(monkeypatch)
+        created = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "del-inv", "endpoints": ["events.poll"]},
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+
+        client.delete(f"/api/admin/tokens/{token_id}", headers=auth_headers)
+
+        assert token_id in captured
+
+
 class TestEndpointsValidation:
     """v1.5.1 V-200 (#140): CreateTokenRequest now requires a
     non-empty ``endpoints`` array of known slugs. Pre-v1.5.1 the

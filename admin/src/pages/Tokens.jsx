@@ -366,9 +366,10 @@ export default function Tokens() {
         >
           <p style={{ fontSize: 13, fontWeight: 600 }}>
             Revoke {confirmRevoke.token_name}? The token stops authenticating
-            within 60 seconds across every API worker (cache TTL). The row
-            remains in the list with status=revoked; delete it separately
-            when you want it removed.
+            within seconds across every API worker (Redis pubsub eviction);
+            the 60-second cache TTL is the backstop if the pubsub channel
+            is unavailable. The row remains in the list with status=revoked;
+            delete it separately when you want it removed.
           </p>
         </Modal>
       )}

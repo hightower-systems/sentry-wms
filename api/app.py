@@ -138,8 +138,20 @@ def create_app():
 
     # V-041: rate limiting. Default 300/min per authenticated user (or per IP
     # if unauthenticated); sensitive routes override via @limiter.limit(...).
-    from services.rate_limit import init_limiter
+    from services.rate_limit import init_limiter, _resolve_storage_uri
     init_limiter(app)
+
+    # v1.5.1 V-205 (#146): wire up Redis pubsub for cross-worker
+    # token-cache invalidation. Same broker shape rate_limit resolves,
+    # different Redis DB (0, where celery lives). A deployment without
+    # Redis falls back to the 60s TTL revocation path documented at
+    # token_cache module top. Idempotent; safe on reloads.
+    from services import token_cache
+    _broker_url = os.getenv("CELERY_BROKER_URL", "")
+    if _broker_url.startswith(("redis://", "rediss://")):
+        token_cache.start_invalidation_subscriber(_broker_url)
+    else:
+        token_cache.start_invalidation_subscriber(None)
 
     # Security response headers
     # V-110: fonts are now self-hosted under admin/public/fonts and
