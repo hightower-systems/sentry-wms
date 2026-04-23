@@ -48,15 +48,14 @@ jobs:
             --requirement api/requirements.txt \
             --strict \
             --vulnerability-service osv \
-            --ignore-vuln GHSA-r6ph-v2qm-q3c2 \
-            --ignore-vuln GHSA-m959-cc7f-wv43 \
             --ignore-vuln GHSA-6w46-j5rx-g56g
         # --ignore-vuln entries above: each acknowledges an advisory whose
-        # fix is explicitly deferred to v1.5. Remove the line when the
-        # linked issue closes.
-        #   GHSA-r6ph-v2qm-q3c2  cryptography 44.0.3 -> 46.0.5  (#59)
-        #   GHSA-m959-cc7f-wv43  cryptography 44.0.3 -> 46.0.6  (#59)
+        # fix is explicitly deferred. Remove the line when the linked
+        # issue closes.
         #   GHSA-6w46-j5rx-g56g  pytest 8.3.4 -> 9.0.3 (dev)    (#60)
+        #
+        # v1.5.1: cryptography bumped to 46.0.7 so GHSA-r6ph-v2qm-q3c2
+        # and GHSA-m959-cc7f-wv43 no longer surface (#59 closed).
 
   npm-audit-admin:
     runs-on: ubuntu-latest
