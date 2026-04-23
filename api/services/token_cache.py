@@ -229,21 +229,42 @@ def start_invalidation_subscriber(redis_url: Optional[str]) -> None:
         return
 
     def _run():
-        for message in pubsub.listen():
-            if not message or message.get("type") != "message":
-                continue
-            try:
-                payload = message.get("data")
-                if isinstance(payload, bytes):
-                    payload = payload.decode("utf-8")
-                data = json.loads(payload) if payload else {}
-                tid = data.get("token_id")
-                if tid is not None:
-                    _invalidate_token_id_local(int(tid))
-            except Exception:  # noqa: BLE001
-                LOGGER.warning(
-                    "token_cache: malformed pubsub message ignored"
-                )
+        # The loop body handles malformed messages locally; the
+        # outer try/except exists for connection-level failures
+        # (Redis shutdown, network blip, test-process teardown
+        # closing the socket) so the daemon thread exits cleanly
+        # instead of raising an uncaught exception that pytest
+        # surfaces as PytestUnhandledThreadExceptionWarning.
+        # The parent process relies on the per-entry TTL as the
+        # backstop whenever the subscriber is not running.
+        try:
+            for message in pubsub.listen():
+                if not message or message.get("type") != "message":
+                    continue
+                try:
+                    payload = message.get("data")
+                    if isinstance(payload, bytes):
+                        payload = payload.decode("utf-8")
+                    data = json.loads(payload) if payload else {}
+                    tid = data.get("token_id")
+                    if tid is not None:
+                        _invalidate_token_id_local(int(tid))
+                except Exception:  # noqa: BLE001
+                    LOGGER.warning(
+                        "token_cache: malformed pubsub message ignored"
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # ConnectionError / ValueError (closed-file on the
+            # socket buffer) / anything else. Log once at INFO
+            # since this is the expected shape of a clean shutdown,
+            # then return. Invalidation falls back to the TTL
+            # until create_app re-invokes start_invalidation_subscriber
+            # (e.g. on worker restart).
+            LOGGER.info(
+                "token_cache: invalidation subscriber exiting (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
 
     _subscriber_thread = threading.Thread(
         target=_run,
