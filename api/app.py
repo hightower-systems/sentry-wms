@@ -204,6 +204,14 @@ def create_app():
     # font-src carry a Google origin, so the admin panel has no
     # third-party asset dependency and a successful XSS cannot load
     # an attacker-controlled stylesheet or font from any origin.
+    # v1.5.1 V-109 (#54): report-uri points browsers at the
+    # /api/csp-report endpoint below so CSP violations leave a trail
+    # operators can actually find. Without it a successful XSS
+    # probe was silently blocked AND silently unnoticed; the server
+    # only saw a normal request. report-uri is the widely-compatible
+    # directive (deprecated but universal); report-to is the modern
+    # API and is deferred until we plumb the Reporting-Endpoints
+    # header too.
     csp_policy = (
         "default-src 'self'; "
         "script-src 'self'; "
@@ -214,7 +222,8 @@ def create_app():
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'; "
-        "object-src 'none'"
+        "object-src 'none'; "
+        "report-uri /api/csp-report"
     )
 
     @app.before_request
@@ -341,6 +350,36 @@ def create_app():
                 ),
             }
         )
+
+    # v1.5.1 V-109 (#54): CSP violation sink. Browsers POST a report
+    # here when a CSP directive blocks a resource; logging them at
+    # WARNING level gives operators a signal on XSS probes or
+    # third-party-asset regressions that would otherwise be silent.
+    # Unauthenticated by design (the report comes from the victim's
+    # browser, not an authenticated session) but rate-limited so a
+    # hostile page cannot flood structured logs.
+    from services.rate_limit import limiter as _limiter
+
+    @app.route("/api/csp-report", methods=["POST"])
+    @_limiter.limit("60 per minute")
+    def csp_report():
+        # Browsers use application/csp-report (legacy report-uri) or
+        # application/reports+json (modern report-to). Accept both
+        # via request.get_data so we don't depend on content-type
+        # routing.
+        import json as _json
+        raw = request.get_data(as_text=True) or ""
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except ValueError:
+            parsed = {"raw_body_truncated": raw[:500]}
+        logger.warning(
+            "csp_violation remote=%s ua=%s report=%s",
+            request.remote_addr or "unknown",
+            request.headers.get("User-Agent", "")[:200],
+            _json.dumps(parsed)[:2000],
+        )
+        return ("", 204)
 
     return app
 
