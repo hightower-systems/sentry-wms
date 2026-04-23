@@ -370,12 +370,22 @@ def ack_cursor(validated: AckBody):
 @require_wms_token
 @limiter.limit("120 per minute")
 def list_event_types():
-    """Serve the v1.5.0 event catalog from the in-process registry.
+    """Serve the v1.5.0 event catalog from the in-process registry,
+    filtered by the caller's token scope.
 
     No DB, no per-request filesystem read; the registry is loaded once
     at ``create_app`` time (#110) and catalog queries are O(7).
+
+    v1.5.1 V-212 (#151): the response is scoped to the token's
+    ``event_types`` list so a token cannot enumerate event types it
+    has no read access for. Pre-v1.5.1 the full catalog leaked to
+    every caller; aids reconnaissance for later pivots ("cycle_count.adjusted
+    events I cannot see, worth finding a broader token for").
     """
-    return jsonify({"types": events_schema_registry.known_types()})
+    allowed = list(g.current_token.get("event_types") or [])
+    return jsonify(
+        {"types": events_schema_registry.known_types(event_types_filter=allowed)}
+    )
 
 
 @polling_bp.route("/schema/<event_type>/<int:version>", methods=["GET"])

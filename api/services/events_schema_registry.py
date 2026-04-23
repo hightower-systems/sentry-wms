@@ -95,15 +95,28 @@ def get_validator(event_type: str, event_version: int) -> Draft202012Validator:
         ) from e
 
 
-def known_types():
+def known_types(event_types_filter=None):
     """Return the catalog for GET /api/v1/events/types.
 
     Groups versions per event_type and carries the aggregate_type so
     consumers can build an aggregate -> event_type index without
     parsing every schema file.
+
+    v1.5.1 V-212 (#151): ``event_types_filter`` narrows the response
+    to the intersection of V150_CATALOG and the caller's allowed
+    event_types list. Passing None returns every entry (admin /
+    internal callers); passing an iterable returns only the
+    matching subset. An empty iterable returns an empty list,
+    matching Decision S "empty = no access".
     """
+    if event_types_filter is None:
+        allow = None
+    else:
+        allow = set(event_types_filter)
     grouped: Dict[str, dict] = {}
     for event_type, version, aggregate_type in V150_CATALOG:
+        if allow is not None and event_type not in allow:
+            continue
         entry = grouped.setdefault(
             event_type,
             {"event_type": event_type, "versions": [], "aggregate_type": aggregate_type},
