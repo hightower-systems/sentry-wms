@@ -38,8 +38,9 @@
     "vitest": "^4.1.4"
   },
   "overrides": {
-    "tar": "^7.5.13"
+    "tar": "^7.5.13",
+    "@xmldom/xmldom": "^0.9.10"
   },
-  "_overridesNote": "tar pinned to >=7.5.11 to fix GHSA-83g3-92jg-28cx, GHSA-qffp-2rhf-9h96, GHSA-9ppj-qmqm-q256 (path traversal) which surface in prod tree via expo -> @expo/cli -> tar.",
+  "_overridesNote": "tar pinned to >=7.5.11 to fix GHSA-83g3-92jg-28cx, GHSA-qffp-2rhf-9h96, GHSA-9ppj-qmqm-q256 (path traversal) which surface in prod tree via expo -> @expo/cli -> tar. @xmldom/xmldom pinned to ^0.9.10 to fix GHSA-2v35-w6hq-6mfw (DoS via recursion), GHSA-f6ww-3ggp-fr8h (XML injection via DocumentType serialization), GHSA-x6wf-f3px-wcqx (XML node injection via PI serialization), GHSA-j759-j44w-7fr8 (XML node injection via comment serialization); 0.8.x is EOL at 0.8.10 with no backport, so the fix crosses the 0.8 -> 0.9 boundary. xmldom is reached at build time only (Expo config plugins + plist parsing), not runtime.",
   "private": true
 }
