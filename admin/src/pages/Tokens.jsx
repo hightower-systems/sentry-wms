@@ -38,22 +38,99 @@ function renderCsv(list) {
   return <span className="mono" style={{ fontSize: 12 }}>{list.join(', ')}</span>;
 }
 
+// #159: reusable checkbox picker used by the three token-scope
+// fields on the create modal. `options` is the pool the admin can
+// pick from (from /admin/scope-catalog or /admin/warehouses);
+// `value` is the currently-selected array; `onChange` receives the
+// new array. "All" / "None" buttons are inline so the common case
+// (grant everything / deny everything) is a single click.
+function ScopeCheckboxList({ options, value, onChange, renderLabel, keyOf }) {
+  const selected = new Set(value);
+  const allKeys = options.map(keyOf);
+  const allSelected = allKeys.length > 0 && allKeys.every((k) => selected.has(k));
+  const selectAll = () => onChange(allKeys);
+  const selectNone = () => onChange([]);
+  const toggle = (k) => {
+    const next = new Set(selected);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+    onChange(allKeys.filter((x) => next.has(x)));
+  };
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+        <button type="button" className="btn btn-sm" onClick={selectAll} disabled={allSelected}>
+          All
+        </button>
+        <button type="button" className="btn btn-sm" onClick={selectNone} disabled={selected.size === 0}>
+          None
+        </button>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
+          {selected.size} / {allKeys.length} selected
+        </span>
+      </div>
+      <div
+        style={{
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          padding: 8,
+          maxHeight: 160,
+          overflowY: 'auto',
+        }}
+      >
+        {options.length === 0 ? (
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>No options available.</span>
+        ) : (
+          options.map((opt) => {
+            const k = keyOf(opt);
+            return (
+              <label
+                key={k}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '2px 0' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(k)}
+                  onChange={() => toggle(k)}
+                />
+                {renderLabel(opt)}
+              </label>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_FORM = {
+  token_name: '',
+  warehouse_ids: [],
+  event_types: [],
+  endpoints: [],
+  advancedMode: false,
+  advancedWarehouseIds: '',
+  advancedEventTypes: '',
+  advancedEndpoints: '',
+};
+
 export default function Tokens() {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({
-    token_name: '',
-    warehouse_ids: '',
-    event_types: '',
-    endpoints: '',
-  });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [createError, setCreateError] = useState('');
   const [reveal, setReveal] = useState(null);
   const [revealAcked, setRevealAcked] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [pageError, setPageError] = useState('');
+  // #159: scope-picker data. Fetched on modal open so fresh
+  // deployments without a cached catalog still get correct
+  // checkbox options. Empty defaults render "No options" placeholders
+  // rather than blowing up before the fetch returns.
+  const [scopeCatalog, setScopeCatalog] = useState({ event_types: [], endpoints: [] });
+  const [warehouses, setWarehouses] = useState([]);
 
   useEffect(() => { load(); }, []);
 
@@ -70,36 +147,96 @@ export default function Tokens() {
     setLoading(false);
   }
 
-  function openCreate() {
-    setForm({ token_name: '', warehouse_ids: '', event_types: '', endpoints: '' });
+  async function openCreate() {
+    setForm(EMPTY_FORM);
     setCreateError('');
     setShowCreate(true);
+    // Fire both fetches in parallel; either failing falls back to an
+    // empty list in the respective checkbox component.
+    const [catalogRes, warehousesRes] = await Promise.all([
+      api.get('/admin/scope-catalog'),
+      api.get('/admin/warehouses'),
+    ]);
+    if (catalogRes?.ok) {
+      const data = await catalogRes.json();
+      setScopeCatalog({
+        event_types: data.event_types || [],
+        endpoints: data.endpoints || [],
+      });
+    }
+    if (warehousesRes?.ok) {
+      const data = await warehousesRes.json();
+      setWarehouses(data.warehouses || []);
+    }
   }
 
   function parseCsv(raw) {
     return raw.split(',').map(s => s.trim()).filter(Boolean);
   }
 
+  function toggleAdvanced() {
+    // When toggling on: seed the advanced text inputs from the
+    // current checkbox selections so the admin does not lose work.
+    // When toggling off: parse the text back into the checkbox
+    // selections for the same reason. Either way, the two
+    // representations stay in sync at toggle-time even if the
+    // admin edits them in the other mode afterwards.
+    setForm((f) => {
+      if (!f.advancedMode) {
+        return {
+          ...f,
+          advancedMode: true,
+          advancedWarehouseIds: f.warehouse_ids.join(', '),
+          advancedEventTypes: f.event_types.join(', '),
+          advancedEndpoints: f.endpoints.join(', '),
+        };
+      }
+      const wh_ids = parseCsv(f.advancedWarehouseIds).map(Number).filter(Number.isFinite);
+      return {
+        ...f,
+        advancedMode: false,
+        warehouse_ids: wh_ids,
+        event_types: parseCsv(f.advancedEventTypes),
+        endpoints: parseCsv(f.advancedEndpoints),
+      };
+    });
+  }
+
   async function submitCreate() {
     setCreateError('');
     if (!form.token_name.trim()) { setCreateError('Name is required'); return; }
-    const wh_ids = parseCsv(form.warehouse_ids).map(s => Number(s)).filter(n => Number.isInteger(n) && n > 0);
-    if (form.warehouse_ids.trim() && wh_ids.length === 0) {
-      setCreateError('Warehouse IDs must be comma-separated positive integers');
-      return;
+
+    // #159: in advanced mode, parse text inputs at submit time so
+    // the admin can tweak right up to the Create click. In
+    // checkbox mode, the arrays are already maintained in form state.
+    let wh_ids;
+    let event_types;
+    let endpoints;
+    if (form.advancedMode) {
+      wh_ids = parseCsv(form.advancedWarehouseIds).map(s => Number(s)).filter(n => Number.isInteger(n) && n > 0);
+      if (form.advancedWarehouseIds.trim() && wh_ids.length === 0) {
+        setCreateError('Warehouse IDs must be comma-separated positive integers');
+        return;
+      }
+      event_types = parseCsv(form.advancedEventTypes);
+      endpoints = parseCsv(form.advancedEndpoints);
+    } else {
+      wh_ids = form.warehouse_ids;
+      event_types = form.event_types;
+      endpoints = form.endpoints;
     }
-    const endpoints = parseCsv(form.endpoints);
+
     // v1.5.1 V-200 (#140): endpoints is a required non-empty list of
     // known slugs. The server validates but we short-circuit here so
     // the admin gets immediate feedback instead of a generic 400.
     if (endpoints.length === 0) {
-      setCreateError('Endpoints is required. Use "Grant all v1 endpoints" or list the slugs explicitly.');
+      setCreateError('Endpoints is required. Check at least one or use "All" above.');
       return;
     }
     const payload = {
       token_name: form.token_name.trim(),
       warehouse_ids: wh_ids,
-      event_types: parseCsv(form.event_types),
+      event_types,
       endpoints,
     };
     const res = await api.post('/admin/tokens', payload);
@@ -112,21 +249,6 @@ export default function Tokens() {
     } else {
       setCreateError(body?.error || 'Failed to create token');
     }
-  }
-
-  // v1.5.1 V-200 (#140): one-click preset so operators who want a
-  // token with no endpoint restriction don't have to hand-type five
-  // slugs. Matches the set the server validates against; update
-  // both sides when a new /api/v1/* route ships.
-  const ALL_V1_ENDPOINT_SLUGS = [
-    'events.poll',
-    'events.ack',
-    'events.types',
-    'events.schema',
-    'snapshot.inventory',
-  ];
-  function grantAllEndpoints() {
-    setForm((f) => ({ ...f, endpoints: ALL_V1_ENDPOINT_SLUGS.join(', ') }));
   }
 
   async function rotate(row) {
@@ -255,52 +377,109 @@ export default function Tokens() {
               placeholder="fabric-prod"
             />
           </div>
-          <div className="form-group">
-            <label>Warehouse IDs</label>
-            <input
-              className="form-input"
-              value={form.warehouse_ids}
-              onChange={(e) => setForm({ ...form, warehouse_ids: e.target.value })}
-              placeholder="1, 2"
-            />
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-              Comma-separated integer IDs. Empty = token has no warehouse access.
-            </div>
+
+          {/* #159: default (checkbox-driven) path. Hidden when the
+              admin opens the Advanced disclosure below. */}
+          {!form.advancedMode && (
+            <>
+              <div className="form-group">
+                <label>Warehouses</label>
+                <ScopeCheckboxList
+                  options={warehouses}
+                  value={form.warehouse_ids}
+                  onChange={(ids) => setForm((f) => ({ ...f, warehouse_ids: ids }))}
+                  keyOf={(w) => w.warehouse_id}
+                  renderLabel={(w) => (
+                    <span>
+                      <span className="mono">{w.warehouse_code}</span>
+                      {w.warehouse_name ? ` - ${w.warehouse_name}` : ''}
+                    </span>
+                  )}
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Empty selection denies access to every warehouse.
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Event types</label>
+                <ScopeCheckboxList
+                  options={scopeCatalog.event_types}
+                  value={form.event_types}
+                  onChange={(types) => setForm((f) => ({ ...f, event_types: types }))}
+                  keyOf={(t) => t}
+                  renderLabel={(t) => <span className="mono">{t}</span>}
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Empty selection denies every event_type.
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Endpoints</label>
+                <ScopeCheckboxList
+                  options={scopeCatalog.endpoints}
+                  value={form.endpoints}
+                  onChange={(slugs) => setForm((f) => ({ ...f, endpoints: slugs }))}
+                  keyOf={(s) => s}
+                  renderLabel={(s) => <span className="mono">{s}</span>}
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Required. The token can hit only the v1 routes checked here.
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* #159: advanced escape hatch. Collapsed by default so
+              the common case stays checkbox-driven. Shown when the
+              admin needs to paste a scope from docs or scripting. */}
+          <div className="form-group" style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={form.advancedMode}
+                onChange={toggleAdvanced}
+                aria-label="Advanced: paste comma-separated values"
+              />
+              <span style={{ fontSize: 13 }}>Advanced: paste comma-separated values</span>
+            </label>
           </div>
-          <div className="form-group">
-            <label>Event types</label>
-            <input
-              className="form-input"
-              value={form.event_types}
-              onChange={(e) => setForm({ ...form, event_types: e.target.value })}
-              placeholder="receipt.completed, ship.confirmed"
-            />
-          </div>
-          <div className="form-group">
-            <label>Endpoints</label>
-            <input
-              className="form-input"
-              value={form.endpoints}
-              onChange={(e) => setForm({ ...form, endpoints: e.target.value })}
-              placeholder="events.poll, snapshot.inventory"
-            />
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-              Required. Comma-separated slugs; the token can hit only the v1 routes listed.
-              Valid: <span className="mono">events.poll</span>,{' '}
-              <span className="mono">events.ack</span>,{' '}
-              <span className="mono">events.types</span>,{' '}
-              <span className="mono">events.schema</span>,{' '}
-              <span className="mono">snapshot.inventory</span>.
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={grantAllEndpoints}
-                style={{ marginLeft: 8 }}
-              >
-                Grant all v1 endpoints
-              </button>
-            </div>
-          </div>
+          {form.advancedMode && (
+            <>
+              <div className="form-group">
+                <label>Warehouse IDs</label>
+                <input
+                  className="form-input"
+                  value={form.advancedWarehouseIds}
+                  onChange={(e) => setForm({ ...form, advancedWarehouseIds: e.target.value })}
+                  placeholder="1, 2"
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Comma-separated integer IDs. Empty = no warehouse access.
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Event types</label>
+                <input
+                  className="form-input"
+                  value={form.advancedEventTypes}
+                  onChange={(e) => setForm({ ...form, advancedEventTypes: e.target.value })}
+                  placeholder="receipt.completed, ship.confirmed"
+                />
+              </div>
+              <div className="form-group">
+                <label>Endpoints</label>
+                <input
+                  className="form-input"
+                  value={form.advancedEndpoints}
+                  onChange={(e) => setForm({ ...form, advancedEndpoints: e.target.value })}
+                  placeholder="events.poll, snapshot.inventory"
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Required. Comma-separated slugs; the token can hit only the v1 routes listed.
+                </div>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 
