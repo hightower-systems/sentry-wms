@@ -389,6 +389,66 @@ class TestAuditLogLifecycle:
         assert snap["status_at_delete"] == "active"
 
 
+class TestScopeCatalog:
+    """#159: /api/admin/scope-catalog backs the checkbox-driven
+    Token-create modal. The UI hits this on modal open and
+    renders its event_types + endpoints checkbox lists from the
+    response. Response content must match the server's
+    authoritative scope sources so "what the admin picks" and
+    "what the backend validates against" are guaranteed to
+    agree.
+    """
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.get("/api/admin/scope-catalog")
+        assert resp.status_code == 401
+
+    def test_returns_expected_keys(self, client, auth_headers):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert set(body.keys()) == {"event_types", "endpoints"}
+        assert isinstance(body["event_types"], list)
+        assert isinstance(body["endpoints"], list)
+
+    def test_event_types_match_v150_catalog(self, client, auth_headers):
+        """event_types must be the distinct set in V150_CATALOG; a
+        mismatch means the UI would offer a type the server does
+        not know about (or hide a type the server does)."""
+        from services.events_schema_registry import V150_CATALOG
+
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        expected = sorted({entry[0] for entry in V150_CATALOG})
+        assert body["event_types"] == expected
+
+    def test_endpoints_list_is_non_empty_and_includes_known_routes(
+        self, client, auth_headers
+    ):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        endpoints = set(body["endpoints"])
+        # Two concrete routes that must be registered on any v1.5+
+        # deployment -- if they disappear from the response, the
+        # decorator's V150_ENDPOINT_SLUGS + URL-map filter is
+        # mismatched and token scope would break silently.
+        assert "events.poll" in endpoints
+        assert "snapshot.inventory" in endpoints
+        # Full expected set matches the source-of-truth mapping.
+        from middleware.auth_middleware import V150_ENDPOINT_SLUGS
+        assert endpoints == set(V150_ENDPOINT_SLUGS.keys())
+
+    def test_event_types_are_sorted(self, client, auth_headers):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        assert body["event_types"] == sorted(body["event_types"])
+
+    def test_endpoints_are_sorted(self, client, auth_headers):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        assert body["endpoints"] == sorted(body["endpoints"])
+
+
 class TestScopeExistenceValidation:
     """v1.5.1 V-210 (#150): warehouse_ids must reference real rows
     in ``warehouses``; event_types must appear in V150_CATALOG.

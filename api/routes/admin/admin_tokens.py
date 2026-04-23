@@ -29,6 +29,7 @@ from constants import (
     ACTION_TOKEN_DELETE,
 )
 from middleware.auth_middleware import (
+    V150_ENDPOINT_SLUGS,
     require_auth,
     require_role,
     validate_pepper_config,
@@ -92,6 +93,48 @@ def _row_to_listing(row) -> dict:
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
         "rotation_status": _rotation_status(rotated_at) if rotated_at else "none",
     }
+
+
+@admin_bp.route("/scope-catalog", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+def scope_catalog():
+    """Serve the admin UI's token-create modal its authoritative
+    pick-lists so the human never has to type a slug from memory
+    (issue #159).
+
+    Response shape:
+
+        {"event_types": [...], "endpoints": [...]}
+
+    event_types is the sorted list of distinct event-type strings
+    in ``V150_CATALOG`` (the source of truth also used by the
+    admin issuance validator, #150 V-210).
+
+    endpoints is the sorted list of keys in
+    ``V150_ENDPOINT_SLUGS`` (the source of truth also used by
+    ``@require_wms_token`` for the V-200 scope check, #140). A
+    slug lands in the response only when its mapped Flask
+    endpoint is actually registered on the running app, which
+    protects the UI against surfacing a slug that was removed
+    but is still listed in the constant during a rename.
+
+    No warehouse_ids here: the warehouse selector pulls from the
+    existing ``GET /api/admin/warehouses`` endpoint (same
+    pattern Users.jsx uses). Keeping this endpoint tight to the
+    two wms_tokens-specific columns avoids a second round-trip
+    on modal open.
+    """
+    from flask import current_app
+
+    event_types = sorted({entry[0] for entry in V150_CATALOG})
+    registered = set(current_app.view_functions.keys())
+    endpoints = sorted(
+        slug
+        for slug, flask_endpoint in V150_ENDPOINT_SLUGS.items()
+        if flask_endpoint in registered
+    )
+    return jsonify({"event_types": event_types, "endpoints": endpoints})
 
 
 @admin_bp.route("/tokens", methods=["POST"])
