@@ -13,5 +13,5 @@ pydantic==2.11.3
 requests==2.33.0
 flask-limiter[redis]==3.8.0
 jsonschema==4.23.0
-pytest==8.3.4
-pytest-cov==6.0.0
+pytest==9.0.3
+pytest-cov==7.1.0
