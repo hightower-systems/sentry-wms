@@ -188,6 +188,113 @@ class TestKeeperUnavailable:
         assert resp.get_json()["error"] == "snapshot_keeper_unavailable"
 
 
+class TestConcurrentScanCap:
+    """v1.5.1 V-203 (#144): one in-flight scan per token. Pre-v1.5.1
+    a single token could hold every keeper pool slot by starting
+    scans in quick succession and never paging them to completion;
+    pool pinned, every other token got 503 for up to 5 minutes.
+    """
+
+    def test_first_page_with_pending_scan_returns_429(
+        self, client, scoped_token
+    ):
+        """A pre-existing pending row for this token trips the cap on
+        any new first-page request before the INSERT lands."""
+        # Seed a pending row directly so we do not depend on a
+        # subprocess keeper.
+        scan_id = str(uuid.uuid4())
+        conn = _direct_conn()
+        try:
+            conn.cursor().execute(
+                "INSERT INTO snapshot_scans (scan_id, warehouse_id, status, "
+                "created_by_token_id) VALUES (%s, %s, 'pending', %s)",
+                (scan_id, 1, scoped_token["token_id"]),
+            )
+        finally:
+            conn.close()
+        try:
+            resp = _get(client, scoped_token["plaintext"], warehouse_id=1)
+            assert resp.status_code == 429
+            assert resp.get_json()["error"] == "snapshot_in_flight"
+        finally:
+            _delete_scan(scan_id)
+
+    def test_first_page_with_active_scan_returns_429(
+        self, client, scoped_token
+    ):
+        """An active scan for this token also counts against the cap;
+        the attacker path of "open, leave paging, repeat" is the
+        concrete DoS shape V-203 targets."""
+        with _ExportedSnapshot(
+            warehouse_id=1, token_id=scoped_token["token_id"]
+        ) as _scope:
+            resp = _get(client, scoped_token["plaintext"], warehouse_id=1)
+            assert resp.status_code == 429
+            assert resp.get_json()["error"] == "snapshot_in_flight"
+
+    def test_cursor_requests_are_exempt_from_cap(
+        self, client, scoped_token
+    ):
+        """The cap applies only to first-page INSERTs. A cursor
+        request re-uses an existing scan; rejecting those would
+        break the very "page to completion" pattern the cap
+        nudges clients toward."""
+        with _ExportedSnapshot(
+            warehouse_id=1, token_id=scoped_token["token_id"]
+        ) as scope:
+            cursor = _encode_cursor(
+                scope.scan_id, warehouse_id=1, item_id=0, bin_id=0
+            )
+            resp = _get(
+                client, scoped_token["plaintext"],
+                warehouse_id=1, cursor=cursor,
+            )
+            # 200 if the snapshot imports cleanly; the important
+            # assertion is it is NOT 429.
+            assert resp.status_code != 429
+
+    def test_cap_is_per_token_not_global(self, client, scoped_token, seed_data):
+        """Pool contention is global (4 slots) but the cap is
+        per-token. Two different tokens each holding an active scan
+        do NOT interfere."""
+        other_plaintext = f"capother-{uuid.uuid4()}"
+        other_token_id = _insert_token(other_plaintext, warehouse_ids=[1])
+        token_cache.clear()
+
+        # Scoped token holds an active scan; other token's first-page
+        # request should NOT be gated by the cap (its own count is 0).
+        # It will still fail with 503 because no keeper is running,
+        # but crucially not 429.
+        with _ExportedSnapshot(
+            warehouse_id=1, token_id=scoped_token["token_id"]
+        ) as _scope:
+            resp = _get(client, other_plaintext, warehouse_id=1)
+            assert resp.status_code != 429
+
+    def test_completed_scan_does_not_block_new_scan(
+        self, client, scoped_token
+    ):
+        """A scan in status='done' / 'expired' / 'aborted' is no
+        longer "in flight" and must not count against the cap."""
+        done_scan_id = str(uuid.uuid4())
+        conn = _direct_conn()
+        try:
+            conn.cursor().execute(
+                "INSERT INTO snapshot_scans (scan_id, warehouse_id, status, "
+                "created_by_token_id) VALUES (%s, %s, 'done', %s)",
+                (done_scan_id, 1, scoped_token["token_id"]),
+            )
+        finally:
+            conn.close()
+        try:
+            resp = _get(client, scoped_token["plaintext"], warehouse_id=1)
+            # Still 503 because no keeper promotes, but explicitly
+            # NOT 429: the 'done' row does not gate new requests.
+            assert resp.status_code != 429
+        finally:
+            _delete_scan(done_scan_id)
+
+
 class TestCursorTamper:
     def test_cursor_warehouse_mismatch_returns_403(self, client, scoped_token):
         """Client submits a cursor whose scan was created for

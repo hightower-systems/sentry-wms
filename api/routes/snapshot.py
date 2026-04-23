@@ -54,6 +54,16 @@ snapshot_bp = Blueprint("snapshot", __name__)
 KEEPER_POLL_INTERVAL_S = 0.25
 KEEPER_PROMOTION_TIMEOUT_S = 5.0
 
+# v1.5.1 V-203 (#144): per-token concurrent-scan cap. The keeper's
+# pool holds 4 REPEATABLE READ transactions; pre-v1.5.1 a single
+# token could open all 4 slots in quick succession and pin them for
+# the full 5-minute idle timeout by touching each scan once per page
+# pull. Enforcing one in-flight scan per token forces any attacker
+# to amortise the pool-exhaustion cost across multiple credentials;
+# it also matches the standard "page your snapshot to completion
+# before starting a new one" client pattern.
+MAX_CONCURRENT_SCANS_PER_TOKEN = 1
+
 
 # ── Cursor encoding ──────────────────────────────────────────────────
 
@@ -130,6 +140,34 @@ def snapshot_inventory():
         pg_snapshot_id = scan["pg_snapshot_id"]
         snapshot_event_id = scan["snapshot_event_id"]
     else:
+        # v1.5.1 V-203 (#144): reject 429 before INSERT when this
+        # token already holds a pending or active scan. Keeps the
+        # keeper pool fair across concurrent tokens; pool size is 4
+        # globally and this cap forces spreading across credentials.
+        in_flight = g.db.execute(
+            text(
+                "SELECT COUNT(*) FROM snapshot_scans "
+                " WHERE created_by_token_id = :tid "
+                "   AND status IN ('pending', 'active')"
+            ),
+            {"tid": token_id},
+        ).scalar()
+        if in_flight >= MAX_CONCURRENT_SCANS_PER_TOKEN:
+            return (
+                jsonify(
+                    {
+                        "error": "snapshot_in_flight",
+                        "message": (
+                            "This token already has a snapshot in flight. "
+                            "Page it to completion (partial page = done) or "
+                            "wait for the keeper's idle timeout before "
+                            "starting a new scan."
+                        ),
+                    }
+                ),
+                429,
+            )
+
         # First page: mint a pending scan and wait for the keeper
         # to promote it. Timeout 5s; past that the keeper is unhealthy.
         scan_id = str(uuid.uuid4())
