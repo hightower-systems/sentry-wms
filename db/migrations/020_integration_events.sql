@@ -27,6 +27,16 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- v1.5.1 V-213 (#152): wrap the ten ALTER TABLE statements below in a
+-- single transaction so a failure on one table (lock timeout, disk
+-- full, unexpected schema drift) rolls back ALL of them. Pre-v1.5.1
+-- each ALTER committed on its own; a partial apply followed by an
+-- operator skipping ahead to migration 025 (which drops the DEFAULT)
+-- left the later tables without an external_id column, and every
+-- subsequent insert failed with a NOT NULL violation. The transaction
+-- wrapper keeps the schema change all-or-nothing.
+BEGIN;
+
 -- External UUID retrofit on the ten aggregate/actor tables. UNIQUE is
 -- inline so the implicit index name is consistent across fresh installs
 -- (schema.sql) and upgrades (this migration). IF NOT EXISTS keeps the
@@ -41,6 +51,8 @@ ALTER TABLE inventory_adjustments ADD COLUMN IF NOT EXISTS external_id UUID UNIQ
 ALTER TABLE bin_transfers         ADD COLUMN IF NOT EXISTS external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE cycle_counts          ADD COLUMN IF NOT EXISTS external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE item_fulfillments     ADD COLUMN IF NOT EXISTS external_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid();
+
+COMMIT;
 
 -- Transactional outbox. Every inventory-changing handler writes one row
 -- here inside its existing transaction (see api/services/events_service.py
