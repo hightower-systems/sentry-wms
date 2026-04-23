@@ -3,6 +3,7 @@ Route protection decorators for JWT authentication and role-based access.
 """
 
 import hashlib
+import logging
 import os
 from datetime import datetime, timezone
 from functools import wraps
@@ -17,6 +18,13 @@ from services.cookie_auth import (
     csrf_token_matches,
 )
 from services import token_cache
+
+# v1.5.1 V-209 (#149): dedicated logger so operators can dial up
+# DEBUG to recover the specific auth failure mode (missing, unknown
+# hash, revoked, expired) without putting it on the wire. The HTTP
+# response collapses all four into a single "invalid_token" body
+# to close the enumeration oracle.
+_INVALID_LOGGER = logging.getLogger("sentry_wms.auth.wms_token")
 
 
 # Endpoints a user with must_change_password=true is allowed to call.
@@ -304,28 +312,48 @@ def require_wms_token(f):
       so downstream rate-limit keys and audit logs have something to
       attribute the request to without conflating with cookie users.
 
-    Failures:
-    - 401 missing_token when the header is absent
-    - 401 invalid_token when the hash does not resolve, or the row's
-      status is not 'active' (revoked tokens stay rejected for up to
-      60s after revoke via the token_cache TTL)
-    - 401 token_expired when expires_at is in the past
-    - 403 endpoint_scope_violation when the token's endpoints slug
-      list does not include the route being accessed. Empty list
-      denies every v1 route (plan Decision S: empty = no access).
-      Matches warehouse_ids / event_types semantics.
+    Failures (v1.5.1 V-209 (#149) -- unified wire shape):
+    - 401 ``{"error":"invalid_token"}`` for every auth failure:
+      missing header, unknown hash, revoked row, expired row.
+      Pre-v1.5.1 the decorator returned four distinct bodies
+      (missing_token, invalid_token, token_expired, plus revoked
+      coming out as invalid_token); the differentiation was an
+      enumeration oracle letting an attacker separate "guessed a
+      real token's shape" (expired) from "guessed nothing" (missing
+      / invalid). The specific reason stays in a DEBUG log for
+      operator forensics.
+    - 403 ``endpoint_scope_violation`` when the token's endpoints
+      slug list does not include the route (kept distinct because
+      403 is a different HTTP semantic from 401 and the auth check
+      already succeeded).
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
         raw = request.headers.get("X-WMS-Token")
         if not raw:
-            return jsonify({"error": "missing_token"}), 401
+            # v1.5.1 V-209: flatten timing of the missing-header
+            # path by doing the same get_by_hash a real attempt
+            # would trigger. The lookup uses a sentinel hash that
+            # cannot exist in the DB so no real row ever matches.
+            token_cache.get_by_hash("0" * 64)
+            _INVALID_LOGGER.debug("wms_token: missing header")
+            return jsonify({"error": "invalid_token"}), 401
         token_hash = _hash_token(raw)
         row = token_cache.get_by_hash(token_hash)
-        if not row or row["status"] != "active":
+        if not row:
+            _INVALID_LOGGER.debug("wms_token: unknown hash")
+            return jsonify({"error": "invalid_token"}), 401
+        if row["status"] != "active":
+            _INVALID_LOGGER.debug(
+                "wms_token: status=%s for token_id=%s",
+                row["status"], row.get("token_id"),
+            )
             return jsonify({"error": "invalid_token"}), 401
         if row.get("expires_at") and datetime.now(timezone.utc) > row["expires_at"]:
-            return jsonify({"error": "token_expired"}), 401
+            _INVALID_LOGGER.debug(
+                "wms_token: expired token_id=%s", row.get("token_id")
+            )
+            return jsonify({"error": "invalid_token"}), 401
         # v1.5.1 V-200: resolve the request's Flask endpoint to the
         # set of slugs it belongs to, intersect with the token's
         # allowed slugs. Unknown Flask endpoint here would be a code

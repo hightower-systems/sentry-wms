@@ -65,10 +65,16 @@ def _fresh_cache():
 
 
 class TestRequireWmsTokenRejections:
-    def test_missing_header_returns_missing_token(self, probe_app):
+    """v1.5.1 V-209 (#149): every 401 failure mode returns the same
+    wire body so an attacker cannot separate "guessed a real token"
+    (expired) from "guessed nothing" (missing / wrong hash). The
+    specific reason goes to a DEBUG log for operator forensics.
+    """
+
+    def test_missing_header_returns_invalid_token(self, probe_app):
         resp = probe_app.get("/probe")
         assert resp.status_code == 401
-        assert resp.get_json() == {"error": "missing_token"}
+        assert resp.get_json() == {"error": "invalid_token"}
 
     def test_wrong_hash_returns_invalid_token(self, probe_app):
         resp = probe_app.get(
@@ -88,7 +94,10 @@ class TestRequireWmsTokenRejections:
         finally:
             delete_token(token_id)
 
-    def test_expired_token_returns_token_expired(self, probe_app):
+    def test_expired_token_returns_invalid_token(self, probe_app):
+        """Pre-v1.5.1 this returned the distinct ``token_expired``
+        body. v1.5.1 unifies it into ``invalid_token`` so an
+        attacker cannot probe "was this plaintext once valid"."""
         past = datetime.now(timezone.utc) - timedelta(days=1)
         token_id = insert_token(plaintext="expired-target", expires_at=past)
         try:
@@ -96,9 +105,40 @@ class TestRequireWmsTokenRejections:
                 "/probe", headers={"X-WMS-Token": "expired-target"}
             )
             assert resp.status_code == 401
-            assert resp.get_json() == {"error": "token_expired"}
+            assert resp.get_json() == {"error": "invalid_token"}
         finally:
             delete_token(token_id)
+
+    def test_failure_reasons_are_indistinguishable_on_the_wire(
+        self, probe_app
+    ):
+        """Cross-check: missing, wrong hash, revoked, expired all
+        produce bit-for-bit identical response bodies and codes."""
+        past = datetime.now(timezone.utc) - timedelta(days=1)
+        revoked_id = insert_token(plaintext="v209-rev", status="revoked")
+        expired_id = insert_token(plaintext="v209-exp", expires_at=past)
+        try:
+            responses = [
+                probe_app.get("/probe"),
+                probe_app.get(
+                    "/probe", headers={"X-WMS-Token": "v209-garbage"}
+                ),
+                probe_app.get(
+                    "/probe", headers={"X-WMS-Token": "v209-rev"}
+                ),
+                probe_app.get(
+                    "/probe", headers={"X-WMS-Token": "v209-exp"}
+                ),
+            ]
+            codes = {r.status_code for r in responses}
+            bodies = {r.get_data(as_text=True) for r in responses}
+            assert codes == {401}
+            assert len(bodies) == 1, (
+                f"401 bodies must be identical across failure modes; got {bodies}"
+            )
+        finally:
+            delete_token(revoked_id)
+            delete_token(expired_id)
 
 
 class TestRequireWmsTokenAcceptance:
