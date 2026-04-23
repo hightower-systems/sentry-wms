@@ -104,6 +104,20 @@ def create_app():
         # shape. Deployments that terminate TLS at multiple proxies in
         # front of Sentry (e.g. CDN -> nginx -> Sentry) increase the
         # x_for / x_proto / x_host counts accordingly.
+        #
+        # v1.5.1 V-219 (umbrella #156): x_prefix=0 is the intentional
+        # value and takes precedence over the audit plan's
+        # x_prefix=1. Honouring X-Forwarded-Prefix makes sense only
+        # for sub-path deploys like `/app` behind a single origin
+        # serving many apps, which Sentry does not support today.
+        # Turning x_prefix on without that shape gives a remote
+        # caller (via a trusted proxy) the ability to steer
+        # request.script_root without a functional benefit. The
+        # defensible default for our deployment matrix is 0; if a
+        # future release adds sub-path support the correct change
+        # is to flip to x_prefix=1 AND gate behind an explicit
+        # config flag so operators on the old shape do not
+        # inherit the broader trust.
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
             x_for=1,
