@@ -34,7 +34,12 @@ from services import token_cache
 def probe_app():
     app = Flask("test-wms-cache")
 
-    @app.route("/probe")
+    # v1.5.1 V-200 (#140): the decorator now enforces endpoint scope
+    # against the Flask endpoint name. Register the probe under a
+    # real V150_ENDPOINT_SLUGS Flask-endpoint name so tokens seeded
+    # with the helper's DEFAULT_TEST_ENDPOINTS pass the scope check
+    # alongside the TTL / revocation assertions this file exercises.
+    @app.route("/probe", endpoint="polling.poll_events")
     @require_wms_token
     def probe():
         return jsonify(
