@@ -19,6 +19,8 @@ existing test_admin.py covers those.
 
 import pytest
 
+from db_test_context import get_raw_connection
+
 
 class TestBinCreatePayload:
     """Issue #74: Bins.jsx saveBin() POST body shape."""
@@ -285,6 +287,72 @@ class TestInterWarehouseTransferCreatePayload:
         assert ("source_bin_id",) in locs
         assert ("destination_warehouse_id",) in locs
         assert ("destination_bin_id",) in locs
+
+
+class TestInterWarehouseTransferListPayload:
+    """#162: GET /admin/inter-warehouse-transfers must expose every field
+    the Recent Transfers table reads. Pre-fix the backend returned
+    from_* / to_* / transferred_at while the frontend was reading
+    source_* / destination_* / created_at, so From / To / Status /
+    Created all rendered blank.
+    """
+
+    def test_list_exposes_every_field_the_recent_table_reads(
+        self, client, auth_headers
+    ):
+        # Seed a row directly; the create endpoint's business rules
+        # require matching inventory which isn't worth setting up here.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO bin_transfers (
+                item_id, from_bin_id, to_bin_id, warehouse_id,
+                quantity, transfer_type, transferred_by, external_id
+            ) VALUES (1, 3, 4, 1, 2, 'INTER_WAREHOUSE', 'admin',
+                      gen_random_uuid())
+            """
+        )
+        cur.close()
+
+        resp = client.get(
+            "/api/admin/inter-warehouse-transfers?limit=10",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["transfers"], "seeded row must come back"
+        row = body["transfers"][0]
+
+        # Every field the Recent Transfers table binds to.
+        for key in (
+            "transfer_id",          # ID column
+            "sku",                  # Item column (falls through to item_name/id)
+            "item_name",            # Item column fallback
+            "quantity",             # Qty column
+            "from_warehouse_name",  # From column (primary)
+            "from_warehouse_code",  # From column (fallback)
+            "from_warehouse_id",    # From column (final fallback)
+            "from_bin_code",        # From column (bin side)
+            "from_bin_id",
+            "to_warehouse_name",
+            "to_warehouse_code",
+            "to_warehouse_id",
+            "to_bin_code",
+            "to_bin_id",
+            "status",               # Status column tag
+            "transferred_at",       # Created column
+        ):
+            assert key in row, f"missing {key!r} for Recent Transfers table"
+
+        # bin_transfers has no status machine: every row is a completed
+        # atomic move, so the server stamps 'completed' for the tag.
+        assert row["status"] == "completed"
+        assert row["from_warehouse_name"]
+        assert row["to_warehouse_name"]
+        assert row["from_bin_code"]
+        assert row["to_bin_code"]
+        assert row["transferred_at"]
 
 
 class TestManualPOCreatePayload:

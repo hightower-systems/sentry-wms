@@ -235,10 +235,10 @@ export default function InterWarehouseTransfers() {
                   <td>{t.transfer_id || t.id}</td>
                   <td>{t.sku || t.item_name || t.item_id}</td>
                   <td>{t.quantity}</td>
-                  <td>{t.source_warehouse_name || t.source_warehouse_code || t.source_warehouse_id} / {t.source_bin_code || t.source_bin_id}</td>
-                  <td>{t.destination_warehouse_name || t.destination_warehouse_code || t.destination_warehouse_id} / {t.destination_bin_code || t.destination_bin_id}</td>
-                  <td>{statusTag(t.status)}</td>
-                  <td style={{ fontFamily: 'monospace' }}>{formatDate(t.created_at)}</td>
+                  <td>{t.from_warehouse_name || t.from_warehouse_code || t.from_warehouse_id} / {t.from_bin_code || t.from_bin_id}</td>
+                  <td>{t.to_warehouse_name || t.to_warehouse_code || t.to_warehouse_id} / {t.to_bin_code || t.to_bin_id}</td>
+                  <td>{statusTag(t.status || 'completed')}</td>
+                  <td style={{ fontFamily: 'monospace' }}>{formatDate(t.transferred_at || t.created_at)}</td>
                 </tr>
               ))}
             </tbody>

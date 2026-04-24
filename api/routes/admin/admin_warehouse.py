@@ -629,11 +629,13 @@ def list_inter_warehouse_transfers():
         text("""
             SELECT bt.transfer_id, bt.item_id, bt.from_bin_id, bt.to_bin_id,
                    bt.quantity, bt.transferred_by, bt.transferred_at,
-                   i.sku,
+                   i.sku, i.item_name,
                    fb.bin_code AS from_bin_code, fb.warehouse_id AS from_warehouse_id,
                    fw.warehouse_name AS from_warehouse_name,
+                   fw.warehouse_code AS from_warehouse_code,
                    tb.bin_code AS to_bin_code, tb.warehouse_id AS to_warehouse_id,
-                   tw.warehouse_name AS to_warehouse_name
+                   tw.warehouse_name AS to_warehouse_name,
+                   tw.warehouse_code AS to_warehouse_code
             FROM bin_transfers bt
             JOIN items i ON i.item_id = bt.item_id
             JOIN bins fb ON fb.bin_id = bt.from_bin_id
@@ -647,23 +649,30 @@ def list_inter_warehouse_transfers():
         {"lim": limit},
     ).fetchall()
 
+    # #162: bin_transfers has no status column -- every row is a
+    # completed atomic move. Emit status='completed' so the admin
+    # table's status tag renders instead of an empty pill.
     return jsonify({
         "transfers": [
             {
                 "transfer_id": r.transfer_id,
                 "item_id": r.item_id,
                 "sku": r.sku,
+                "item_name": r.item_name,
                 "from_bin_id": r.from_bin_id,
                 "from_bin_code": r.from_bin_code,
                 "from_warehouse_id": r.from_warehouse_id,
                 "from_warehouse_name": r.from_warehouse_name,
+                "from_warehouse_code": r.from_warehouse_code,
                 "to_bin_id": r.to_bin_id,
                 "to_bin_code": r.to_bin_code,
                 "to_warehouse_id": r.to_warehouse_id,
                 "to_warehouse_name": r.to_warehouse_name,
+                "to_warehouse_code": r.to_warehouse_code,
                 "quantity": r.quantity,
                 "transferred_by": r.transferred_by,
                 "transferred_at": r.transferred_at.isoformat() if r.transferred_at else None,
+                "status": "completed",
             }
             for r in rows
         ]
