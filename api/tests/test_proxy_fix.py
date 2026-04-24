@@ -78,6 +78,11 @@ def unproxied_client(unproxied_app):
 @pytest.fixture
 def proxied_app(_seed_session_database, monkeypatch):
     monkeypatch.setenv("TRUST_PROXY", "true")
+    # v1.5.1 V-206 (#147): create_app() refuses TRUST_PROXY=true +
+    # API_BIND_HOST=0.0.0.0. The compose test container sets
+    # API_BIND_HOST=0.0.0.0, so pin it to 127.0.0.1 for these tests -
+    # they exercise ProxyFix header rewriting, not the bind guard.
+    monkeypatch.setenv("API_BIND_HOST", "127.0.0.1")
     return _build_probe_app()
 
 
