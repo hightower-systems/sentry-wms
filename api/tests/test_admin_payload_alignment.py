@@ -190,6 +190,60 @@ class TestInventoryAdjustmentCreatePayload:
         assert any(d["loc"] == ["reason"] for d in resp.get_json()["details"])
 
 
+class TestInventoryAdjustmentListPayload:
+    """#161: GET /admin/adjustments/list must expose the fields the
+    Recent Adjustments table reads. Pre-v1.5.1 the endpoint returned
+    database-column names (adjusted_at, quantity_change, reason_detail,
+    adjusted_by) but did not join items.item_name or users.username, so
+    Date / Type / Item / Qty / Reason / User all rendered as '-'.
+    """
+
+    def test_list_exposes_every_field_the_recent_table_reads(
+        self, client, auth_headers
+    ):
+        create = client.post(
+            "/api/admin/adjustments/direct",
+            json={
+                "warehouse_id": 1,
+                "bin_id": 2,
+                "item_id": 5,
+                "adjustment_type": "add",
+                "quantity": 3,
+                "reason": "issue-161 list-payload alignment probe",
+            },
+            headers=auth_headers,
+        )
+        assert create.status_code == 201, create.get_json()
+
+        resp = client.get(
+            "/api/admin/adjustments/list?warehouse_id=1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["adjustments"], "seeded row must come back"
+        row = body["adjustments"][0]
+
+        # Every field the admin Recent Adjustments table binds to.
+        for key in (
+            "adjusted_at",      # Date column
+            "quantity_change",  # Qty column + derives Add/Remove tag
+            "sku",              # SKU column
+            "item_name",        # Item column (JOIN items)
+            "bin_code",         # Bin column
+            "reason_detail",    # Reason column
+            "username",         # User column (JOIN users)
+        ):
+            assert key in row, f"missing {key!r} for Recent Adjustments table"
+
+        assert row["sku"]
+        assert row["item_name"]
+        assert row["bin_code"]
+        assert row["username"] == "admin"
+        assert row["quantity_change"] == 3
+        assert row["reason_detail"] == "issue-161 list-payload alignment probe"
+
+
 class TestInterWarehouseTransferCreatePayload:
     """Issue #78: InterWarehouseTransfers.jsx handleSubmit() POST body shape."""
 
