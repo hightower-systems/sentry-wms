@@ -1,0 +1,1387 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/changelog/">
+      
+      
+        <link rel="prev" href="../contributing/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Changelog - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#changelog" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changelog
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#v151-security-audit-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.5.1 -- Security Audit Patch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v150-outbound-poll-pipe-a-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.5.0 -- Outbound Poll (Pipe A Read)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v145-reverse-proxy-hotfix-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.4.5 -- Reverse Proxy Hotfix Follow-up
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v144-reverse-proxy-hotfix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.4.4 -- Reverse Proxy Hotfix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v143-mobile-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.4.3 -- Mobile Patch
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#v151-security-audit-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.5.1 -- Security Audit Patch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v150-outbound-poll-pipe-a-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.5.0 -- Outbound Poll (Pipe A Read)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v145-reverse-proxy-hotfix-follow-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.4.5 -- Reverse Proxy Hotfix Follow-up
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v144-reverse-proxy-hotfix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.4.4 -- Reverse Proxy Hotfix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v143-mobile-patch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.4.3 -- Mobile Patch
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="changelog">Changelog</h1>
+<p>Every GitHub release includes the full set of fixes and upgrade notes.
+Links below point to the release page for the complete list. This page
+is a shorter, docs-site-friendly summary.</p>
+<hr />
+<h2 id="v151-security-audit-patch">v1.5.1 -- Security Audit Patch</h2>
+<p><em>2026-04-27.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.1">Full notes</a>.</p>
+<p>Security patch closing ~22 findings from the post-v1.5.0 internal audit
+of the Outbound Poll attack surface: the X-WMS-Token vault, the
+<code>/api/v1/events*</code> and <code>/api/v1/snapshot/*</code> endpoints, the
+<code>integration_events</code> outbox, the snapshot-keeper daemon, and the admin
+token / consumer-group / connector-registry CRUD pages. No new
+features. No API contract changes. No mobile runtime changes (the APK
+is a fresh artifact only because the dependency overrides reshape the
+build tree). Existing well-formed clients with correctly-scoped tokens
+see no behaviour difference; what changed is enforcement strictness.</p>
+<p>Token auth fixes:</p>
+<ul>
+<li><strong>Endpoint scope is now actually enforced (#140).</strong> Pre-fix the
+  <code>endpoints</code> column on <code>wms_tokens</code> was stored and rendered in the
+  admin UI but <code>@require_wms_token</code> never consulted it; a token with
+  any-or-no endpoint list could hit every <code>/api/v1/*</code> route the
+  warehouse / event-type scope allowed. Migration 026 backfills
+  pre-existing empty arrays so old tokens keep working.</li>
+<li><strong>Cross-worker token revocation via Redis pubsub (#146).</strong> Pre-fix
+  <code>token_cache.clear()</code> only flushed the handling gunicorn worker's
+  dict; every other worker honored the stale entry until per-entry TTL
+  expired (up to 60s). v1.5.1 publishes revocations on a
+  <code>wms_token_events</code> channel that every worker subscribes to at boot.
+  Sub-second across all workers in the Redis-available path; the 60s
+  TTL remains as the backstop when Redis is down.</li>
+<li><strong>Stricter pepper validation (#142).</strong> Boot guard rejects unset,
+  empty, whitespace-only, the <code>.env.example</code> placeholder, and any
+  value shorter than 32 characters. Pre-fix it rejected only unset /
+  empty.</li>
+<li><strong>Uniform <code>401 invalid_token</code> body (#149).</strong> Pre-fix the decorator
+  returned three distinct bodies (missing / invalid / expired); an
+  attacker who captured a plaintext could distinguish "this was once
+  valid" from "never valid." Specific reason now stays in DEBUG log
+  on <code>sentry_wms.auth.wms_token</code>.</li>
+<li><strong>Issuance-time scope existence checks (#150).</strong> Admin token
+  issuance validates that <code>warehouse_ids</code> and <code>event_types</code> actually
+  point at real entities. Unknown values fail 400 with the offending
+  entries enumerated.</li>
+<li><strong>Admin CRUD writes the audit_log hash chain (#141, #154).</strong>
+  <code>wms_tokens</code>, <code>consumer_groups</code>, and <code>connector_registry</code> mutations
+  now append to <code>audit_log</code> at every site (issue, rotate, revoke,
+  delete). Plaintext tokens never written to <code>details</code>; delete
+  captures pre-mutation scope so the trail survives row removal.</li>
+<li><strong>Checkbox scope selectors on the token-create modal (#159).</strong> New
+  admin endpoint <code>GET /api/admin/scope-catalog</code> populates the
+  warehouse / event-type / endpoint lists.</li>
+</ul>
+<p>Polling and snapshot fixes:</p>
+<ul>
+<li><strong><code>/api/v1/events/ack</code> enforces cursor horizon and per-event scope
+  (#143).</strong> Pre-fix a token with a legacy admin-issued shape could ack
+  an arbitrary cursor on any consumer_group, jumping the cursor past
+  every future event and silently losing data downstream. Now returns
+  <code>400 cursor_beyond_horizon</code> and <code>403 ack_scope_violation</code> on the
+  failing shapes; backwards acks remain pure no-ops.</li>
+<li><strong>Per-token concurrent-scan cap on <code>/api/v1/snapshot/inventory</code>
+  (#144).</strong> A single token could pin the entire 4-slot keeper pool;
+  v1.5.1 caps to one active scan per token. Cursor requests on an
+  active scan are exempt so partial-page flows keep working.</li>
+<li><strong>Strict-typed <code>consumer_groups.subscription</code> (#145).</strong> Pydantic
+  with <code>extra="forbid"</code>. Belt-and-suspenders parse-error path on the
+  poll handler so legacy bad rows surface <code>409 subscription_invalid</code>
+  instead of 500.</li>
+<li><strong>Consumer-group recreate requires explicit replay acknowledgement
+  (#148).</strong> Migration 027 (<code>consumer_groups_tombstones</code>) records
+  <code>last_cursor_at_delete</code>. CREATE under a deleted id returns
+  <code>409 replay_would_skip_history</code> unless the admin sends
+  <code>acknowledge_replay: true</code>.</li>
+<li><strong><code>/api/v1/events/types</code> filters by token scope (#151).</strong> Pre-fix
+  every caller saw every event type known to the system regardless of
+  scope; reconnaissance for a later pivot is no longer free.</li>
+</ul>
+<p>Database and infrastructure fixes:</p>
+<ul>
+<li><strong>Migrations 020 + 025 wrapped in transactions (#152).</strong> The
+  ten-table ALTER blocks are now all-or-nothing.</li>
+<li><strong>Snapshot-keeper supports a least-privilege DB role (#153).</strong> New
+  <code>SNAPSHOT_KEEPER_DATABASE_URL</code> env var; falls back to
+  <code>DATABASE_URL</code> when unset so dev and single-role deployments are
+  unchanged. New <code>db/role-snapshot-keeper.sql</code> provisions the role
+  with the narrow grant set (<code>SELECT</code> on <code>integration_events</code>,
+  <code>SELECT</code>/<code>UPDATE</code>/<code>DELETE</code> on <code>snapshot_scans</code>, <code>EXECUTE</code> on
+  <code>pg_export_snapshot</code>).</li>
+<li><strong>Boot guard on dangerous proxy + bind combination (#147).</strong> Refuses
+  to start with <code>TRUST_PROXY=true</code> AND <code>API_BIND_HOST=0.0.0.0</code>
+  because the combo lets any caller who reaches the api port directly
+  spoof <code>X-Forwarded-For</code> and poison every rate-limit bucket, audit
+  attribution, and downstream IP allowlist. Escape hatch
+  <code>SENTRY_ALLOW_OPEN_BIND=1</code> logs CRITICAL on every boot.</li>
+<li><strong><code>wms_tokens</code> deletion forensic trail (#157).</strong> Migration 028 ships
+  a <code>wms_tokens_audit</code> table plus AFTER DELETE / AFTER TRUNCATE
+  statement-level triggers capturing <code>event_type</code>, <code>rows_affected</code>,
+  <code>sess_user</code>, <code>curr_user</code>, <code>backend_pid</code>, <code>application_name</code>,
+  <code>event_at</code>. Resolves the unattributed token wipe observed during
+  the v1.5.0 release gate.</li>
+<li><strong>Audit catch-all (#156).</strong> <code>proxy_fix_active</code> hidden from anonymous
+  <code>/api/health</code> (moved to admin-gated <code>GET /api/admin/system-info</code>);
+  dev-only banners on <code>docker-compose.proxied.yml</code> and
+  <code>proxy/nginx.conf</code>; ProxyFix <code>x_prefix=0</code> reconciled with inline
+  comment; <code>SENTRY_VALIDATE_EVENT_SCHEMAS</code> no longer frozen at module
+  import; external-id CI guardrail walks <code>db/**/*.sql</code> in addition to
+  <code>api/**/*.py</code>.</li>
+<li><strong><code>source_txn_id</code> consumer-dedupe contract documented (#155).</strong>
+  <code>docs/events/README.md</code> now states explicitly that consumers MUST
+  dedupe on <code>event_id</code> (server-side BIGSERIAL, monotonic in commit
+  order), not on <code>source_txn_id</code> (attacker-controllable via
+  <code>X-Request-ID</code>).</li>
+<li><strong>CSP report sink (#54).</strong> New unauthenticated
+  <code>POST /api/csp-report</code> logs CSP violations at WARNING, rate-limited
+  60/min per IP.</li>
+</ul>
+<p>Dependency hygiene:</p>
+<ul>
+<li><strong><code>@xmldom/xmldom</code> -&gt; ^0.9.10 override (#158).</strong> Closes four
+  newly-disclosed GHSAs against <code>&lt;=0.8.12</code> reachable through five
+  expo-related transitive paths. Build-time only (Expo config
+  plugins). Silences the nightly Dependency Audit on <code>main</code> that had
+  been failing since 2026-04-24.</li>
+<li><strong>cryptography 44.0.3 -&gt; 46.0.7 (#59).</strong> Closes carried-over
+  GHSA-r6ph-v2qm-q3c2 and GHSA-m959-cc7f-wv43. Fernet / MultiFernet
+  compatibility verified across 45.x and 46.x.</li>
+<li><strong>pytest 8.3.4 -&gt; 9.0.3, pytest-cov 6.0.0 -&gt; 7.1.0 (#60).</strong> Closes
+  GHSA-6w46-j5rx-g56g; pip-audit allowlist now empty.</li>
+<li><strong>eas-cli dev-tree GHSAs closed (#61).</strong> <code>minimatch ^5.1.9</code> and
+  <code>node-forge ^1.4.0</code> overrides; eas-cli bumped 18.5.0 -&gt; 18.8.1.
+  <code>npm-audit-mobile-dev</code> is now a gating job matching the prod-tree
+  job.</li>
+</ul>
+<p>UI defects caught during the audit cycle:</p>
+<ul>
+<li><strong>Recent Adjustments and Recent Transfers tables on the dashboard
+  render every column (#161, #162).</strong> Both were clipping a column on
+  narrower viewports.</li>
+</ul>
+<p>Migrations: <strong>026</strong> backfills <code>wms_tokens.endpoints</code> for tokens
+created before v1.5.1 (idempotent), <strong>027</strong> adds
+<code>consumer_groups_tombstones</code>, <strong>028</strong> adds <code>wms_tokens_audit</code> plus the
+DELETE / TRUNCATE triggers.</p>
+<p>Operator notes: a <code>SENTRY_TOKEN_PEPPER</code> shorter than 32 characters or
+set to the <code>.env.example</code> placeholder now fails boot. Existing
+well-formed peppers (32+ chars of entropy) hash to the same value and
+require no changes. The new APK
+(<code>sentry-wms-v1.5.1.apk</code>, attached to the GitHub release) installs
+over v1.5.0 on Chainway C6000 devices. Standard upgrade procedure
+applies: <code>git pull &amp;&amp; docker compose down &amp;&amp; docker compose build &amp;&amp;
+docker compose up -d</code>.</p>
+<hr />
+<h2 id="v150-outbound-poll-pipe-a-read">v1.5.0 -- Outbound Poll (Pipe A Read)</h2>
+<p><em>2026-04-22.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.0">Full notes</a>.</p>
+<p>First <code>/api/v1/*</code> surface. External systems -- ERPs, commerce
+platforms, analytics pipelines -- can now consume every
+inventory-changing write Sentry performs via a cursor-paginated REST
+read. The release ships a transactional outbox, a commit-order
+visibility gate, a bulk-snapshot endpoint for the initial load, and
+X-WMS-Token auth with hash-only storage. Admin panel gains two new
+pages (API tokens, Consumer groups); mobile is untouched.</p>
+<p>Outbox + emission:</p>
+<ul>
+<li><strong><code>integration_events</code> transactional outbox</strong> (migration 020).
+  <code>BIGSERIAL event_id</code>, <code>JSONB payload</code>, denormalized
+  <code>aggregate_external_id</code>, four btree indexes covering the v1.5.0
+  query shapes. Deferred-constraint <code>visible_at</code> trigger sets
+  <code>visible_at = clock_timestamp()</code> at COMMIT so readers ordering on
+  <code>(visible_at, event_id)</code> see events in commit order even when
+  BIGSERIAL assigned <code>event_id</code> values in a different order.</li>
+<li><strong>Seven emissions pinned to the framework catalog</strong>:
+  <code>receipt.completed</code>, <code>adjustment.applied</code> (approval + direct),
+  <code>cycle_count.adjusted</code>, <code>transfer.completed</code>, <code>pick.confirmed</code>
+  (one per SO in a pick batch), <code>pack.confirmed</code>, <code>ship.confirmed</code>.
+  JSON Schema files at <code>api/schemas_v1/events/&lt;type&gt;/1.json</code>
+  validated Draft 2020-12. Per-aggregate <code>SELECT ... FOR UPDATE</code>
+  retrofit gives FIFO on the outbox without behaviour change for
+  users.</li>
+<li><strong>External UUID retrofit across ten aggregate / actor tables</strong>
+  (<code>users</code>, <code>items</code>, <code>bins</code>, orders, receipts, adjustments,
+  transfers, counts, fulfillments). Every insert site supplies
+  <code>uuid.uuid4()</code> explicitly; migration 025 drops the
+  <code>DEFAULT gen_random_uuid()</code> after the retrofit so a new handler
+  that forgets the column fails loudly.</li>
+<li><strong>Schema registry + CI validation.</strong> <code>events_schema_registry.py</code>
+  loads every schema at <code>create_app</code> time; boot fails on a malformed
+  or missing file. A dedicated CI step imports the registry on a
+  fresh checkout so a broken schema fails the job before tests run.</li>
+</ul>
+<p>Polling + snapshot endpoints:</p>
+<ul>
+<li><strong><code>GET /api/v1/events</code></strong> -- cursor + consumer-group polling. Plain
+  <code>int64</code> cursor (Decision G: not base64, not opaque), no <code>has_more</code>
+  field (full page implies more; partial implies caught up). Mutual
+  exclusion of <code>after</code> + <code>consumer_group</code> returns 400. Strict-subset
+  scope enforcement (Decision H): a filter asking for anything
+  outside the token's scope returns 403, never a silent intersection.</li>
+<li><strong><code>POST /api/v1/events/ack</code></strong> -- consumer-group cursor advance.
+  Atomic UPDATE with a <code>last_cursor &lt;= :cursor</code> guard; out-of-order
+  ack is a no-op, retried ack is idempotent.</li>
+<li><strong><code>GET /api/v1/events/types</code></strong> and
+  <strong><code>GET /api/v1/events/schema/&lt;type&gt;/&lt;version&gt;</code></strong> -- in-process
+  catalog + raw JSON Schema body served as <code>application/schema+json</code>.</li>
+<li><strong><code>GET /api/v1/snapshot/inventory</code></strong> -- bulk-snapshot endpoint for
+  the initial load, backed by a new <code>snapshot-keeper</code> daemon that
+  holds REPEATABLE READ transactions and exports a <code>pg_snapshot_id</code>
+  via <code>pg_export_snapshot()</code>. API tier imports the same snapshot on
+  short-lived connections via <code>SET TRANSACTION SNAPSHOT '&lt;id&gt;'</code>.
+  Keyset-paginated by <code>(warehouse_id, item_id, bin_id)</code> so page cost
+  is O(limit) regardless of scan size.</li>
+<li><strong>Per-token rate limits.</strong> 120 req/min on polling routes,
+  2 req/min on the snapshot endpoint. Bucket key prefers
+  <code>token:&lt;id&gt;</code> over <code>user:&lt;id&gt;</code> over remote IP so a noisy connector
+  cannot starve interactive cookie users.</li>
+</ul>
+<p>Auth + token vault:</p>
+<ul>
+<li><strong><code>wms_tokens</code> hash-only vault</strong> (migration 023). <code>CHAR(64)</code>
+  <code>token_hash</code> UNIQUE, typed-array scope columns
+  (<code>warehouse_ids BIGINT[]</code>, <code>event_types TEXT[]</code>,
+  <code>endpoints TEXT[]</code>), default <code>expires_at = NOW() + INTERVAL '1 year'</code>.
+  No <code>encrypted_token</code> column -- lost plaintext means rotate,
+  matching the GitHub / Stripe / AWS standard.</li>
+<li><strong><code>SENTRY_TOKEN_PEPPER</code> env var.</strong>
+  <code>token_hash = SHA256(pepper || plaintext).hex()</code>. Pepper is
+  env-only (never in the DB), required at boot. Rotating it is an
+  emergency-only control that invalidates every issued token at
+  once; runbook at <code>docs/runbooks/token-pepper-rotation.md</code>.</li>
+<li><strong><code>@require_wms_token</code> decorator + per-worker 60s TTL cache.</strong>
+  Applied only to <code>/api/v1/events*</code> and <code>/api/v1/snapshot/*</code>;
+  cookie-auth routes keep <code>@require_auth</code>. Revocation is visible
+  within 60 seconds across every API worker.</li>
+</ul>
+<p>Admin panel:</p>
+<ul>
+<li><strong>API tokens page</strong> (<code>/api-tokens</code>) with rotation badges +
+  per-row rotate / revoke / delete actions, one-time plaintext
+  reveal with copy-to-clipboard and a save-confirmation checkbox.</li>
+<li><strong>Consumer groups page</strong> (<code>/consumer-groups</code>) with subscription
+  preview + heartbeat freshness, create + edit modals.</li>
+<li><strong>Connector registry endpoints</strong> under
+  <code>/api/admin/connector-registry</code> (distinct from the v1.3
+  <code>connector_credentials</code> vault; the two concepts converge in v1.9).</li>
+</ul>
+<p>Migrations: 020 (<code>integration_events</code>), 021 (<code>connectors</code>,
+<code>consumer_groups</code>), 022 (<code>credential_type</code>), 023 (<code>wms_tokens</code>),
+024 (<code>snapshot_scans</code> + NOTIFY trigger), 025 (drops the
+<code>external_id</code> DEFAULT post-retrofit).</p>
+<p>Tests: 910 backend passing (up from 740 at v1.4.5, +170 new cases),
+58 admin unchanged, 32 mobile unchanged. CI gains a dedicated
+schema-validation step that imports the registry on every push so
+a broken schema file fails the job before tests run.</p>
+<p>Operator notes:</p>
+<ul>
+<li><strong>First <code>/api/v1/*</code> surface.</strong> This is the outbound read side for
+  Pipe A. Cookie-authed admin/mobile routes under <code>/api/*</code> keep
+  their existing contract.</li>
+<li><strong><code>SENTRY_TOKEN_PEPPER</code> is required at boot.</strong> Generate with
+  <code>python -c "import secrets; print(secrets.token_hex(32))"</code> and set
+  it in <code>.env</code> before <code>docker compose up -d</code>. The api container
+  refuses to boot without it. Rotating the pepper invalidates every
+  issued token; see
+  <a href="../runbooks/token-pepper-rotation/"><code>token-pepper-rotation.md</code></a>
+  for the procedure.</li>
+<li><strong>New <code>snapshot-keeper</code> service in <code>docker-compose.yml</code>.</strong> After
+  upgrading, <code>docker compose up -d</code> starts one additional container
+  alongside the existing <code>db</code>, <code>redis</code>, <code>api</code>, <code>celery-worker</code>, and
+  <code>admin</code>. The keeper is required for
+  <code>GET /api/v1/snapshot/inventory</code>; a downed keeper surfaces as 503
+  <code>snapshot_keeper_unavailable</code> on the first page of a scan.</li>
+<li><strong>No APK update.</strong> The v1.4.3 APK on Chainway C6000 devices stays
+  current; v1.5.0 has no mobile code changes beyond the version
+  string in the login / home screen footers.</li>
+<li><strong><code>TRUST_PROXY</code> behavior unchanged from v1.4.5.</strong> Fresh-install
+  operators who run Sentry behind a TLS-terminating reverse proxy
+  set <code>TRUST_PROXY=true</code> in <code>.env</code>; direct-connect deployments leave
+  it unset.</li>
+</ul>
+<p>Migration guidance for production deployments (multi-million-row
+aggregate tables) lives at
+<a href="../runbooks/v1.5.0-migration/"><code>docs/runbooks/v1.5.0-migration.md</code></a>.
+The apartment-lab seed applies all six migrations in seconds; larger
+tables should use the documented two-step "add nullable column,
+batch backfill, then add UNIQUE + NOT NULL" alternative for
+migration 020's external_id backfill.</p>
+<hr />
+<h2 id="v145-reverse-proxy-hotfix-follow-up">v1.4.5 -- Reverse Proxy Hotfix Follow-up</h2>
+<p><em>2026-04-21.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.5">Full notes</a>.</p>
+<p>v1.4.4 (#107) wired Werkzeug <code>ProxyFix</code> into <code>api/app.py</code> behind a
+<code>TRUST_PROXY</code> env var, but <code>docker-compose.yml</code> was never updated to
+pass <code>TRUST_PROXY</code> into the <code>api</code> service environment. Operators who
+set <code>TRUST_PROXY=true</code> in <code>.env</code> saw no effect because Compose does
+not auto-forward arbitrary host env vars: the value stopped at the
+Compose shell and <code>os.getenv("TRUST_PROXY")</code> returned <code>None</code> inside
+the container, so <code>ProxyFix</code> stayed off and the CSRF-403-behind-proxy
+bug from v1.4.0-v1.4.3 kept firing. Fruxh hit this after installing
+v1.4.4 fresh. api + Compose + docs change; admin and mobile untouched.</p>
+<p>Fixes:</p>
+<ul>
+<li><strong><code>TRUST_PROXY</code> now reaches the api container (#136, refs #107,
+  Fruxh's #98).</strong> <code>docker-compose.yml</code> <code>services.api.environment</code>
+  gains <code>TRUST_PROXY: ${TRUST_PROXY:-false}</code>, same pattern as
+  <code>FLASK_ENV</code>. Default <code>false</code> preserves the direct-connect posture;
+  operators opt in by setting <code>TRUST_PROXY=true</code> in <code>.env</code>. Without
+  this single line, v1.4.4's <code>ProxyFix</code> wiring was cosmetic for every
+  Compose-deployed install.</li>
+<li><strong>ProxyFix state is logged at Flask startup.</strong> <code>api/app.py</code> emits
+  <code>ProxyFix active: ...</code> or <code>ProxyFix inactive: ...</code> at WARNING level
+  so the line clears the default gunicorn stderr threshold.
+  Operators verify with <code>docker compose logs api | grep ProxyFix</code>
+  without execing into the container.</li>
+<li><strong><code>/api/health</code> now returns <code>proxy_fix_active</code>.</strong> External monitors
+  and the reverse proxy itself can confirm the wiring end-to-end with
+  a single HTTPS <code>GET</code>. A green health response with
+  <code>"proxy_fix_active": false</code> behind an nginx deployment is the exact
+  signature of this bug.</li>
+<li><strong><code>.env.example</code> gains a <code>TRUST_PROXY</code> block with the security
+  warning inline</strong>, and <code>docs/deployment.md</code> "Reverse Proxy (HTTPS)"
+  clarifies that <code>TRUST_PROXY</code> goes in <code>.env</code> at the repo root (not
+  <code>api/.env</code>), that <code>docker compose restart api</code> does NOT re-read
+  <code>.env</code> (use <code>docker compose up -d</code> to pick up changes), and that
+  the wiring can be verified three independent ways: <code>env | grep
+  TRUST_PROXY</code> in the container, <code>logs api | grep ProxyFix</code> at the
+  Flask layer, and <code>curl /api/health</code> from outside.</li>
+</ul>
+<p>Tests: 740 backend (up from 738 at v1.4.4), 58 admin, 32 mobile.
+<code>api/tests/test_proxy_fix.py</code> gains <code>TestHealthEndpointReportsProxyFixState</code>
+with two cases locking the <code>/api/health</code> <code>proxy_fix_active</code> contract
+in both the unproxied and proxied-client states; the original 4 cases
+(opt-in invariant, scheme/host/is_secure rewrite, Secure CSRF + auth
+cookies, change-password NOT 403'ing behind proxy) are unchanged and
+still green. All CI workflows green.</p>
+<p>Operator notes: the v1.4.3 APK is stable; no APK update is needed for
+v1.4.5 (mobile has zero code changes and the API contract is
+unchanged). Operators who upgraded to v1.4.4 and set <code>TRUST_PROXY=true</code>
+but still saw CSRF-403 errors should pull v1.4.5, run <code>docker compose
+down &amp;&amp; docker compose build &amp;&amp; docker compose up -d</code> (NOT just
+<code>restart</code>), and confirm the wiring with <code>docker compose exec api env
+| grep TRUST_PROXY</code> and <code>curl /api/health</code>.</p>
+<hr />
+<h2 id="v144-reverse-proxy-hotfix">v1.4.4 -- Reverse Proxy Hotfix</h2>
+<p><em>2026-04-21.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.4">Full notes</a>.</p>
+<p>Every production deployment that fronts Sentry with a TLS-terminating
+reverse proxy (nginx, Caddy, Traefik, AWS ALB, etc.) was returning
+<code>403 CSRF token missing or invalid</code> on every <code>POST</code> / <code>PUT</code> / <code>PATCH</code> /
+<code>DELETE</code>. Fruxh filed #98 from his production install and traced it to
+the root cause: Flask's <code>request.host</code> / <code>request.scheme</code> were stuck on
+the internal <code>127.0.0.1:&lt;port&gt;</code> hop, so cookies were scoped to the wrong
+host and the browser never resubmitted them. api-only change; admin and
+mobile untouched.</p>
+<p>Fixes:</p>
+<ul>
+<li><strong>Trust <code>X-Forwarded-*</code> headers from a reverse proxy when
+  <code>TRUST_PROXY=true</code> (#107, refs #98).</strong> <code>app.wsgi_app</code> is now wrapped in
+  Werkzeug <code>ProxyFix</code> when the env var is set, so <code>request.scheme</code>,
+  <code>request.host</code>, and <code>request.is_secure</code> reflect the browser's view of
+  the request instead of the internal hop. Opt-in via env var because
+  honouring <code>X-Forwarded-*</code> without a proxy in front lets any client
+  forge its own scheme, hostname, and client IP. The
+  <code>services/cookie_auth.py</code> header-based fallback stays as belt-and-
+  suspenders.</li>
+<li><strong>Reverse-proxy deployment guidance expanded in <code>docs/deployment.md</code>.</strong>
+  New <code>TRUST_PROXY</code> section with an annotated nginx config, Caddy and
+  Traefik v2+ snippets, a one-line note covering AWS ALB / GCP HTTPS LB /
+  Azure Application Gateway / Cloudflare Tunnels / Fly / Render, an
+  explicit security warning on header-forgery risk, and a multi-hop
+  section for CDN-in-front deployments.</li>
+<li><strong><code>python-dotenv</code> bumped <code>1.0.1</code> -&gt; <code>1.2.2</code> (#106)</strong> to clear
+  <code>GHSA-mf9w-mj56-hr94</code>. OSV published the advisory between the
+  2026-04-21 scheduled <code>main</code> audit (green) and the v1.4.4 initial push
+  (red). Drop-in compatible; no code changes needed.</li>
+</ul>
+<p>Tests: 738 backend (up from 734 at v1.4.3), 58 admin, 32 mobile. New
+file <code>api/tests/test_proxy_fix.py</code> (4 cases): the opt-in invariant,
+<code>TRUST_PROXY=true</code> rewriting <code>scheme</code> / <code>host</code> / <code>is_secure</code>, login
+behind proxy headers returning <code>Secure</code> + <code>SameSite=Strict</code> cookies,
+and change-password behind proxy headers NOT 403'ing on the CSRF gate
+(Fruxh's exact repro path). All CI workflows green.</p>
+<p>Operator notes: the v1.4.3 APK is stable; no APK update is needed for
+v1.4.4 (mobile has zero code changes and the API contract is unchanged).
+API operators behind a reverse proxy MUST add <code>TRUST_PROXY=true</code> to the
+API environment before rebuilding; direct-connect deployments must NOT
+set it.</p>
+<hr />
+<h2 id="v143-mobile-patch">v1.4.3 -- Mobile Patch</h2>
+<p><em>2026-04-20.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.3">Full notes</a>.</p>
+<p>Mobile patch release. Two fixes from the v1.4.3 mobile bug bash, plus a
+follow-up for a regression surfaced during Chainway C6000 verification.
+Zero backend or admin code changes. Closes the keyboard-fallback half
+of Fruxh's #70 report; the camera-scanner half remains tracked under</p>
+<h1 id="70-for-v2x">70 for v2.x.</h1>
+<p>Fixes:</p>
+<ul>
+<li><strong>Put-away "done" screen no longer overlays the success checkmark on
+  the title (#103).</strong> The done phase was rendered inside a flex
+  container with <code>justifyContent: 'center'</code> that also holds a growing
+  session-history list. Once history overflowed the viewport, the
+  centered content pushed the large check glyph visually into the
+  title below it. Swapped to a ScrollView with natural top-down flow,
+  matching the CountScreen done-phase pattern.</li>
+<li><strong>Scan input fields now allow keyboard fallback for manual entry and
+  copy/paste (#104, refs #70).</strong> <code>ScanInput</code> had
+  <code>showSoftInputOnFocus={false}</code> and <code>contextMenuHidden</code>, so tapping a
+  scan field on the Chainway C6000 did nothing and long-press did not
+  expose copy/paste. Removed both. Broadcast-intent scans still route
+  through <code>ScanSettingsContext</code> and bypass the TextInput; keyboard-mode
+  scans still land in <code>onChangeText</code> the same way manual typing does.</li>
+<li><strong>Scan input soft keyboard now only opens on user tap, not on
+  auto-refocus (#105).</strong> The #104 removal made the 1-second refocus
+  loop that keeps the field ready for hardware scans re-pop the
+  keyboard on every tick. <code>ScanInput</code> now tracks a <code>softInput</code> state
+  that is false by default and flipped to true only on <code>onPressIn</code>,
+  with a forced blur/refocus cycle so the updated
+  <code>showSoftInputOnFocus</code> prop applies. Reset on blur and after submit
+  so the auto-refocus loop, mount autofocus, and post-submit refocus
+  stay silent.</li>
+</ul>
+<p>Tests: 734 backend, 58 admin, 32 mobile (up from 24; new file
+<code>mobile/src/components/__tests__/ScanInput.test.js</code> locks the
+tap-to-open contract at the source level since the mobile vitest
+harness has no RN runtime). All CI workflows green.</p>
+<p>Operator notes: a new <code>sentry-wms-v1.4.3.apk</code> is attached to the
+GitHub release and installs over v1.4.1 / v1.4.2 on Chainway C6000
+devices without a data wipe. API and admin images have no source
+changes; rebuilding them is safe but not required for mobile-only
+operators.</p>
+<hr />
+<h2 id="v142-admin-panel-patch">v1.4.2 -- Admin Panel Patch</h2>
+<p><em>2026-04-20.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.2">Full notes</a>.</p>
+<p>Admin panel patch release. Operator safeguard against upgrades-without-rebuild, the V-017 <code>validation_error</code> cluster closed on seven admin create/edit forms, admin list page CRUD affordances and UI consistency across every page, plus a bundle of Fruxh-reported fixes from external deployments. Zero mobile code changes; v1.4.3 will follow for mobile-side reports.</p>
+<p>Highlights:</p>
+<ul>
+<li><strong>Upgrade-without-rebuild detection (#73)</strong> -- v1.4.0 added Flask-Limiter;
+  v1.3.x operators who ran <code>git pull &amp;&amp; docker compose up</code> without
+  rebuilding crashed on <code>ModuleNotFoundError: flask_limiter</code>. The API
+  now bakes the source <code>__version__</code> into the image at build time and
+  fail-fast exits 2 with a clear remediation message when the code
+  and image versions disagree. <code>docs/deployment.md</code> gains an
+  "Upgrading" section.</li>
+<li><strong>V-017 validation_error cluster (#74-#81, #99)</strong> -- Bin, Zone,
+  PreferredBin, Inventory Adjustment, Inter-Warehouse Transfer,
+  manual PO, manual SO create, Zone edit, plus the pre-merge
+  Bin-create Zone-dropdown fix. Consolidated alignment tests lock
+  every form's payload shape against the backend schema.</li>
+<li><strong>Admin list page CRUD affordances (#85 #86 #87 #88 #89 #90)</strong> -- Bin
+  row click opens a detail view with delete; Zone edit gains a delete
+  button with 409-guard when bins are assigned; new dedicated Sales
+  Orders admin list page; Close / Reopen PO and Cancel SO as
+  reversible / one-way state transitions (not deletes).</li>
+<li><strong>UI consistency pass (#102)</strong> -- pencil (&#9998;) and trash
+  (&#128465;) row actions across every admin list page. PO / SO
+  show pencil only; Close / Cancel remain state transitions in the
+  edit modal.</li>
+</ul>
+<p>Fruxh-reported from a production v1.4.1 deployment:</p>
+<ul>
+<li><code>#72</code> flask_limiter upgrade crash -- closed by #73.</li>
+<li><code>#71</code> validation_error cluster across four admin create forms --
+  closed alongside #74-#81 and #85.</li>
+<li><code>#98</code> First-time-setup "Your session is out of sync" false failure
+  -- closed by the redirect-to-login fix.</li>
+</ul>
+<p>Test counts: 734 backend, 58 admin, 24 mobile. All CI workflows
+(Tests, Dependency Audit, Lockfile Version Check, Deploy Docs) green
+on the merge commit.</p>
+<p>Operator notes: upgrades MUST rebuild Docker images.
+<code>git pull &amp;&amp; docker compose down &amp;&amp; docker compose build &amp;&amp; docker compose up -d</code>
+is the correct procedure. Skipping the build step now exits 2 at
+startup with the remediation command in the logs.</p>
+<hr />
+<h2 id="v141-forced-password-change-mobile-version-fix">v1.4.1 -- Forced Password Change + Mobile Version Fix</h2>
+<p><em>2026-04-18.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.1">Full notes</a>.</p>
+<p>Patch release bundling two bug fixes deferred from v1.4.0.</p>
+<p>Highlights:</p>
+<ul>
+<li><strong>Forced password change on first login (#69)</strong> -- fresh installs
+  seed admin as <code>admin/admin</code> with a <code>must_change_password</code> flag. Auth
+  middleware blocks every route except <code>/api/auth/me</code>,
+  <code>/api/auth/change-password</code>, and <code>/api/auth/logout</code> until the admin
+  changes the password. Eliminates the "grep logs for the random
+  password" onboarding paper-cut that shipped from v1.0 through
+  v1.4.0.</li>
+<li><strong>Mobile version display fix (#68)</strong> -- HomeScreen and LoginScreen
+  had been hardcoding <code>v1.2.0</code> for two releases. Now read the current
+  version. Issue #67 tracks the v1.5 refactor that eliminates this
+  class of bug permanently via build-time injection.</li>
+<li><strong>Forced-mode navigator fix</strong> -- mobile <code>ChangePasswordScreen</code> save
+  spinner stuck bug resolved. React Navigation native-stack was
+  preserving the route when <code>must_change_password</code> flipped false;
+  removing the screen from the non-forced branch lets native-stack
+  fall through to Home.</li>
+</ul>
+<p>Security:</p>
+<ul>
+<li><code>validate_password</code> rejects <code>admin</code> as the new password
+  (case-insensitive, whitespace-stripped).</li>
+<li>Mobile force-kill-and-reopen bypass closed: the flag persists
+  inside the SecureStore-backed user dict, so a relaunch rehydrates
+  forced mode.</li>
+<li>Distinct <code>audit_log</code> action <code>forced_password_change_completed</code>
+  separates onboarding completions from voluntary rotations.</li>
+</ul>
+<p>Test counts: 690 backend, 42 admin, 24 mobile. All CI green.</p>
+<p>Operator notes: fresh installs are prompted to set a new password on
+first login. Existing installs are unaffected (migration 019 defaults
+the column to FALSE).</p>
+<hr />
+<h2 id="v140-security-backlog-cleanup">v1.4.0 -- Security Backlog Cleanup</h2>
+<p><em>2026-04-18.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.4.0">Full notes</a>.</p>
+<p>Pure security and hardening release. No new features. Addresses remaining
+High-severity items from the v1.3.0 audit, all 9 findings from a fresh
+audit of the v1.4 work, and the most impactful Medium / Low items from
+the deferred backlog.</p>
+<p>Highlights:</p>
+<ul>
+<li><strong>HttpOnly cookie + CSRF for admin auth (V-045)</strong> -- admin JWT no
+  longer lives in <code>localStorage</code>. CSRF double-submit pattern protects
+  mutating requests. Mobile continues using bearer tokens.</li>
+<li><strong>SecureStore on mobile (V-047)</strong> -- JWT migrated from plaintext
+  AsyncStorage to the Android Keystore via <code>expo-secure-store</code>. One-shot
+  migration on app launch.</li>
+<li><strong>Content-Security-Policy (V-050)</strong> -- strict CSP on both API and
+  nginx. Self-hosted fonts eliminate the last third-party origin.</li>
+<li><strong>Sync state race fix (V-102)</strong> -- <code>run_id</code> UUID prevents stale
+  workers from clobbering fresh sync state after the 1-hour takeover
+  threshold.</li>
+<li><strong>Flask-Limiter rate limiting (V-041)</strong> -- Redis-backed, per-user and
+  per-IP quotas on sensitive admin endpoints.</li>
+<li><strong>Dependency audit in CI (V-042)</strong> -- <code>pip-audit</code> and <code>npm audit</code> gate
+  every push.</li>
+<li><strong>DNS rebinding pin (V-108)</strong> -- connector outbound requests pin the
+  resolved IP after the SSRF guard check.</li>
+</ul>
+<p>Test counts: 647 backend, 32 admin, 8 mobile. All CI workflows green.</p>
+<p>See the release notes for the full list of V-numbers, the accepted-risk
+section, and the upgrade notes for admin panel, mobile app, and Docker
+deployment.</p>
+<hr />
+<h2 id="v130-connector-framework-security-hardening">v1.3.0 -- Connector Framework + Security Hardening</h2>
+<p><em>2026-04-17.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.3.0">Full notes</a>.</p>
+<p>The connector foundation. All the infrastructure for ERP integration
+without any actual connector -- the framework that NetSuite,
+BigCommerce, and Amazon connectors will plug into starting in v2.0.</p>
+<ul>
+<li>Abstract base class with auto-discovery registration</li>
+<li>Celery + Redis background job runner so sync operations never block
+  the API thread</li>
+<li>Encrypted credential vault (Fernet, per-warehouse scoping,
+  credentials never in logs or API responses)</li>
+<li>Sync state tracking with green / yellow / red health per connector</li>
+<li>Per-connector rate limiter, exponential backoff with jitter, and
+  5-failure circuit breaker</li>
+</ul>
+<p>Security audit: 4 Critical and 12 High findings fixed before release.
+Removed hardcoded encryption key default, documented historical JWT
+secret exposure (SA-2026-001, SA-2026-002), admin panel rebuilt as
+production nginx, Redis broker requires auth, SSRF protection on
+connector outbound requests, audit log is now append-only with
+SHA-256 hash chain, plus IDOR fixes and race-condition fixes on
+receiving and inventory operations. 570 total backend tests.</p>
+<p><strong>Breaking for operators:</strong></p>
+<ul>
+<li><code>SENTRY_ENCRYPTION_KEY</code> is required (no default)</li>
+<li><code>REDIS_PASSWORD</code> is required</li>
+<li>Admin panel port changed from 3000 to 8080</li>
+<li>Migration <code>016_audit_log_tamper_resistance.sql</code> must be applied</li>
+</ul>
+<hr />
+<h2 id="v120-validation-schemas-error-boundaries">v1.2.0 -- Validation Schemas &amp; Error Boundaries</h2>
+<p><em>2026-04-16.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.2.0">Full notes</a>.</p>
+<ul>
+<li>Pydantic v2 validation schemas on every JSON-accepting endpoint (17
+  schema files). <code>@validate_body</code> decorator for consistent request
+  validation. Invalid requests now return structured <code>validation_error</code>
+  responses with <code>type</code> / <code>loc</code> / <code>msg</code> detail per field.</li>
+<li>Admin panel: every page route wrapped in an independent error
+  boundary so one section crashing no longer white-screens the whole
+  panel. Retry button to recover without a full page refresh.</li>
+<li>Mobile: handles the new <code>validation_error</code> format with
+  operator-friendly messages.</li>
+<li>75 new validation tests + 4 ErrorBoundary tests. 382 backend + 10
+  frontend tests passing.</li>
+</ul>
+<hr />
+<h2 id="v111-patch">v1.1.1 -- Patch</h2>
+<p><em>2026-04-16.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.1.1">Full notes</a>.</p>
+<p>Three fixes for issues incorrectly closed or missed in v1.1.0. API /
+admin only, no APK rebuild.</p>
+<ul>
+<li>CSV formula-injection guard on exports (cell values starting with
+  <code>=</code>, <code>+</code>, <code>-</code>, <code>@</code>, <code>\t</code>, <code>\r</code> are prefixed with a single quote)</li>
+<li><code>DATABASE_URL</code> fallback removed (startup <code>RuntimeError</code> if unset,
+  same pattern as <code>JWT_SECRET</code>)</li>
+<li>Login-attempt count no longer leaked in failed-login error messages</li>
+</ul>
+<hr />
+<h2 id="v110-security-hardening">v1.1.0 -- Security Hardening</h2>
+<p><em>2026-04-15.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.1.0">Full notes</a>.</p>
+<p>Twelve backlog fixes from the v1.0 audit.</p>
+<ul>
+<li><strong>Token invalidation on password change (M1)</strong> -- <code>password_changed_at</code>
+  column added; auth middleware rejects tokens issued before the last
+  password change</li>
+<li><strong>JWT <code>iat</code> / <code>jti</code> claims (L10)</strong> -- issued-at and UUID claims for
+  revocation and replay detection</li>
+<li><strong>DB-backed rate limiting (M8)</strong> -- <code>login_attempts</code> table, persistent
+  across restarts, per-username and per-IP tracking (5 attempts, 15
+  min lockout)</li>
+<li><strong>Password complexity (L1)</strong> -- minimum 8 characters, at least one
+  letter and one digit</li>
+<li><strong>Self-service password change (L2)</strong> -- <code>POST /api/auth/change-password</code>
+  plus a mobile UI modal in the user dropdown</li>
+<li><strong>Warehouse listing auth (L7)</strong> -- <code>GET /api/warehouses/list</code> now
+  requires JWT; mobile warehouse selection moved to a post-login
+  blocking modal</li>
+<li><strong><code>suggest_bin</code> warehouse scope (L8)</strong> -- preferred-bin and default-bin
+  queries filtered to the user's allowed warehouses</li>
+<li><strong>CSV import limit (M10)</strong> -- reject payloads over 5000 records</li>
+<li><strong>Cycle count self-approval check (M3)</strong> -- configurable
+  <code>require_count_approval_separation</code> setting</li>
+<li><strong>Pagination (M6)</strong> -- <code>page</code> / <code>per_page</code> on warehouses, zones, bins,
+  and users endpoints</li>
+<li><strong>Cleartext HTTP disabled for production (L5)</strong> -- <code>usesCleartextTraffic</code>
+  gated to dev / preview profiles</li>
+<li><strong>Production docker-compose (L6)</strong> -- <code>docker-compose.prod.yml</code> with
+  no source volume mounts</li>
+</ul>
+<p>Migrations added: <code>014_password_changed_at.sql</code>, <code>015_login_attempts.sql</code>.
+19 new tests (307 total).</p>
+<hr />
+<h2 id="v100-production-release">v1.0.0 -- Production Release</h2>
+<p><em>2026-04-14.</em> <a href="https://github.com/hightower-systems/sentry-wms/releases/tag/v1.0.0">Full notes</a>.</p>
+<p>The first open-source warehouse management system built for e-commerce.</p>
+<ul>
+<li>Full warehouse lifecycle: Receive, Put-Away, Pick Walk, Pack, Ship,
+  Cycle Count, Transfer</li>
+<li>React Native mobile app with Chainway C6000 broadcast-intent scanner
+  support</li>
+<li>React admin panel with dark theme, warehouse context picker, audit log</li>
+<li>Inventory adjustments and inter-warehouse transfers</li>
+<li>CSV / JSON bulk import with templates</li>
+<li>Docker Compose one-command setup with demo data</li>
+<li>288 automated tests passing</li>
+</ul>
+<p>Security baseline: JWT with live database validation per request,
+warehouse authorization middleware on every endpoint, parameterized SQL
+throughout, login lockout, bcrypt hashing, CORS restriction, random
+admin password on first run, and a full pre-release audit.</p>
+<p>MIT licensed. Free forever.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

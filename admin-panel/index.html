@@ -1,0 +1,1216 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/admin-panel/">
+      
+      
+        <link rel="prev" href="../deployment/">
+      
+      
+        <link rel="next" href="../connectors/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Admin Panel - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#admin-panel" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Admin Panel
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#purchase-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purchase Orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sales-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sales Orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Users
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warehouses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warehouses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preferred-bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preferred Bins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cycle-count-approvals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cycle Count Approvals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adjustments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adjustments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inter-warehouse-transfers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inter-Warehouse Transfers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Imports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Log
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integrations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dashboard
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#purchase-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purchase Orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sales-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sales Orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Users
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warehouses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warehouses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preferred-bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preferred Bins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cycle-count-approvals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cycle Count Approvals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adjustments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adjustments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inter-warehouse-transfers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inter-Warehouse Transfers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Imports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Log
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integrations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="admin-panel">Admin Panel</h1>
+<p>The admin panel is a React web app at <code>http://localhost:8080</code> for warehouse managers to monitor operations and configure the system. Requires ADMIN role. The production build is served by nginx; a development overlay (<code>docker-compose.dev.yml</code>) restores the Vite dev-server on port 3000 with hot reload.</p>
+<hr />
+<h2 id="dashboard">Dashboard</h2>
+<!-- TODO: Add screenshot -->
+
+<p>The home page shows a real-time pipeline overview:</p>
+<ul>
+<li><strong>Pipeline bar</strong> - visual flow from Receiving to Put-Away to Picking to Packing to Shipping</li>
+<li><strong>Open orders needing action</strong> - POs awaiting receipt, SOs ready to pick</li>
+<li><strong>Low stock alerts</strong> - items below reorder point</li>
+<li><strong>Short picks (7 day)</strong> - recent short pick events with SKU, bin, and shortage details</li>
+<li><strong>Recent activity</strong> - last 10 audit log entries</li>
+<li><strong>Inbound POs</strong> - purchase orders with receipt status</li>
+</ul>
+<p>All stats filter by the warehouse selected in the header dropdown.</p>
+<hr />
+<h2 id="inventory">Inventory</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Full inventory view showing stock by bin location.</p>
+<ul>
+<li>Search by SKU or item name</li>
+<li>Sort by any column (click headers)</li>
+<li>Columns: SKU, item name, bin code, zone, quantity on hand, quantity allocated, quantity available, last counted</li>
+<li>Filter by warehouse via header dropdown</li>
+<li>Paginated</li>
+</ul>
+<hr />
+<h2 id="items">Items</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Product catalog management.</p>
+<ul>
+<li><strong>Search</strong> by SKU, name, or UPC</li>
+<li><strong>Filter</strong> by Active, Archived, or All</li>
+<li><strong>Create</strong> new items with SKU, name, UPC, category, weight, default bin</li>
+<li><strong>Edit</strong> any item field</li>
+<li><strong>Archive/Restore</strong> soft delete toggle</li>
+<li><strong>Delete</strong> hard delete (blocked if inventory or order history exists)</li>
+<li><strong>Detail view</strong> shows inventory locations across all bins and preferred bin assignments</li>
+</ul>
+<hr />
+<h2 id="purchase-orders">Purchase Orders</h2>
+<!-- TODO: Add screenshot -->
+
+<ul>
+<li>List all POs with status tags (OPEN, PARTIAL, RECEIVED, CLOSED)</li>
+<li><strong>Filter</strong> by status</li>
+<li><strong>Create PO</strong> with PO number, vendor, expected date, and line items (item ID + quantity)</li>
+<li><strong>Detail modal</strong> shows ordered vs received quantities per line</li>
+<li><strong>Close PO</strong> action</li>
+</ul>
+<hr />
+<h2 id="sales-orders">Sales Orders</h2>
+<!-- TODO: Add screenshot -->
+
+<ul>
+<li>List all SOs with status, customer info, carrier, and tracking</li>
+<li><strong>Filter</strong> by status (OPEN, PICKING, PICKED, PACKED, SHIPPED, CANCELLED)</li>
+<li><strong>Create SO</strong> with SO number, customer name/phone/address, ship method, and line items</li>
+<li><strong>Detail modal</strong> shows fulfillment progress per line (ordered, allocated, picked, packed, shipped)</li>
+<li><strong>Cancel SO</strong> releases allocated inventory</li>
+</ul>
+<hr />
+<h2 id="users">Users</h2>
+<!-- TODO: Add screenshot -->
+
+<ul>
+<li>List all user accounts with role, warehouse assignments, and active status</li>
+<li><strong>Create user</strong> with username, password, full name, role (ADMIN or USER)</li>
+<li><strong>Warehouse assignment</strong> - multi-select warehouses the user can access</li>
+<li><strong>Module access</strong> - checkboxes for mobile functions (Pick, Pack, Ship, Receive, Put-Away, Count, Transfer)</li>
+<li><strong>Edit</strong> any field including password reset</li>
+<li><strong>Delete</strong> hard delete (cannot delete yourself or the last admin)</li>
+</ul>
+<hr />
+<h2 id="warehouses">Warehouses</h2>
+<!-- TODO: Add screenshot -->
+
+<ul>
+<li>List all warehouses with code, name, address, active status</li>
+<li><strong>Create</strong> new warehouses</li>
+<li><strong>Edit</strong> name and address</li>
+<li><strong>Delete</strong> (blocked if warehouse has bins, zones, or inventory)</li>
+</ul>
+<hr />
+<h2 id="zones">Zones</h2>
+<!-- TODO: Add screenshot -->
+
+<ul>
+<li>List zones within the selected warehouse</li>
+<li><strong>Create</strong> with zone code, name, and type</li>
+<li><strong>Edit</strong> zone properties</li>
+<li>Zone types: STORAGE, RECEIVING, STAGING, SHIPPING, QUALITY, DAMAGE</li>
+</ul>
+<hr />
+<h2 id="bins">Bins</h2>
+<!-- TODO: Add screenshot -->
+
+<ul>
+<li>List all bin locations with code, barcode, type, zone, pick sequence</li>
+<li><strong>Create</strong> with bin code, barcode, type, zone, and optional coordinates (aisle, row, level, position)</li>
+<li><strong>Edit</strong> any field</li>
+<li><strong>Detail modal</strong> shows current inventory contents with quantities</li>
+</ul>
+<p>Bin types: Pickable, PickableStaging, Staging</p>
+<hr />
+<h2 id="preferred-bins">Preferred Bins</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Item-to-bin priority assignments used by the put-away suggestion engine.</p>
+<ul>
+<li>Search by SKU or item name</li>
+<li>Create new preferred bin assignments with priority ranking</li>
+<li>Edit priorities</li>
+<li>Delete assignments</li>
+<li>CSV export</li>
+</ul>
+<hr />
+<h2 id="cycle-count-approvals">Cycle Count Approvals</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Review pending inventory adjustments from cycle counts.</p>
+<ul>
+<li>Grouped by cycle count / bin</li>
+<li>Per-item approve or reject buttons</li>
+<li>Approve All / Reject All per group</li>
+<li>Shows expected vs counted quantities and variance</li>
+<li>Separation of duties check (configurable in Settings)</li>
+</ul>
+<hr />
+<h2 id="adjustments">Adjustments</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Direct inventory add/remove with reason tracking.</p>
+<ul>
+<li><strong>ADD</strong> - increase quantity in a specific bin</li>
+<li><strong>REMOVE</strong> - decrease quantity from a bin</li>
+<li>Searchable bin and item dropdowns</li>
+<li>Reason text required</li>
+<li>Auto-approved (no approval workflow)</li>
+<li>Adjustment history table</li>
+</ul>
+<hr />
+<h2 id="inter-warehouse-transfers">Inter-Warehouse Transfers</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Move inventory between warehouses.</p>
+<ul>
+<li>Select source warehouse, source bin, and item</li>
+<li>Select destination warehouse and destination bin</li>
+<li>Enter quantity</li>
+<li>Transfer history table with timestamps and user</li>
+</ul>
+<hr />
+<h2 id="imports">Imports</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Bulk import via CSV or JSON for four entity types:</p>
+<ul>
+<li><strong>Items</strong> - SKU, name, UPC, category, weight</li>
+<li><strong>Bins</strong> - bin code, barcode, type, zone, coordinates</li>
+<li><strong>Purchase Orders</strong> - PO number, SKU, quantity, vendor</li>
+<li><strong>Sales Orders</strong> - SO number, SKU, quantity, customer</li>
+</ul>
+<p>Download template buttons provide sample CSV files. Max 5000 records per import.</p>
+<hr />
+<h2 id="audit-log">Audit Log</h2>
+<!-- TODO: Add screenshot -->
+
+<p>Activity log for all warehouse operations.</p>
+<ul>
+<li>Filter by action type, user, and date range</li>
+<li>Columns: timestamp, action, entity type, entity name, username, warehouse, device</li>
+<li>Detail modal with resolved entity names (bin codes, SKUs, PO/SO numbers)</li>
+</ul>
+<hr />
+<h2 id="settings">Settings</h2>
+<!-- TODO: Add screenshot -->
+
+<p>System configuration:</p>
+<ul>
+<li><strong>Warehouse</strong> - edit name and address for the selected warehouse</li>
+<li><strong>Fulfillment Workflow</strong><ul>
+<li>Require packing before shipping (checkbox)</li>
+<li>Default receiving bin (dropdown)</li>
+<li>Allow over-receiving (checkbox)</li>
+</ul>
+</li>
+<li><strong>Inventory</strong><ul>
+<li>Require separate approver for cycle count adjustments (checkbox)</li>
+</ul>
+</li>
+<li><strong>Mobile App</strong><ul>
+<li>Show expected quantities during cycle counts (checkbox)</li>
+</ul>
+</li>
+<li><strong>Manual Entry</strong> - create POs and SOs directly (for standalone deployments)</li>
+<li><strong>About</strong> - version number and repository link</li>
+</ul>
+<p>All settings use a batch save with unsaved changes warning.</p>
+<h2 id="integrations">Integrations</h2>
+<p>The Integrations page (sidebar -&gt; System -&gt; Integrations) is the home for
+ERP and commerce connectors. Each registered connector appears as a
+button; selecting one opens a credential form whose fields come from
+<code>get_config_schema()</code>. Values are encrypted with <code>SENTRY_ENCRYPTION_KEY</code>
+before they hit the database and are displayed back as <code>****</code>. The same
+card shows a Sync Health panel with live indicators (green / yellow /
+red) for each sync type, the last success timestamp, the last error
+message, and a <strong>Sync Now</strong> button per type (disabled while a sync is
+running). See the <a href="../connectors/">Connectors</a> guide for the framework
+internals and how to add your own.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
