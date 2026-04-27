@@ -6,6 +6,160 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.5.1 -- Security Audit Patch
+
+*2026-04-27.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.1).
+
+Security patch closing ~22 findings from the post-v1.5.0 internal audit
+of the Outbound Poll attack surface: the X-WMS-Token vault, the
+`/api/v1/events*` and `/api/v1/snapshot/*` endpoints, the
+`integration_events` outbox, the snapshot-keeper daemon, and the admin
+token / consumer-group / connector-registry CRUD pages. No new
+features. No API contract changes. No mobile runtime changes (the APK
+is a fresh artifact only because the dependency overrides reshape the
+build tree). Existing well-formed clients with correctly-scoped tokens
+see no behaviour difference; what changed is enforcement strictness.
+
+Token auth fixes:
+
+- **Endpoint scope is now actually enforced (#140).** Pre-fix the
+  `endpoints` column on `wms_tokens` was stored and rendered in the
+  admin UI but `@require_wms_token` never consulted it; a token with
+  any-or-no endpoint list could hit every `/api/v1/*` route the
+  warehouse / event-type scope allowed. Migration 026 backfills
+  pre-existing empty arrays so old tokens keep working.
+- **Cross-worker token revocation via Redis pubsub (#146).** Pre-fix
+  `token_cache.clear()` only flushed the handling gunicorn worker's
+  dict; every other worker honored the stale entry until per-entry TTL
+  expired (up to 60s). v1.5.1 publishes revocations on a
+  `wms_token_events` channel that every worker subscribes to at boot.
+  Sub-second across all workers in the Redis-available path; the 60s
+  TTL remains as the backstop when Redis is down.
+- **Stricter pepper validation (#142).** Boot guard rejects unset,
+  empty, whitespace-only, the `.env.example` placeholder, and any
+  value shorter than 32 characters. Pre-fix it rejected only unset /
+  empty.
+- **Uniform `401 invalid_token` body (#149).** Pre-fix the decorator
+  returned three distinct bodies (missing / invalid / expired); an
+  attacker who captured a plaintext could distinguish "this was once
+  valid" from "never valid." Specific reason now stays in DEBUG log
+  on `sentry_wms.auth.wms_token`.
+- **Issuance-time scope existence checks (#150).** Admin token
+  issuance validates that `warehouse_ids` and `event_types` actually
+  point at real entities. Unknown values fail 400 with the offending
+  entries enumerated.
+- **Admin CRUD writes the audit_log hash chain (#141, #154).**
+  `wms_tokens`, `consumer_groups`, and `connector_registry` mutations
+  now append to `audit_log` at every site (issue, rotate, revoke,
+  delete). Plaintext tokens never written to `details`; delete
+  captures pre-mutation scope so the trail survives row removal.
+- **Checkbox scope selectors on the token-create modal (#159).** New
+  admin endpoint `GET /api/admin/scope-catalog` populates the
+  warehouse / event-type / endpoint lists.
+
+Polling and snapshot fixes:
+
+- **`/api/v1/events/ack` enforces cursor horizon and per-event scope
+  (#143).** Pre-fix a token with a legacy admin-issued shape could ack
+  an arbitrary cursor on any consumer_group, jumping the cursor past
+  every future event and silently losing data downstream. Now returns
+  `400 cursor_beyond_horizon` and `403 ack_scope_violation` on the
+  failing shapes; backwards acks remain pure no-ops.
+- **Per-token concurrent-scan cap on `/api/v1/snapshot/inventory`
+  (#144).** A single token could pin the entire 4-slot keeper pool;
+  v1.5.1 caps to one active scan per token. Cursor requests on an
+  active scan are exempt so partial-page flows keep working.
+- **Strict-typed `consumer_groups.subscription` (#145).** Pydantic
+  with `extra="forbid"`. Belt-and-suspenders parse-error path on the
+  poll handler so legacy bad rows surface `409 subscription_invalid`
+  instead of 500.
+- **Consumer-group recreate requires explicit replay acknowledgement
+  (#148).** Migration 027 (`consumer_groups_tombstones`) records
+  `last_cursor_at_delete`. CREATE under a deleted id returns
+  `409 replay_would_skip_history` unless the admin sends
+  `acknowledge_replay: true`.
+- **`/api/v1/events/types` filters by token scope (#151).** Pre-fix
+  every caller saw every event type known to the system regardless of
+  scope; reconnaissance for a later pivot is no longer free.
+
+Database and infrastructure fixes:
+
+- **Migrations 020 + 025 wrapped in transactions (#152).** The
+  ten-table ALTER blocks are now all-or-nothing.
+- **Snapshot-keeper supports a least-privilege DB role (#153).** New
+  `SNAPSHOT_KEEPER_DATABASE_URL` env var; falls back to
+  `DATABASE_URL` when unset so dev and single-role deployments are
+  unchanged. New `db/role-snapshot-keeper.sql` provisions the role
+  with the narrow grant set (`SELECT` on `integration_events`,
+  `SELECT`/`UPDATE`/`DELETE` on `snapshot_scans`, `EXECUTE` on
+  `pg_export_snapshot`).
+- **Boot guard on dangerous proxy + bind combination (#147).** Refuses
+  to start with `TRUST_PROXY=true` AND `API_BIND_HOST=0.0.0.0`
+  because the combo lets any caller who reaches the api port directly
+  spoof `X-Forwarded-For` and poison every rate-limit bucket, audit
+  attribution, and downstream IP allowlist. Escape hatch
+  `SENTRY_ALLOW_OPEN_BIND=1` logs CRITICAL on every boot.
+- **`wms_tokens` deletion forensic trail (#157).** Migration 028 ships
+  a `wms_tokens_audit` table plus AFTER DELETE / AFTER TRUNCATE
+  statement-level triggers capturing `event_type`, `rows_affected`,
+  `sess_user`, `curr_user`, `backend_pid`, `application_name`,
+  `event_at`. Resolves the unattributed token wipe observed during
+  the v1.5.0 release gate.
+- **Audit catch-all (#156).** `proxy_fix_active` hidden from anonymous
+  `/api/health` (moved to admin-gated `GET /api/admin/system-info`);
+  dev-only banners on `docker-compose.proxied.yml` and
+  `proxy/nginx.conf`; ProxyFix `x_prefix=0` reconciled with inline
+  comment; `SENTRY_VALIDATE_EVENT_SCHEMAS` no longer frozen at module
+  import; external-id CI guardrail walks `db/**/*.sql` in addition to
+  `api/**/*.py`.
+- **`source_txn_id` consumer-dedupe contract documented (#155).**
+  `docs/events/README.md` now states explicitly that consumers MUST
+  dedupe on `event_id` (server-side BIGSERIAL, monotonic in commit
+  order), not on `source_txn_id` (attacker-controllable via
+  `X-Request-ID`).
+- **CSP report sink (#54).** New unauthenticated
+  `POST /api/csp-report` logs CSP violations at WARNING, rate-limited
+  60/min per IP.
+
+Dependency hygiene:
+
+- **`@xmldom/xmldom` -> ^0.9.10 override (#158).** Closes four
+  newly-disclosed GHSAs against `<=0.8.12` reachable through five
+  expo-related transitive paths. Build-time only (Expo config
+  plugins). Silences the nightly Dependency Audit on `main` that had
+  been failing since 2026-04-24.
+- **cryptography 44.0.3 -> 46.0.7 (#59).** Closes carried-over
+  GHSA-r6ph-v2qm-q3c2 and GHSA-m959-cc7f-wv43. Fernet / MultiFernet
+  compatibility verified across 45.x and 46.x.
+- **pytest 8.3.4 -> 9.0.3, pytest-cov 6.0.0 -> 7.1.0 (#60).** Closes
+  GHSA-6w46-j5rx-g56g; pip-audit allowlist now empty.
+- **eas-cli dev-tree GHSAs closed (#61).** `minimatch ^5.1.9` and
+  `node-forge ^1.4.0` overrides; eas-cli bumped 18.5.0 -> 18.8.1.
+  `npm-audit-mobile-dev` is now a gating job matching the prod-tree
+  job.
+
+UI defects caught during the audit cycle:
+
+- **Recent Adjustments and Recent Transfers tables on the dashboard
+  render every column (#161, #162).** Both were clipping a column on
+  narrower viewports.
+
+Migrations: **026** backfills `wms_tokens.endpoints` for tokens
+created before v1.5.1 (idempotent), **027** adds
+`consumer_groups_tombstones`, **028** adds `wms_tokens_audit` plus the
+DELETE / TRUNCATE triggers.
+
+Operator notes: a `SENTRY_TOKEN_PEPPER` shorter than 32 characters or
+set to the `.env.example` placeholder now fails boot. Existing
+well-formed peppers (32+ chars of entropy) hash to the same value and
+require no changes. The new APK
+(`sentry-wms-v1.5.1.apk`, attached to the GitHub release) installs
+over v1.5.0 on Chainway C6000 devices. Standard upgrade procedure
+applies: `git pull && docker compose down && docker compose build &&
+docker compose up -d`.
+
+---
+
 ## v1.5.0 -- Outbound Poll (Pipe A Read)
 
 *2026-04-22.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.0).
