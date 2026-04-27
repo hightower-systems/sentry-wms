@@ -349,7 +349,7 @@ Download the APK from the [GitHub Releases](https://github.com/hightower-systems
 Install via ADB:
 
 ```bash
-adb install sentry-wms-v1.5.0.apk
+adb install sentry-wms-v1.5.1.apk
 ```
 
 Or transfer the APK to the device and open it from the file manager.
