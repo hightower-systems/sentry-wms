@@ -837,3 +837,26 @@ CREATE CONSTRAINT TRIGGER tr_integration_events_visible_at
     AFTER INSERT ON integration_events
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION set_integration_event_visible_at();
+
+-- v1.6.0 #164 / migration 031: visibility NOTIFY trigger. Webhook
+-- dispatcher LISTENs on 'integration_events_visible'; the deferred
+-- visible_at trigger above UPDATEs visible_at at COMMIT, this
+-- AFTER-UPDATE trigger then pg_notify's the new event_id. The
+-- function gates on NULL -> NOT NULL so an idempotent re-stamp
+-- does not emit a duplicate NOTIFY. Correctness lives on the
+-- per-subscription cursor; NOTIFY is latency reduction only.
+-- The identical DDL lives in db/migrations/031_integration_events_notify.sql.
+CREATE OR REPLACE FUNCTION notify_integration_event_visible()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.visible_at IS NOT NULL AND OLD.visible_at IS NULL THEN
+        PERFORM pg_notify('integration_events_visible', NEW.event_id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER tr_integration_events_notify
+    AFTER UPDATE OF visible_at ON integration_events
+    FOR EACH ROW
+    EXECUTE FUNCTION notify_integration_event_visible();
