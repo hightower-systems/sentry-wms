@@ -8,10 +8,10 @@ python-dotenv==1.2.2
 gunicorn==23.0.0
 celery[redis]==5.4.0
 redis==5.2.1
-cryptography==44.0.3
+cryptography==46.0.7
 pydantic==2.11.3
 requests==2.33.0
 flask-limiter[redis]==3.8.0
 jsonschema==4.23.0
-pytest==8.3.4
-pytest-cov==6.0.0
+pytest==9.0.3
+pytest-cov==7.1.0

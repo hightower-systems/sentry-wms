@@ -56,6 +56,36 @@ ACTION_TRANSFER = "TRANSFER"
 ACTION_ADJUST = "ADJUST"
 ACTION_COUNT = "COUNT"
 
+# v1.5.1 V-208 (#141): wms_tokens lifecycle actions. Admin token CRUD
+# (issue, rotate, revoke, delete) writes one audit_log row per call
+# so post-incident forensics can reconstruct "who issued what and
+# when" even if the DB row itself is later deleted. The v1.4 hash
+# chain trigger on audit_log makes the trail tamper-evident.
+# Plaintext token values NEVER appear in `details`; scope snapshots
+# do, so delete can be audited after the row is gone.
+ACTION_TOKEN_ISSUE = "TOKEN_ISSUE"
+ACTION_TOKEN_ROTATE = "TOKEN_ROTATE"
+ACTION_TOKEN_REVOKE = "TOKEN_REVOKE"
+ACTION_TOKEN_DELETE = "TOKEN_DELETE"
+
+# v1.5.1 V-221 (#154): consumer_groups + connector-registry admin
+# actions. Structurally identical to the V-208 token CRUD audit
+# coverage but lower severity -- consumer_groups do not hold auth
+# material, so a compromise here causes data-flow misdirection
+# (V-207 replay, V-204 subscription tampering) rather than an auth
+# bypass. Worth filing for forensic symmetry: without these writes,
+# an attacker could delete + recreate a consumer_group with a
+# tampered subscription (V-204) and leave no audit trace.
+#
+# Entity-id convention: consumer_group_id and connector_id are
+# VARCHAR so they cannot fit audit_log.entity_id (INT NOT NULL).
+# Writes use entity_id=0 as a sentinel and carry the real string
+# id in details so investigators can still bind actions to rows.
+ACTION_CONNECTOR_REGISTRY_CREATE = "CONNECTOR_REGISTRY_CREATE"
+ACTION_CONSUMER_GROUP_CREATE = "CONSUMER_GROUP_CREATE"
+ACTION_CONSUMER_GROUP_UPDATE = "CONSUMER_GROUP_UPDATE"
+ACTION_CONSUMER_GROUP_DELETE = "CONSUMER_GROUP_DELETE"
+
 # Bin types
 BIN_STAGING = "Staging"
 BIN_PICKABLE_STAGING = "PickableStaging"

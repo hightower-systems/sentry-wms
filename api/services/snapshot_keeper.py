@@ -57,7 +57,18 @@ class SnapshotKeeper:
         poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
         heartbeat_file: Optional[str] = None,
     ):
-        self.database_url = database_url or os.environ["DATABASE_URL"]
+        # v1.5.1 V-214 (#153): prefer SNAPSHOT_KEEPER_DATABASE_URL so
+        # deployments that set up a dedicated least-privilege role
+        # (SELECT on integration_events, SELECT/UPDATE/DELETE on
+        # snapshot_scans, EXECUTE on pg_export_snapshot) point the
+        # keeper at that role rather than the full sentry user.
+        # Falls back to DATABASE_URL when the dedicated var is unset
+        # so dev and single-role deployments keep working unchanged.
+        self.database_url = (
+            database_url
+            or os.environ.get("SNAPSHOT_KEEPER_DATABASE_URL")
+            or os.environ["DATABASE_URL"]
+        )
         self.pool_size = pool_size
         self.idle_timeout_s = idle_timeout_s
         self.poll_interval_s = poll_interval_s

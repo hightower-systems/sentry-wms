@@ -22,6 +22,11 @@ Schema validation is gated by ``SENTRY_VALIDATE_EVENT_SCHEMAS`` (Decision U):
 - anything else (default in production): skip validation and rely on
   the consumer's own validator. Prevents a payload-schema drift from
   blocking mobile writes in the warehouse.
+
+v1.5.1 V-217 (umbrella #156): the env var is read on every emit via
+``_validation_enabled()`` rather than snapshotted at module import.
+An operator can flip the toggle during an incident and the next
+emit reflects the new state without a worker restart.
 """
 
 import json
@@ -34,11 +39,22 @@ from sqlalchemy import text
 
 from services.events_schema_registry import get_validator
 
-_VALIDATION_ENABLED = os.getenv("SENTRY_VALIDATE_EVENT_SCHEMAS", "").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+def _validation_enabled() -> bool:
+    """v1.5.1 V-217 (umbrella #156): read SENTRY_VALIDATE_EVENT_SCHEMAS
+    on every emit rather than snapshotting it at module import.
+
+    Pre-v1.5.1 a module-level constant froze the value at the first
+    import; flipping the env var at runtime (via a shell export, a
+    test fixture, or an operator trying to hot-toggle during an
+    incident) had no effect because the constant was already
+    resolved. Reading the env var per-call makes the flag behave
+    like every other operator-tunable toggle -- set it, restart the
+    worker if desired, or just flip it and wait a request cycle."""
+    return os.getenv("SENTRY_VALIDATE_EVENT_SCHEMAS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def emit_event(
@@ -62,8 +78,12 @@ def emit_event(
     ``SENTRY_VALIDATE_EVENT_SCHEMAS`` env var is set. An unknown
     ``(event_type, event_version)`` always raises ``KeyError`` - that's
     a code bug regardless of env.
+
+    v1.5.1 V-217 (umbrella #156): the env var is read on every call
+    so a runtime toggle takes effect on the next emit, not after a
+    worker restart.
     """
-    if _VALIDATION_ENABLED:
+    if _validation_enabled():
         validator = get_validator(event_type, event_version)
         validator.validate(payload)
 

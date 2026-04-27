@@ -202,3 +202,170 @@ class TestWmsTokensShape:
             conn.close()
         assert nullable == "YES"
         assert fk_count == 1
+
+
+class TestDeletionAudit:
+    """v1.5.1 #157 post-mortem instrumentation. Every DELETE and
+    TRUNCATE on wms_tokens must land a row in wms_tokens_audit so
+    a repeat of the Gate 11 / 12 wipe is bindable to a specific
+    role + backend pid + timestamp.
+    """
+
+    def _clean_audit(self, conn):
+        cur = conn.cursor()
+        cur.execute("DELETE FROM wms_tokens_audit")
+        cur.close()
+
+    def test_delete_fires_statement_level_audit_row(self):
+        import hashlib
+        import uuid as _uuid
+
+        conn = _make_conn()
+        conn.autocommit = True
+        try:
+            self._clean_audit(conn)
+
+            # Insert three synthetic tokens so rows_affected=3 on the
+            # single DELETE below proves the statement-level trigger
+            # counts the transition rather than firing per row.
+            cur = conn.cursor()
+            suffix = _uuid.uuid4().hex[:8]
+            for i in range(3):
+                cur.execute(
+                    "INSERT INTO wms_tokens (token_name, token_hash) "
+                    "VALUES (%s, %s)",
+                    (
+                        f"audit-probe-{suffix}-{i}",
+                        hashlib.sha256(
+                            f"{suffix}-{i}".encode()
+                        ).hexdigest(),
+                    ),
+                )
+            cur.execute(
+                "DELETE FROM wms_tokens "
+                " WHERE token_name LIKE %s",
+                (f"audit-probe-{suffix}-%",),
+            )
+            cur.execute(
+                "SELECT event_type, rows_affected, sess_user, curr_user, "
+                "       backend_pid "
+                "  FROM wms_tokens_audit "
+                " ORDER BY audit_id DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            cur.close()
+
+            assert row is not None, "DELETE must land an audit row"
+            event_type, rows_affected, sess_user, curr_user, pid = row
+            assert event_type == "DELETE"
+            assert rows_affected == 3, (
+                "statement-level trigger should count transition rows"
+            )
+            assert sess_user  # non-empty role name
+            assert curr_user
+            assert isinstance(pid, int)
+            assert pid > 0
+        finally:
+            self._clean_audit(conn)
+            conn.close()
+
+    def test_truncate_trigger_is_registered(self):
+        """Assert the AFTER TRUNCATE trigger exists on wms_tokens.
+        Exercising it directly is risky: ``TRUNCATE wms_tokens CASCADE``
+        would wipe snapshot_scans (FK cascade) and affect other tests
+        running against the shared test DB. A structural check against
+        pg_trigger is a defensible proxy for "the trigger is wired";
+        the DELETE case above covers the audit-row insert mechanics
+        itself."""
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT tgname, pg_get_triggerdef(oid) AS def
+                  FROM pg_trigger
+                 WHERE tgrelid = 'wms_tokens'::regclass
+                   AND NOT tgisinternal
+                """
+            )
+            triggers = {name: definition for name, definition in cur.fetchall()}
+            cur.close()
+        finally:
+            conn.close()
+        assert "tr_wms_tokens_audit_truncate" in triggers, (
+            "AFTER TRUNCATE trigger missing; the #157 instrumentation "
+            "cannot catch a TRUNCATE if the trigger is not registered"
+        )
+        assert "TRUNCATE" in triggers["tr_wms_tokens_audit_truncate"].upper()
+
+
+class TestEndpointsBackfill:
+    """v1.5.1 V-200 (#140): migration 026 backfills empty endpoints on
+    pre-v1.5.1 tokens so they keep working after the decorator starts
+    enforcing the slug list. Tokens that already had an explicit list
+    are left alone."""
+
+    _MIGRATION_SQL = """
+        UPDATE wms_tokens
+           SET endpoints = ARRAY[
+                 'events.poll',
+                 'events.ack',
+                 'events.types',
+                 'events.schema',
+                 'snapshot.inventory'
+               ]::TEXT[]
+         WHERE endpoints = '{}'::TEXT[]
+    """
+
+    def _insert_with_endpoints(self, conn, name_suffix, endpoints):
+        import hashlib
+        cur = conn.cursor()
+        # Each test uses a unique hash to avoid UNIQUE collision when
+        # re-running against a populated DB.
+        import uuid
+        unique_hash = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+        cur.execute(
+            "INSERT INTO wms_tokens (token_name, token_hash, endpoints) "
+            "VALUES (%s, %s, %s) RETURNING token_id",
+            (f"endpoints-backfill-{name_suffix}", unique_hash, endpoints),
+        )
+        token_id = cur.fetchone()[0]
+        conn.commit()
+        return token_id
+
+    def _cleanup(self, conn, token_ids):
+        cur = conn.cursor()
+        for tid in token_ids:
+            cur.execute("DELETE FROM wms_tokens WHERE token_id = %s", (tid,))
+        conn.commit()
+
+    def test_empty_endpoints_are_backfilled_to_full_slug_set(self):
+        conn = _make_conn()
+        try:
+            empty_id = self._insert_with_endpoints(conn, "empty", [])
+            keep_id = self._insert_with_endpoints(
+                conn, "keep", ["events.poll"]
+            )
+            cur = conn.cursor()
+            cur.execute(self._MIGRATION_SQL)
+            conn.commit()
+            cur.execute(
+                "SELECT endpoints FROM wms_tokens WHERE token_id = %s",
+                (empty_id,),
+            )
+            backfilled = list(cur.fetchone()[0])
+            cur.execute(
+                "SELECT endpoints FROM wms_tokens WHERE token_id = %s",
+                (keep_id,),
+            )
+            preserved = list(cur.fetchone()[0])
+            self._cleanup(conn, [empty_id, keep_id])
+        finally:
+            conn.close()
+        assert set(backfilled) == {
+            "events.poll", "events.ack", "events.types",
+            "events.schema", "snapshot.inventory",
+        }
+        assert preserved == ["events.poll"], (
+            "migration must not overwrite tokens that already set an explicit slug list"
+        )

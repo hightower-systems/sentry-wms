@@ -42,11 +42,34 @@ def scoped_token(seed_data):
     return {"plaintext": plaintext, "token_id": token_id}
 
 
+@pytest.fixture()
+def broad_scope_token(seed_data):
+    """A token with every V150 event type in scope so catalog
+    coverage assertions still have all seven entries to check."""
+    plaintext = f"broad-token-{uuid.uuid4()}"
+    token_id = insert_token(
+        plaintext,
+        warehouse_ids=[1],
+        event_types=[
+            "receipt.completed",
+            "adjustment.applied",
+            "transfer.completed",
+            "pick.confirmed",
+            "pack.confirmed",
+            "ship.confirmed",
+            "cycle_count.adjusted",
+        ],
+    )
+    return {"plaintext": plaintext, "token_id": token_id}
+
+
 class TestTypesEndpoint:
-    def test_returns_all_seven_v150_event_types(self, client, scoped_token):
+    def test_broad_token_sees_all_seven_v150_event_types(
+        self, client, broad_scope_token
+    ):
         resp = client.get(
             "/api/v1/events/types",
-            headers={"X-WMS-Token": scoped_token["plaintext"]},
+            headers={"X-WMS-Token": broad_scope_token["plaintext"]},
         )
         assert resp.status_code == 200
         body = resp.get_json()
@@ -62,11 +85,11 @@ class TestTypesEndpoint:
         }
 
     def test_each_entry_exposes_versions_and_aggregate_type(
-        self, client, scoped_token
+        self, client, broad_scope_token
     ):
         resp = client.get(
             "/api/v1/events/types",
-            headers={"X-WMS-Token": scoped_token["plaintext"]},
+            headers={"X-WMS-Token": broad_scope_token["plaintext"]},
         )
         body = resp.get_json()
         by_name = {t["event_type"]: t for t in body["types"]}
@@ -78,6 +101,41 @@ class TestTypesEndpoint:
     def test_requires_token(self, client):
         resp = client.get("/api/v1/events/types")
         assert resp.status_code == 401
+
+    def test_narrow_token_sees_only_its_event_types(
+        self, client, scoped_token
+    ):
+        """v1.5.1 V-212 (#151): a token scoped to two event types
+        must not see the other five in the catalog response."""
+        resp = client.get(
+            "/api/v1/events/types",
+            headers={"X-WMS-Token": scoped_token["plaintext"]},
+        )
+        assert resp.status_code == 200
+        names = {t["event_type"] for t in resp.get_json()["types"]}
+        assert names == {"receipt.completed", "ship.confirmed"}
+
+    def test_token_with_empty_event_types_returns_empty_list(
+        self, client, seed_data
+    ):
+        """Consistent with Decision S: empty scope = no access.
+        The endpoint returns an empty list, not the full catalog.
+        Matching the poll endpoint's "empty matches nothing"
+        semantic avoids the case where an admin downgrades a
+        token's event_types to [] and suddenly gets the full
+        catalog back as a side effect."""
+        plaintext = f"empty-token-{uuid.uuid4()}"
+        insert_token(
+            plaintext,
+            warehouse_ids=[1],
+            event_types=[],
+        )
+        resp = client.get(
+            "/api/v1/events/types",
+            headers={"X-WMS-Token": plaintext},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["types"] == []
 
 
 class TestSchemaEndpoint:

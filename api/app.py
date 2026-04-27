@@ -68,11 +68,56 @@ def create_app():
     # via docs/deployment.md that the app sits on a network the proxy
     # controls before setting TRUST_PROXY=true.
     proxy_fix_active = os.getenv("TRUST_PROXY", "").lower() in ("true", "1", "yes")
+
+    # v1.5.1 V-206 (#147): TRUST_PROXY=true means the api honours
+    # X-Forwarded-* from the nearest hop. API_BIND_HOST=0.0.0.0 means
+    # the container port is reachable on every host interface. Both
+    # together let an attacker who reaches port 5000 directly (cloud
+    # misconfig, Security Group error, bastion misroute) spoof
+    # X-Forwarded-For and poison every rate-limit bucket, audit-log
+    # user_id attribution, and any downstream IP-based allowlist.
+    # Refuse boot unless the operator explicitly opts in via
+    # SENTRY_ALLOW_OPEN_BIND=1 (documented escape hatch for deployments
+    # that do the network-level protection themselves).
+    api_bind_host = os.getenv("API_BIND_HOST", "").strip()
+    allow_open_bind = os.getenv("SENTRY_ALLOW_OPEN_BIND", "").lower() in (
+        "true", "1", "yes"
+    )
+    if proxy_fix_active and api_bind_host == "0.0.0.0":
+        message = (
+            "Unsafe deployment: TRUST_PROXY=true combined with "
+            "API_BIND_HOST=0.0.0.0 exposes the api to X-Forwarded-For "
+            "spoofing from any client that can reach port 5000. Set "
+            "API_BIND_HOST=127.0.0.1 and put a reverse proxy in front, "
+            "or set TRUST_PROXY=false if the api is directly reachable. "
+            "If this combination is intentional (network-level "
+            "protection applied elsewhere), set SENTRY_ALLOW_OPEN_BIND=1 "
+            "to acknowledge the risk and continue. See V-206 in "
+            "docs/deployment.md."
+        )
+        if not allow_open_bind:
+            raise RuntimeError(message)
+        logger.critical("ACK via SENTRY_ALLOW_OPEN_BIND=1: %s", message)
+
     if proxy_fix_active:
         # One proxy hop is the standard nginx / Caddy / Traefik / ALB
         # shape. Deployments that terminate TLS at multiple proxies in
         # front of Sentry (e.g. CDN -> nginx -> Sentry) increase the
         # x_for / x_proto / x_host counts accordingly.
+        #
+        # v1.5.1 V-219 (umbrella #156): x_prefix=0 is the intentional
+        # value and takes precedence over the audit plan's
+        # x_prefix=1. Honouring X-Forwarded-Prefix makes sense only
+        # for sub-path deploys like `/app` behind a single origin
+        # serving many apps, which Sentry does not support today.
+        # Turning x_prefix on without that shape gives a remote
+        # caller (via a trusted proxy) the ability to steer
+        # request.script_root without a functional benefit. The
+        # defensible default for our deployment matrix is 0; if a
+        # future release adds sub-path support the correct change
+        # is to flip to x_prefix=1 AND gate behind an explicit
+        # config flag so operators on the old shape do not
+        # inherit the broader trust.
         app.wsgi_app = ProxyFix(
             app.wsgi_app,
             x_for=1,
@@ -117,11 +162,14 @@ def create_app():
     # pepper differs from every hash stored by a correctly-configured
     # deployment, which would look like a blanket auth failure rather
     # than a config problem.
-    if not os.getenv("SENTRY_TOKEN_PEPPER"):
-        raise RuntimeError(
-            "SENTRY_TOKEN_PEPPER environment variable is required for "
-            "X-WMS-Token auth (v1.5.0). See .env.example for details."
-        )
+    #
+    # v1.5.1 V-201 (#142): the guard now rejects weak values too
+    # (short, whitespace-only, placeholder). Centralised in
+    # middleware.auth_middleware.validate_pepper_config so the boot
+    # check, the request-time hasher, and the admin issuance hasher
+    # all apply the same rule.
+    from middleware.auth_middleware import validate_pepper_config
+    validate_pepper_config(os.getenv("SENTRY_TOKEN_PEPPER"))
 
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
@@ -135,8 +183,20 @@ def create_app():
 
     # V-041: rate limiting. Default 300/min per authenticated user (or per IP
     # if unauthenticated); sensitive routes override via @limiter.limit(...).
-    from services.rate_limit import init_limiter
+    from services.rate_limit import init_limiter, _resolve_storage_uri
     init_limiter(app)
+
+    # v1.5.1 V-205 (#146): wire up Redis pubsub for cross-worker
+    # token-cache invalidation. Same broker shape rate_limit resolves,
+    # different Redis DB (0, where celery lives). A deployment without
+    # Redis falls back to the 60s TTL revocation path documented at
+    # token_cache module top. Idempotent; safe on reloads.
+    from services import token_cache
+    _broker_url = os.getenv("CELERY_BROKER_URL", "")
+    if _broker_url.startswith(("redis://", "rediss://")):
+        token_cache.start_invalidation_subscriber(_broker_url)
+    else:
+        token_cache.start_invalidation_subscriber(None)
 
     # Security response headers
     # V-110: fonts are now self-hosted under admin/public/fonts and
@@ -144,6 +204,14 @@ def create_app():
     # font-src carry a Google origin, so the admin panel has no
     # third-party asset dependency and a successful XSS cannot load
     # an attacker-controlled stylesheet or font from any origin.
+    # v1.5.1 V-109 (#54): report-uri points browsers at the
+    # /api/csp-report endpoint below so CSP violations leave a trail
+    # operators can actually find. Without it a successful XSS
+    # probe was silently blocked AND silently unnoticed; the server
+    # only saw a normal request. report-uri is the widely-compatible
+    # directive (deprecated but universal); report-to is the modern
+    # API and is deferred until we plumb the Reporting-Endpoints
+    # header too.
     csp_policy = (
         "default-src 'self'; "
         "script-src 'self'; "
@@ -154,7 +222,8 @@ def create_app():
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'; "
-        "object-src 'none'"
+        "object-src 'none'; "
+        "report-uri /api/csp-report"
     )
 
     @app.before_request
@@ -165,6 +234,16 @@ def create_app():
         # key. Prefer an inbound X-Request-ID header when it parses as a
         # UUID (supports distributed tracing across services); otherwise
         # mint a fresh one.
+        #
+        # v1.5.1 V-211 (#155) -- contract: source_txn_id is a
+        # Sentry-internal idempotency key exposed on the wire for
+        # tracing, NOT a safe consumer dedupe key. Authenticated
+        # callers can set it to an arbitrary UUID via X-Request-ID;
+        # consumers MUST dedupe on event_id (server-side BIGSERIAL)
+        # instead. Documented in docs/events/README.md. The
+        # passthrough is retained for the tracing use case; the
+        # attacker-controlled surface is accepted as low-impact so
+        # long as the consumer contract is followed.
         inbound = request.headers.get("X-Request-ID", "").strip()
         if inbound:
             try:
@@ -242,14 +321,65 @@ def create_app():
 
     @app.route("/api/health")
     def health():
-        # #136: expose ProxyFix state so operators can verify the
-        # TRUST_PROXY wiring reached the container, without reading logs
-        # or execing into the container. Curl-friendly from the proxy.
-        return {
-            "status": "ok",
-            "service": "sentry-wms",
-            "proxy_fix_active": app.config.get("PROXY_FIX_ACTIVE", False),
-        }
+        # v1.5.1 V-215 (umbrella #156): /api/health is reachable
+        # unauthenticated (Docker healthcheck, upstream monitors) so
+        # the response MUST NOT include state that helps an attacker
+        # shape their approach. proxy_fix_active moved to the
+        # authenticated /api/admin/system-info endpoint below.
+        return {"status": "ok", "service": "sentry-wms"}
+
+    # v1.5.1 V-215: admin-only surface for operator-useful state
+    # that was previously on /api/health. Registered on the app
+    # directly (not the admin blueprint) because register_blueprint
+    # has already run by this point in create_app; adding a route
+    # to admin_bp after registration does not propagate to the
+    # app's URL map. Auth is enforced via the standard decorators
+    # so the wiring matches every other admin-only endpoint.
+    from middleware.auth_middleware import require_auth as _require_auth
+    from middleware.auth_middleware import require_role as _require_role
+    from flask import jsonify as _jsonify
+
+    @app.route("/api/admin/system-info", methods=["GET"])
+    @_require_auth
+    @_require_role("ADMIN")
+    def system_info():
+        return _jsonify(
+            {
+                "proxy_fix_active": app.config.get(
+                    "PROXY_FIX_ACTIVE", False
+                ),
+            }
+        )
+
+    # v1.5.1 V-109 (#54): CSP violation sink. Browsers POST a report
+    # here when a CSP directive blocks a resource; logging them at
+    # WARNING level gives operators a signal on XSS probes or
+    # third-party-asset regressions that would otherwise be silent.
+    # Unauthenticated by design (the report comes from the victim's
+    # browser, not an authenticated session) but rate-limited so a
+    # hostile page cannot flood structured logs.
+    from services.rate_limit import limiter as _limiter
+
+    @app.route("/api/csp-report", methods=["POST"])
+    @_limiter.limit("60 per minute")
+    def csp_report():
+        # Browsers use application/csp-report (legacy report-uri) or
+        # application/reports+json (modern report-to). Accept both
+        # via request.get_data so we don't depend on content-type
+        # routing.
+        import json as _json
+        raw = request.get_data(as_text=True) or ""
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except ValueError:
+            parsed = {"raw_body_truncated": raw[:500]}
+        logger.warning(
+            "csp_violation remote=%s ua=%s report=%s",
+            request.remote_addr or "unknown",
+            request.headers.get("User-Agent", "")[:200],
+            _json.dumps(parsed)[:2000],
+        )
+        return ("", 204)
 
     return app
 

@@ -215,12 +215,22 @@ def poll_events():
         subscription = cg_row.subscription or {}
         if isinstance(subscription, str):
             subscription = json.loads(subscription)
+        # v1.5.1 V-204 (#145): the admin endpoints reject malformed
+        # subscriptions at write time, but a pre-v1.5.1 row may still
+        # carry a shape the handler cannot parse (e.g. warehouse_ids
+        # as a string). Return 409 subscription_invalid so the
+        # caller sees a recoverable contract error instead of a 500.
+        if not isinstance(subscription, dict):
+            return jsonify({"error": "subscription_invalid"}), 409
         sub_wh = subscription.get("warehouse_ids")
         sub_et = subscription.get("event_types")
-        if sub_wh:
-            subscription_warehouse_ids = [int(w) for w in sub_wh]
-        if sub_et:
-            subscription_event_types = [str(t) for t in sub_et]
+        try:
+            if sub_wh:
+                subscription_warehouse_ids = [int(w) for w in sub_wh]
+            if sub_et:
+                subscription_event_types = [str(t) for t in sub_et]
+        except (TypeError, ValueError):
+            return jsonify({"error": "subscription_invalid"}), 409
 
     sql, params = _build_events_query(
         after=after,
@@ -257,6 +267,15 @@ def ack_cursor(validated: AckBody):
     - 404 if the consumer group does not exist.
     - 403 if the token has a connector_id that does not match the
       group's connector_id (cross-connector isolation).
+    - v1.5.1 V-202 (#143): 400 when the requested cursor exceeds the
+      greatest event_id in the outbox (``cursor_beyond_horizon``).
+      Impossible-future cursors were previously accepted and advanced
+      the group past every future event, causing silent data loss.
+    - v1.5.1 V-202 (#143): 403 ``ack_scope_violation`` when any event
+      in (last_cursor, cursor] falls outside the token's warehouse_ids
+      or event_types scope. "You can only ack what you can read"
+      applies on both axes; a NULL-connector admin token cannot use
+      ack to jump past events it could not have polled.
     - UPDATE with ``WHERE last_cursor <= :cursor`` so an out-of-order
       ack lower than the current stored value is a no-op. The
       response always returns the row's current ``last_cursor`` so
@@ -278,6 +297,52 @@ def ack_cursor(validated: AckBody):
         # not ack groups owned by connector B. Tokens without a
         # connector_id (admin / legacy) can ack any group.
         return jsonify({"error": "consumer_group_scope_violation"}), 403
+
+    # v1.5.1 V-202 (#143): only advancing acks can cause data loss or
+    # scope skip; a backwards ack is a pure no-op via the existing
+    # ``WHERE last_cursor <= :cursor`` clause. Skip the extra round
+    # trips when cursor <= last_cursor.
+    if validated.cursor > cg_row.last_cursor:
+        horizon = g.db.execute(
+            text(
+                "SELECT COALESCE(MAX(event_id), 0) AS max_id "
+                "  FROM integration_events"
+            )
+        ).scalar()
+        if validated.cursor > horizon:
+            return jsonify({"error": "cursor_beyond_horizon"}), 400
+
+        allowed_warehouses = list(g.current_token.get("warehouse_ids") or [])
+        allowed_event_types = list(g.current_token.get("event_types") or [])
+        # "You can only ack what you can read": if any event in
+        # (last_cursor, cursor] falls outside the token's scope on
+        # either axis, the ack would implicitly claim the consumer
+        # processed an event it could not have polled. Reject 403.
+        # Empty scope arrays match no rows on ANY(...) so the check
+        # naturally triggers for deny-all tokens.
+        out_of_scope = g.db.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM integration_events
+                     WHERE event_id > :last_cursor
+                       AND event_id <= :cursor
+                       AND NOT (
+                             warehouse_id = ANY(:allowed_warehouses)
+                         AND event_type  = ANY(:allowed_event_types)
+                       )
+                )
+                """
+            ),
+            {
+                "last_cursor": cg_row.last_cursor,
+                "cursor": validated.cursor,
+                "allowed_warehouses": allowed_warehouses,
+                "allowed_event_types": allowed_event_types,
+            },
+        ).scalar()
+        if out_of_scope:
+            return jsonify({"error": "ack_scope_violation"}), 403
 
     g.db.execute(
         text(
@@ -305,12 +370,22 @@ def ack_cursor(validated: AckBody):
 @require_wms_token
 @limiter.limit("120 per minute")
 def list_event_types():
-    """Serve the v1.5.0 event catalog from the in-process registry.
+    """Serve the v1.5.0 event catalog from the in-process registry,
+    filtered by the caller's token scope.
 
     No DB, no per-request filesystem read; the registry is loaded once
     at ``create_app`` time (#110) and catalog queries are O(7).
+
+    v1.5.1 V-212 (#151): the response is scoped to the token's
+    ``event_types`` list so a token cannot enumerate event types it
+    has no read access for. Pre-v1.5.1 the full catalog leaked to
+    every caller; aids reconnaissance for later pivots ("cycle_count.adjusted
+    events I cannot see, worth finding a broader token for").
     """
-    return jsonify({"types": events_schema_registry.known_types()})
+    allowed = list(g.current_token.get("event_types") or [])
+    return jsonify(
+        {"types": events_schema_registry.known_types(event_types_filter=allowed)}
+    )
 
 
 @polling_bp.route("/schema/<event_type>/<int:version>", methods=["GET"])

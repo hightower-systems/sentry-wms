@@ -27,7 +27,7 @@ Rotating the pepper invalidates every issued `wms_tokens` row at once (stored ha
 **Do not rotate:**
 
 - On a calendar schedule for its own sake. The pepper adds no security over time; it is a one-shot control that fires once per incident. Frequent rotation is operational cost without a security benefit, and it churns every connector's token configuration every cycle.
-- Because a single token leaked. Revoke the leaked token via the admin panel (`/api-tokens` → red revoke button) instead. Revocation is visible within 60 seconds across every worker (per-worker cache TTL).
+- Because a single token leaked. Revoke the leaked token via the admin panel (`/api-tokens` → red revoke button) instead. Revocation is visible across every worker within sub-second wall time: admin mutations publish on the `wms_token_events` Redis pubsub channel and every worker's subscriber thread evicts the cached entry on receipt. The 60-second per-worker TTL remains only as a backstop for the Redis-unavailable path.
 
 ## Procedure
 

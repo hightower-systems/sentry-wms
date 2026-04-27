@@ -3,6 +3,7 @@ Route protection decorators for JWT authentication and role-based access.
 """
 
 import hashlib
+import logging
 import os
 from datetime import datetime, timezone
 from functools import wraps
@@ -17,6 +18,13 @@ from services.cookie_auth import (
     csrf_token_matches,
 )
 from services import token_cache
+
+# v1.5.1 V-209 (#149): dedicated logger so operators can dial up
+# DEBUG to recover the specific auth failure mode (missing, unknown
+# hash, revoked, expired) without putting it on the wire. The HTTP
+# response collapses all four into a single "invalid_token" body
+# to close the enumeration oracle.
+_INVALID_LOGGER = logging.getLogger("sentry_wms.auth.wms_token")
 
 
 # Endpoints a user with must_change_password=true is allowed to call.
@@ -210,25 +218,85 @@ def require_role(*roles):
     return decorator
 
 
+# v1.5.1 V-201 (#142): the v1.5.0 guard rejected only unset / empty
+# pepper values; a 1-byte pepper passed silently. A weak pepper
+# collapses the precomputation defense pepper exists to provide.
+# Cross-site consistency here ensures the boot guard (app.py), the
+# request-time hasher (_load_pepper), and the admin issuance hasher
+# (admin_tokens._hash_for_storage) all reject the same bad inputs.
+_PEPPER_PLACEHOLDER = "replace-me-with-secrets-token-hex-32"
+_MIN_PEPPER_CHARS = 32
+
+
+def validate_pepper_config(raw) -> bytes:
+    """Return the UTF-8 bytes of ``raw`` or raise RuntimeError when
+    the value is unset, empty, whitespace-only, the ``.env.example``
+    placeholder, or shorter than 32 characters.
+
+    The returned bytes are the exact inbound bytes so existing
+    wms_tokens.token_hash values computed from a well-formed pepper
+    continue to match after upgrade; this helper is a gate, not a
+    normaliser.
+    """
+    if raw is None or raw == "":
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER environment variable is required for "
+            "X-WMS-Token auth. Generate with "
+            "python -c 'import secrets; print(secrets.token_hex(32))' "
+            "(see .env.example)."
+        )
+    if not raw.strip():
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER is whitespace-only. Generate a real "
+            "value with python -c 'import secrets; print(secrets.token_hex(32))'."
+        )
+    if raw == _PEPPER_PLACEHOLDER or raw.strip() == _PEPPER_PLACEHOLDER:
+        raise RuntimeError(
+            "SENTRY_TOKEN_PEPPER is set to the .env.example placeholder "
+            "string. Generate a real value with "
+            "python -c 'import secrets; print(secrets.token_hex(32))'."
+        )
+    if len(raw) < _MIN_PEPPER_CHARS:
+        raise RuntimeError(
+            f"SENTRY_TOKEN_PEPPER must be at least {_MIN_PEPPER_CHARS} "
+            f"characters (got {len(raw)}). Generate with "
+            "python -c 'import secrets; print(secrets.token_hex(32))'."
+        )
+    return raw.encode("utf-8")
+
+
 def _load_pepper() -> bytes:
     """Read SENTRY_TOKEN_PEPPER from the environment or raise.
 
     Looked up lazily (first request, not module import) so importing
     this module from unit tests does not require the env var; the
     app-level boot guard in ``app.py`` raises at ``create_app`` time
-    for real deployments.
+    for real deployments. v1.5.1 (#142) extends the guard with
+    length + placeholder checks.
     """
-    pepper = os.environ.get("SENTRY_TOKEN_PEPPER")
-    if not pepper:
-        raise RuntimeError(
-            "SENTRY_TOKEN_PEPPER environment variable is required for X-WMS-Token auth"
-        )
-    return pepper.encode("utf-8")
+    return validate_pepper_config(os.environ.get("SENTRY_TOKEN_PEPPER"))
 
 
 def _hash_token(raw: str) -> str:
     """token_hash per Decision Q: SHA256(pepper || plaintext).hexdigest()."""
     return hashlib.sha256(_load_pepper() + raw.encode("utf-8")).hexdigest()
+
+
+# v1.5.1 V-200 (#140): map user-facing endpoint slugs to the Flask
+# endpoint names @require_wms_token sees at request time. The
+# wms_tokens.endpoints column stores slug form (what admins type and
+# see in the UI); the decorator maps to request.endpoint for the
+# scope check. Adding a new /api/v1/* route means adding one entry
+# here plus updating the admin UI helper text. Slugs are a stable
+# wire surface; Flask endpoint names may change if blueprints are
+# renamed, so the public contract lives on the slug side.
+V150_ENDPOINT_SLUGS = {
+    "events.poll":       "polling.poll_events",
+    "events.ack":        "polling.ack_cursor",
+    "events.types":      "polling.list_event_types",
+    "events.schema":     "polling.serve_schema",
+    "snapshot.inventory": "snapshot.snapshot_inventory",
+}
 
 
 def require_wms_token(f):
@@ -244,24 +312,61 @@ def require_wms_token(f):
       so downstream rate-limit keys and audit logs have something to
       attribute the request to without conflating with cookie users.
 
-    Failures:
-    - 401 missing_token when the header is absent
-    - 401 invalid_token when the hash does not resolve, or the row's
-      status is not 'active' (revoked tokens stay rejected for up to
-      60s after revoke via the token_cache TTL)
-    - 401 token_expired when expires_at is in the past
+    Failures (v1.5.1 V-209 (#149) -- unified wire shape):
+    - 401 ``{"error":"invalid_token"}`` for every auth failure:
+      missing header, unknown hash, revoked row, expired row.
+      Pre-v1.5.1 the decorator returned four distinct bodies
+      (missing_token, invalid_token, token_expired, plus revoked
+      coming out as invalid_token); the differentiation was an
+      enumeration oracle letting an attacker separate "guessed a
+      real token's shape" (expired) from "guessed nothing" (missing
+      / invalid). The specific reason stays in a DEBUG log for
+      operator forensics.
+    - 403 ``endpoint_scope_violation`` when the token's endpoints
+      slug list does not include the route (kept distinct because
+      403 is a different HTTP semantic from 401 and the auth check
+      already succeeded).
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
         raw = request.headers.get("X-WMS-Token")
         if not raw:
-            return jsonify({"error": "missing_token"}), 401
+            # v1.5.1 V-209: flatten timing of the missing-header
+            # path by doing the same get_by_hash a real attempt
+            # would trigger. The lookup uses a sentinel hash that
+            # cannot exist in the DB so no real row ever matches.
+            token_cache.get_by_hash("0" * 64)
+            _INVALID_LOGGER.debug("wms_token: missing header")
+            return jsonify({"error": "invalid_token"}), 401
         token_hash = _hash_token(raw)
         row = token_cache.get_by_hash(token_hash)
-        if not row or row["status"] != "active":
+        if not row:
+            _INVALID_LOGGER.debug("wms_token: unknown hash")
+            return jsonify({"error": "invalid_token"}), 401
+        if row["status"] != "active":
+            _INVALID_LOGGER.debug(
+                "wms_token: status=%s for token_id=%s",
+                row["status"], row.get("token_id"),
+            )
             return jsonify({"error": "invalid_token"}), 401
         if row.get("expires_at") and datetime.now(timezone.utc) > row["expires_at"]:
-            return jsonify({"error": "token_expired"}), 401
+            _INVALID_LOGGER.debug(
+                "wms_token: expired token_id=%s", row.get("token_id")
+            )
+            return jsonify({"error": "invalid_token"}), 401
+        # v1.5.1 V-200: resolve the request's Flask endpoint to the
+        # set of slugs it belongs to, intersect with the token's
+        # allowed slugs. Unknown Flask endpoint here would be a code
+        # bug (a new @require_wms_token route without a matching
+        # V150_ENDPOINT_SLUGS entry); treat as 403 fail-closed rather
+        # than letting an unlisted route bypass scope.
+        allowed_flask = {
+            V150_ENDPOINT_SLUGS[slug]
+            for slug in (row.get("endpoints") or [])
+            if slug in V150_ENDPOINT_SLUGS
+        }
+        if request.endpoint not in allowed_flask:
+            return jsonify({"error": "endpoint_scope_violation"}), 403
         g.current_token = row
         g.current_user = {"token_id": row["token_id"], "kind": "wms_token"}
         return f(*args, **kwargs)

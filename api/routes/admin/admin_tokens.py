@@ -22,12 +22,31 @@ from typing import Optional
 from flask import g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth, require_role
+from constants import (
+    ACTION_TOKEN_ISSUE,
+    ACTION_TOKEN_ROTATE,
+    ACTION_TOKEN_REVOKE,
+    ACTION_TOKEN_DELETE,
+)
+from middleware.auth_middleware import (
+    V150_ENDPOINT_SLUGS,
+    require_auth,
+    require_role,
+    validate_pepper_config,
+)
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.tokens import CreateTokenRequest, UpdateTokenRequest
 from services import token_cache
+from services.audit_service import write_audit_log
+from services.events_schema_registry import V150_CATALOG
 from utils.validation import validate_body
+
+# v1.5.1 V-210 (#150): event_types scope accepts only known catalog
+# entries; unknown strings are silent no-ops on the poll path and
+# destroy audit intent. Compute once at module load; adding an event
+# type means extending V150_CATALOG in events_schema_registry.
+_KNOWN_EVENT_TYPES = {entry[0] for entry in V150_CATALOG}
 
 # Match the plan's thresholds; admin panel renders whatever status the
 # server returns so no code dupes the boundary values.
@@ -36,13 +55,15 @@ _OVERDUE_DAYS = 90
 
 
 def _hash_for_storage(plaintext: str) -> str:
-    """SHA256(pepper || plaintext).hexdigest() per Decision Q."""
-    pepper = os.environ.get("SENTRY_TOKEN_PEPPER")
-    if not pepper:
-        # Mirrors the app boot guard; a misconfigured request-time state
-        # would otherwise silently hash with an empty pepper.
-        raise RuntimeError("SENTRY_TOKEN_PEPPER is required for token issuance")
-    return hashlib.sha256((pepper + plaintext).encode("utf-8")).hexdigest()
+    """SHA256(pepper || plaintext).hexdigest() per Decision Q.
+
+    v1.5.1 V-201 (#142): routed through the shared validator so a
+    weak pepper (short, whitespace-only, placeholder) cannot
+    silently produce a weakly-peppered hash at issuance time even
+    if the boot guard was bypassed.
+    """
+    pepper_bytes = validate_pepper_config(os.environ.get("SENTRY_TOKEN_PEPPER"))
+    return hashlib.sha256(pepper_bytes + plaintext.encode("utf-8")).hexdigest()
 
 
 def _rotation_status(rotated_at: datetime) -> str:
@@ -74,6 +95,48 @@ def _row_to_listing(row) -> dict:
     }
 
 
+@admin_bp.route("/scope-catalog", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+def scope_catalog():
+    """Serve the admin UI's token-create modal its authoritative
+    pick-lists so the human never has to type a slug from memory
+    (issue #159).
+
+    Response shape:
+
+        {"event_types": [...], "endpoints": [...]}
+
+    event_types is the sorted list of distinct event-type strings
+    in ``V150_CATALOG`` (the source of truth also used by the
+    admin issuance validator, #150 V-210).
+
+    endpoints is the sorted list of keys in
+    ``V150_ENDPOINT_SLUGS`` (the source of truth also used by
+    ``@require_wms_token`` for the V-200 scope check, #140). A
+    slug lands in the response only when its mapped Flask
+    endpoint is actually registered on the running app, which
+    protects the UI against surfacing a slug that was removed
+    but is still listed in the constant during a rename.
+
+    No warehouse_ids here: the warehouse selector pulls from the
+    existing ``GET /api/admin/warehouses`` endpoint (same
+    pattern Users.jsx uses). Keeping this endpoint tight to the
+    two wms_tokens-specific columns avoids a second round-trip
+    on modal open.
+    """
+    from flask import current_app
+
+    event_types = sorted({entry[0] for entry in V150_CATALOG})
+    registered = set(current_app.view_functions.keys())
+    endpoints = sorted(
+        slug
+        for slug, flask_endpoint in V150_ENDPOINT_SLUGS.items()
+        if flask_endpoint in registered
+    )
+    return jsonify({"event_types": event_types, "endpoints": endpoints})
+
+
 @admin_bp.route("/tokens", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
@@ -81,6 +144,46 @@ def _row_to_listing(row) -> dict:
 @with_db
 def create_token(validated):
     """Issue a new inbound API token. Returns plaintext once."""
+    # v1.5.1 V-210 (#150): reject scope values that point at
+    # non-existent entities. Previously a typo'd warehouse_id or
+    # event_type was stored silently; the token polled empty forever
+    # and the audit trail showed a scope that looked valid on paper.
+    if validated.warehouse_ids:
+        found_rows = g.db.execute(
+            text(
+                "SELECT warehouse_id FROM warehouses "
+                " WHERE warehouse_id = ANY(:ids)"
+            ),
+            {"ids": list(validated.warehouse_ids)},
+        ).fetchall()
+        found = {r.warehouse_id for r in found_rows}
+        missing = sorted(set(validated.warehouse_ids) - found)
+        if missing:
+            return (
+                jsonify(
+                    {
+                        "error": "unknown_warehouse_ids",
+                        "missing": missing,
+                    }
+                ),
+                400,
+            )
+    if validated.event_types:
+        unknown = sorted(
+            set(validated.event_types) - _KNOWN_EVENT_TYPES
+        )
+        if unknown:
+            return (
+                jsonify(
+                    {
+                        "error": "unknown_event_types",
+                        "unknown": unknown,
+                        "valid": sorted(_KNOWN_EVENT_TYPES),
+                    }
+                ),
+                400,
+            )
+
     plaintext = secrets.token_urlsafe(32)
     token_hash = _hash_for_storage(plaintext)
 
@@ -136,6 +239,26 @@ def create_token(validated):
             },
         )
     row = result.fetchone()
+    # v1.5.1 V-208 (#141): one audit row per issuance. Scope snapshot
+    # in details so a later delete does not erase forensic context.
+    # Plaintext never appears here; the stored hash lives in wms_tokens
+    # and does not need to be duplicated to audit_log.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_ISSUE,
+        entity_type="WMS_TOKEN",
+        entity_id=row.token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "token_name": validated.token_name,
+            "warehouse_ids": list(validated.warehouse_ids),
+            "event_types": list(validated.event_types),
+            "endpoints": list(validated.endpoints),
+            "connector_id": validated.connector_id,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        },
+    )
     g.db.commit()
     return (
         jsonify(
@@ -206,10 +329,25 @@ def rotate_token(token_id):
         ),
         {"h": new_hash, "tid": token_id},
     ).fetchone()
+    # v1.5.1 V-208 (#141): audit the rotation. No scope change on
+    # rotate, so details captures only the affected token.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_ROTATE,
+        entity_type="WMS_TOKEN",
+        entity_id=token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={"token_name": existing.token_name},
+    )
     g.db.commit()
 
-    # Drop any cached row so the next request re-fetches with the new hash.
-    token_cache.clear()
+    # v1.5.1 V-205 (#146): targeted cross-worker invalidation. Evicts
+    # the entry on this worker AND publishes a Redis pubsub message
+    # that every other worker's subscriber thread evicts on within
+    # one round-trip, replacing the v1.5.0 up-to-60s per-worker
+    # revocation window. The 60s TTL remains as a backstop.
+    token_cache.invalidate(token_id)
 
     return jsonify(
         {
@@ -237,15 +375,26 @@ def revoke_token(token_id):
                SET status = 'revoked',
                    revoked_at = NOW()
              WHERE token_id = :tid
-             RETURNING token_id, status, revoked_at
+             RETURNING token_id, token_name, status, revoked_at
             """
         ),
         {"tid": token_id},
     ).fetchone()
     if not row:
         return jsonify({"error": "Token not found"}), 404
+    # v1.5.1 V-208 (#141): audit the revocation.
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_REVOKE,
+        entity_type="WMS_TOKEN",
+        entity_id=row.token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={"token_name": row.token_name},
+    )
     g.db.commit()
-    token_cache.clear()
+    # v1.5.1 V-205 (#146): targeted cross-worker invalidation.
+    token_cache.invalidate(row.token_id)
     return jsonify(
         {
             "token_id": row.token_id,
@@ -262,12 +411,39 @@ def revoke_token(token_id):
 def delete_token(token_id):
     """Hard delete a token row. The decorator already rejects the hash
     on the next request; deletion removes the row from the admin list."""
+    # v1.5.1 V-208 (#141): RETURNING the scope snapshot before the row
+    # disappears so the audit trail survives the delete. Plaintext is
+    # not stored so nothing sensitive beyond what the admin already
+    # configured gets logged.
     result = g.db.execute(
-        text("DELETE FROM wms_tokens WHERE token_id = :tid RETURNING token_id"),
+        text(
+            "DELETE FROM wms_tokens WHERE token_id = :tid "
+            "RETURNING token_id, token_name, warehouse_ids, event_types, "
+            "endpoints, connector_id, status"
+        ),
         {"tid": token_id},
     ).fetchone()
     if not result:
         return jsonify({"error": "Token not found"}), 404
+    write_audit_log(
+        g.db,
+        action_type=ACTION_TOKEN_DELETE,
+        entity_type="WMS_TOKEN",
+        entity_id=result.token_id,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "token_name": result.token_name,
+            "previous_scope": {
+                "warehouse_ids": list(result.warehouse_ids) if result.warehouse_ids else [],
+                "event_types": list(result.event_types) if result.event_types else [],
+                "endpoints": list(result.endpoints) if result.endpoints else [],
+                "connector_id": result.connector_id,
+                "status_at_delete": result.status,
+            },
+        },
+    )
     g.db.commit()
-    token_cache.clear()
+    # v1.5.1 V-205 (#146): targeted cross-worker invalidation.
+    token_cache.invalidate(result.token_id)
     return ("", 204)

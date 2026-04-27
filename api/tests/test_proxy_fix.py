@@ -78,6 +78,11 @@ def unproxied_client(unproxied_app):
 @pytest.fixture
 def proxied_app(_seed_session_database, monkeypatch):
     monkeypatch.setenv("TRUST_PROXY", "true")
+    # v1.5.1 V-206 (#147): create_app() refuses TRUST_PROXY=true +
+    # API_BIND_HOST=0.0.0.0. The compose test container sets
+    # API_BIND_HOST=0.0.0.0, so pin it to 127.0.0.1 for these tests -
+    # they exercise ProxyFix header rewriting, not the bind guard.
+    monkeypatch.setenv("API_BIND_HOST", "127.0.0.1")
     return _build_probe_app()
 
 
@@ -160,20 +165,76 @@ class TestCsrfCookieBehindProxy:
         assert resp.status_code == 200
 
 
-class TestHealthEndpointReportsProxyFixState:
-    # #136: operators must be able to verify from the outside that
-    # TRUST_PROXY actually reached the Flask app. /api/health returns
-    # proxy_fix_active=true when the middleware is wired, false when
-    # it is not. A green health response with proxy_fix_active=false
-    # behind an nginx deployment is the exact signature of the v1.4.4
-    # Compose-wiring gap Fruxh hit: TRUST_PROXY set in .env, ProxyFix
-    # still off because the var never reached the container.
-    def test_health_reports_inactive_without_trust_proxy(self, unproxied_client):
+class TestHealthEndpointDoesNotLeakProxyFixState:
+    """v1.5.1 V-215 (umbrella #156): /api/health is unauthenticated
+    (Docker healthcheck, upstream monitors). Returning
+    proxy_fix_active on that wire told any anonymous caller whether
+    the deployment was a candidate for X-Forwarded-* spoofing. The
+    field moved to the admin-only /api/admin/system-info endpoint;
+    the anonymous health response is now {status, service} only.
+    """
+
+    def test_health_does_not_expose_proxy_state(self, unproxied_client):
         resp = unproxied_client.get("/api/health")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert "proxy_fix_active" not in body
+        assert body.get("status") == "ok"
+        assert body.get("service") == "sentry-wms"
+
+    def test_health_shape_identical_with_and_without_trust_proxy(
+        self, unproxied_client, proxied_client
+    ):
+        """Confirm the anonymous-health body is byte-for-byte
+        identical regardless of TRUST_PROXY state so an attacker
+        cannot probe the deployment topology."""
+        a = unproxied_client.get("/api/health").get_json()
+        b = proxied_client.get("/api/health").get_json()
+        assert a == b
+
+
+def _login_for(client, proxy_headers=None):
+    """Issue admin credentials against the given per-app client and
+    return a Bearer auth header. Each proxy fixture spins up its own
+    Flask app so the session-scoped auth_headers fixture cannot be
+    reused (its cookies are bound to the session app). Bearer tokens
+    survive across app instances because JWT_SECRET is env-fixed."""
+    headers = {**(proxy_headers or {})}
+    resp = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "admin"},
+        headers=headers or None,
+    )
+    data = resp.get_json()
+    return {"Authorization": f"Bearer {data['token']}"}
+
+
+class TestSystemInfoReportsProxyFixState:
+    """v1.5.1 V-215: the admin-only endpoint surfaces proxy_fix_active
+    so operators can still verify TRUST_PROXY reached the container.
+    Gated on @require_auth + @require_role("ADMIN"); anonymous
+    callers get 401."""
+
+    def test_system_info_requires_auth(self, unproxied_client):
+        resp = unproxied_client.get("/api/admin/system-info")
+        assert resp.status_code == 401
+
+    def test_system_info_reports_inactive_without_trust_proxy(
+        self, unproxied_client
+    ):
+        auth = _login_for(unproxied_client)
+        resp = unproxied_client.get(
+            "/api/admin/system-info", headers=auth
+        )
         assert resp.status_code == 200
         assert resp.get_json()["proxy_fix_active"] is False
 
-    def test_health_reports_active_with_trust_proxy(self, proxied_client):
-        resp = proxied_client.get("/api/health")
+    def test_system_info_reports_active_with_trust_proxy(
+        self, proxied_client
+    ):
+        auth = _login_for(proxied_client, PROXY_HEADERS)
+        resp = proxied_client.get(
+            "/api/admin/system-info", headers={**auth, **PROXY_HEADERS}
+        )
         assert resp.status_code == 200
         assert resp.get_json()["proxy_fix_active"] is True

@@ -277,18 +277,22 @@ export default function Adjustments() {
                 </tr>
               </thead>
               <tbody>
-                {adjustments.map((adj, idx) => (
-                  <tr key={adj.adjustment_id || idx}>
-                    <td style={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{adj.created_at ? new Date(adj.created_at).toLocaleString() : '-'}</td>
-                    <td>{typeTag(adj.adjustment_type)}</td>
-                    <td style={{ fontFamily: 'monospace' }}>{adj.sku || '-'}</td>
-                    <td>{adj.item_name || '-'}</td>
-                    <td style={{ fontFamily: 'monospace' }}>{adj.bin_code || '-'}</td>
-                    <td style={{ fontWeight: 600 }}>{adj.quantity}</td>
-                    <td>{adj.reason || '-'}</td>
-                    <td>{adj.username || '-'}</td>
-                  </tr>
-                ))}
+                {adjustments.map((adj, idx) => {
+                  const qc = typeof adj.quantity_change === 'number' ? adj.quantity_change : null;
+                  const inferredType = qc === null ? null : qc >= 0 ? 'add' : 'remove';
+                  return (
+                    <tr key={adj.adjustment_id || idx}>
+                      <td style={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{adj.adjusted_at ? new Date(adj.adjusted_at).toLocaleString() : '-'}</td>
+                      <td>{typeTag(inferredType)}</td>
+                      <td style={{ fontFamily: 'monospace' }}>{adj.sku || '-'}</td>
+                      <td>{adj.item_name || '-'}</td>
+                      <td style={{ fontFamily: 'monospace' }}>{adj.bin_code || '-'}</td>
+                      <td style={{ fontWeight: 600 }}>{qc === null ? '-' : Math.abs(qc)}</td>
+                      <td>{adj.reason_detail || adj.reason_code || '-'}</td>
+                      <td>{adj.username || '-'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -966,15 +966,27 @@ def list_adjustments():
     params["limit"] = per_page
     params["offset"] = (page - 1) * per_page
 
+    # #161: inventory_adjustments.adjusted_by is VARCHAR(100) but the
+    # writer sites are inconsistent -- direct_adjustment stores the
+    # stringified user_id, while the approval-flow writer stores the
+    # username itself. The LEFT JOIN resolves the numeric case to the
+    # real username; COALESCE falls back to whatever string is in the
+    # column when the join misses (already a username, or a user that
+    # has since been deleted). Normalising the writer sites to one
+    # convention is a follow-up.
     rows = g.db.execute(
         text(f"""
             SELECT ia.adjustment_id, ia.item_id, ia.bin_id, ia.warehouse_id,
                    ia.quantity_change, ia.reason_code, ia.reason_detail,
                    ia.status, ia.adjusted_by, ia.adjusted_at, ia.cycle_count_id,
-                   i.sku, b.bin_code
+                   i.sku, i.item_name, b.bin_code,
+                   COALESCE(u.username, ia.adjusted_by) AS username
             FROM inventory_adjustments ia
             JOIN items i ON i.item_id = ia.item_id
             JOIN bins b ON b.bin_id = ia.bin_id
+            LEFT JOIN users u
+                   ON ia.adjusted_by ~ '^[0-9]+$'
+                  AND u.user_id = ia.adjusted_by::int
             {where_sql}
             ORDER BY ia.adjusted_at DESC
             LIMIT :limit OFFSET :offset
@@ -988,6 +1000,7 @@ def list_adjustments():
                 "adjustment_id": r.adjustment_id,
                 "item_id": r.item_id,
                 "sku": r.sku,
+                "item_name": r.item_name,
                 "bin_id": r.bin_id,
                 "bin_code": r.bin_code,
                 "warehouse_id": r.warehouse_id,
@@ -996,6 +1009,7 @@ def list_adjustments():
                 "reason_detail": r.reason_detail,
                 "status": r.status,
                 "adjusted_by": r.adjusted_by,
+                "username": r.username,
                 "adjusted_at": r.adjusted_at.isoformat() if r.adjusted_at else None,
                 "cycle_count_id": r.cycle_count_id,
             }

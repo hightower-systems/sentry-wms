@@ -34,7 +34,12 @@ from services import token_cache
 def probe_app():
     app = Flask("test-wms-cache")
 
-    @app.route("/probe")
+    # v1.5.1 V-200 (#140): the decorator now enforces endpoint scope
+    # against the Flask endpoint name. Register the probe under a
+    # real V150_ENDPOINT_SLUGS Flask-endpoint name so tokens seeded
+    # with the helper's DEFAULT_TEST_ENDPOINTS pass the scope check
+    # alongside the TTL / revocation assertions this file exercises.
+    @app.route("/probe", endpoint="polling.poll_events")
     @require_wms_token
     def probe():
         return jsonify(
@@ -105,9 +110,13 @@ class TestTokenCacheBehaviour:
 
     def test_revocation_visible_within_ttl_window(self, probe_app):
         """Documented contract: a token revoked in the admin panel
-        stops working within TTL_SECONDS (60s in prod). The cache is
-        not eagerly flushed; subsequent workers see the revoke when
-        their per-entry TTL expires."""
+        stops working within TTL_SECONDS (60s in prod) even without
+        pubsub. v1.5.1 V-205 (#146) adds Redis pubsub for targeted
+        sub-second invalidation; this test still exercises the TTL
+        backstop path by mutating the DB directly (no publish), to
+        prove the per-entry TTL continues to protect against a down
+        pubsub channel.
+        """
         token_id = insert_token(plaintext="revoke-after-warm")
         try:
             first = probe_app.get(
@@ -141,3 +150,104 @@ class TestTokenCacheBehaviour:
             assert resp.get_json() == {"error": "invalid_token"}
         finally:
             delete_token(token_id)
+
+
+class TestInvalidation:
+    """v1.5.1 V-205 (#146): targeted cross-worker invalidation. The
+    local-evict path is unit-tested here; the cross-worker pubsub
+    path relies on Redis and is covered by a separate integration
+    test that mocks the publisher to prove admin rotate / revoke /
+    delete call invalidate() with the correct token_id.
+    """
+
+    def test_invalidate_evicts_local_entry(self):
+        """Seed a cache entry, call invalidate(token_id), confirm
+        the entry is gone from the local dict."""
+        import hashlib
+        from services import token_cache as tc
+
+        tc.clear()
+        # Seed a synthetic entry directly so the test doesn't need
+        # to go through _fetch_by_hash.
+        fake_hash = hashlib.sha256(b"fake").hexdigest()
+        with tc._lock:
+            tc._cache[fake_hash] = (
+                {"token_id": 4242, "status": "active"},
+                9_999_999.0,
+            )
+        assert fake_hash in tc._cache
+
+        tc.invalidate(4242)
+
+        assert fake_hash not in tc._cache, (
+            "invalidate must evict the entry whose row.token_id matches"
+        )
+
+    def test_invalidate_is_no_op_for_unknown_token_id(self):
+        """Pubsub messages for unknown token_ids (e.g. a token that
+        was never cached on this worker) must not raise."""
+        import hashlib
+        from services import token_cache as tc
+
+        tc.clear()
+        fake_hash = hashlib.sha256(b"other").hexdigest()
+        with tc._lock:
+            tc._cache[fake_hash] = (
+                {"token_id": 111, "status": "active"},
+                9_999_999.0,
+            )
+
+        tc.invalidate(999_999)  # nothing with this token_id cached
+        # Existing entry untouched.
+        assert fake_hash in tc._cache
+
+    def test_invalidate_publishes_when_publisher_configured(self, monkeypatch):
+        """When a Redis publisher is wired, invalidate() publishes a
+        JSON message with the token_id on the invalidation channel."""
+        from services import token_cache as tc
+
+        published = []
+
+        class _FakePublisher:
+            def publish(self, channel, data):
+                published.append((channel, data))
+
+        monkeypatch.setattr(tc, "_redis_publisher", _FakePublisher())
+        try:
+            tc.invalidate(777)
+        finally:
+            monkeypatch.setattr(tc, "_redis_publisher", None)
+
+        assert len(published) == 1
+        channel, data = published[0]
+        assert channel == tc.INVALIDATION_CHANNEL
+        import json as _json
+        assert _json.loads(data) == {"token_id": 777}
+
+    def test_invalidate_swallows_publisher_errors(self, monkeypatch):
+        """A down Redis must not break the admin rotate / revoke /
+        delete path. invalidate() logs + returns normally."""
+        from services import token_cache as tc
+
+        class _ExplodingPublisher:
+            def publish(self, channel, data):
+                raise RuntimeError("redis down")
+
+        monkeypatch.setattr(tc, "_redis_publisher", _ExplodingPublisher())
+        try:
+            # Must not raise.
+            tc.invalidate(123)
+        finally:
+            monkeypatch.setattr(tc, "_redis_publisher", None)
+
+    def test_start_subscriber_with_none_url_is_noop(self, monkeypatch):
+        """A deployment without Redis keeps working on TTL only; the
+        subscriber startup is idempotent and does not open any
+        connections."""
+        from services import token_cache as tc
+
+        tc._testing_reset_subscriber()
+        tc.start_invalidation_subscriber(None)
+        # Publisher stays None -> invalidate() falls back to local-only.
+        assert tc._redis_publisher is None
+        tc.invalidate(1)  # must not raise

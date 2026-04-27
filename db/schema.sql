@@ -642,6 +642,18 @@ CREATE TABLE consumer_groups (
 
 CREATE INDEX ix_consumer_groups_connector ON consumer_groups (connector_id);
 
+-- v1.5.1 V-207 (#148): tombstones so recreating a consumer_group
+-- under an id that was previously deleted forces explicit
+-- acknowledgement of the cursor=0 replay. See
+-- db/migrations/027_consumer_groups_tombstones.sql.
+CREATE TABLE consumer_groups_tombstones (
+    consumer_group_id      VARCHAR(64)  PRIMARY KEY,
+    last_cursor_at_delete  BIGINT       NOT NULL DEFAULT 0,
+    connector_id           VARCHAR(64),
+    deleted_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_by             VARCHAR(100)
+);
+
 -- ============================================================
 -- WMS TOKENS (v1.5.0 inbound API tokens for X-WMS-Token auth)
 -- ============================================================
@@ -671,6 +683,64 @@ CREATE TABLE wms_tokens (
 );
 
 CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
+
+-- v1.5.1 #157: forensic instrumentation for wms_tokens deletions.
+-- Every DELETE + TRUNCATE fires a trigger that writes who / when /
+-- how-many to wms_tokens_audit. Fresh installs get the same shape
+-- migration 028 adds to upgrade paths. See the migration file for
+-- the background on the Gate 11 / 12 incident this is mitigating.
+CREATE TABLE wms_tokens_audit (
+    audit_id        BIGSERIAL    PRIMARY KEY,
+    event_type      VARCHAR(16)  NOT NULL,  -- 'DELETE' | 'TRUNCATE'
+    rows_affected   INTEGER,
+    sess_user       TEXT         NOT NULL,
+    curr_user       TEXT         NOT NULL,
+    backend_pid     INTEGER      NOT NULL,
+    application_name TEXT,
+    event_at        TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX wms_tokens_audit_event_at ON wms_tokens_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION wms_tokens_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO wms_tokens_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_wms_tokens_audit_delete
+    AFTER DELETE ON wms_tokens
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_delete();
+
+CREATE OR REPLACE FUNCTION wms_tokens_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO wms_tokens_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_wms_tokens_audit_truncate
+    AFTER TRUNCATE ON wms_tokens
+    FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_truncate();
 
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)

@@ -205,6 +205,43 @@ class TestValidationFlag:
         finally:
             _cleanup(aggregate_id)
 
+    def test_env_var_toggle_takes_effect_without_module_reload(
+        self, aggregate_id, monkeypatch
+    ):
+        """v1.5.1 V-217 (umbrella #156): emit_event reads
+        SENTRY_VALIDATE_EVENT_SCHEMAS on every call via
+        _validation_enabled(). Toggling the env var mid-process
+        (e.g. operator hot-flipping during an incident) must take
+        effect on the next emit, NOT require a worker restart.
+        Pre-v1.5.1 the value was frozen at module import; this test
+        proves the freeze is gone.
+        """
+        import services.events_service as events_service
+
+        # Disabled: a malformed payload is accepted as a plain row.
+        monkeypatch.setenv("SENTRY_VALIDATE_EVENT_SCHEMAS", "false")
+        assert events_service._validation_enabled() is False
+        try:
+            event_id = _emit_via_engine(
+                events_service, aggregate_id, payload={"garbage": True}
+            )
+            assert isinstance(event_id, int)
+        finally:
+            _cleanup(aggregate_id)
+
+        # Flip the var in-process. A fresh aggregate_id avoids the
+        # idempotency UNIQUE collision; no module reload happens.
+        other_id = aggregate_id + 1
+        monkeypatch.setenv("SENTRY_VALIDATE_EVENT_SCHEMAS", "true")
+        assert events_service._validation_enabled() is True
+        try:
+            with pytest.raises(jsonschema.ValidationError):
+                _emit_via_engine(
+                    events_service, other_id, payload={"still": "garbage"}
+                )
+        finally:
+            _cleanup(other_id)
+
 
 class TestRegistryBootInvariants:
     def test_every_catalog_entry_has_a_validator(self):

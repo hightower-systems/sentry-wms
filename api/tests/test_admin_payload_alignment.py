@@ -19,6 +19,8 @@ existing test_admin.py covers those.
 
 import pytest
 
+from db_test_context import get_raw_connection
+
 
 class TestBinCreatePayload:
     """Issue #74: Bins.jsx saveBin() POST body shape."""
@@ -190,6 +192,60 @@ class TestInventoryAdjustmentCreatePayload:
         assert any(d["loc"] == ["reason"] for d in resp.get_json()["details"])
 
 
+class TestInventoryAdjustmentListPayload:
+    """#161: GET /admin/adjustments/list must expose the fields the
+    Recent Adjustments table reads. Pre-v1.5.1 the endpoint returned
+    database-column names (adjusted_at, quantity_change, reason_detail,
+    adjusted_by) but did not join items.item_name or users.username, so
+    Date / Type / Item / Qty / Reason / User all rendered as '-'.
+    """
+
+    def test_list_exposes_every_field_the_recent_table_reads(
+        self, client, auth_headers
+    ):
+        create = client.post(
+            "/api/admin/adjustments/direct",
+            json={
+                "warehouse_id": 1,
+                "bin_id": 2,
+                "item_id": 5,
+                "adjustment_type": "add",
+                "quantity": 3,
+                "reason": "issue-161 list-payload alignment probe",
+            },
+            headers=auth_headers,
+        )
+        assert create.status_code == 201, create.get_json()
+
+        resp = client.get(
+            "/api/admin/adjustments/list?warehouse_id=1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["adjustments"], "seeded row must come back"
+        row = body["adjustments"][0]
+
+        # Every field the admin Recent Adjustments table binds to.
+        for key in (
+            "adjusted_at",      # Date column
+            "quantity_change",  # Qty column + derives Add/Remove tag
+            "sku",              # SKU column
+            "item_name",        # Item column (JOIN items)
+            "bin_code",         # Bin column
+            "reason_detail",    # Reason column
+            "username",         # User column (JOIN users)
+        ):
+            assert key in row, f"missing {key!r} for Recent Adjustments table"
+
+        assert row["sku"]
+        assert row["item_name"]
+        assert row["bin_code"]
+        assert row["username"] == "admin"
+        assert row["quantity_change"] == 3
+        assert row["reason_detail"] == "issue-161 list-payload alignment probe"
+
+
 class TestInterWarehouseTransferCreatePayload:
     """Issue #78: InterWarehouseTransfers.jsx handleSubmit() POST body shape."""
 
@@ -231,6 +287,72 @@ class TestInterWarehouseTransferCreatePayload:
         assert ("source_bin_id",) in locs
         assert ("destination_warehouse_id",) in locs
         assert ("destination_bin_id",) in locs
+
+
+class TestInterWarehouseTransferListPayload:
+    """#162: GET /admin/inter-warehouse-transfers must expose every field
+    the Recent Transfers table reads. Pre-fix the backend returned
+    from_* / to_* / transferred_at while the frontend was reading
+    source_* / destination_* / created_at, so From / To / Status /
+    Created all rendered blank.
+    """
+
+    def test_list_exposes_every_field_the_recent_table_reads(
+        self, client, auth_headers
+    ):
+        # Seed a row directly; the create endpoint's business rules
+        # require matching inventory which isn't worth setting up here.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO bin_transfers (
+                item_id, from_bin_id, to_bin_id, warehouse_id,
+                quantity, transfer_type, transferred_by, external_id
+            ) VALUES (1, 3, 4, 1, 2, 'INTER_WAREHOUSE', 'admin',
+                      gen_random_uuid())
+            """
+        )
+        cur.close()
+
+        resp = client.get(
+            "/api/admin/inter-warehouse-transfers?limit=10",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["transfers"], "seeded row must come back"
+        row = body["transfers"][0]
+
+        # Every field the Recent Transfers table binds to.
+        for key in (
+            "transfer_id",          # ID column
+            "sku",                  # Item column (falls through to item_name/id)
+            "item_name",            # Item column fallback
+            "quantity",             # Qty column
+            "from_warehouse_name",  # From column (primary)
+            "from_warehouse_code",  # From column (fallback)
+            "from_warehouse_id",    # From column (final fallback)
+            "from_bin_code",        # From column (bin side)
+            "from_bin_id",
+            "to_warehouse_name",
+            "to_warehouse_code",
+            "to_warehouse_id",
+            "to_bin_code",
+            "to_bin_id",
+            "status",               # Status column tag
+            "transferred_at",       # Created column
+        ):
+            assert key in row, f"missing {key!r} for Recent Transfers table"
+
+        # bin_transfers has no status machine: every row is a completed
+        # atomic move, so the server stamps 'completed' for the tag.
+        assert row["status"] == "completed"
+        assert row["from_warehouse_name"]
+        assert row["to_warehouse_name"]
+        assert row["from_bin_code"]
+        assert row["to_bin_code"]
+        assert row["transferred_at"]
 
 
 class TestManualPOCreatePayload:

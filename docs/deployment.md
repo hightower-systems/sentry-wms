@@ -243,14 +243,18 @@ docker compose logs api | grep ProxyFix
 # One line per gunicorn worker (4 lines on the default worker count).
 ```
 
-Or, from outside the container (e.g. from the reverse proxy itself), hit the health endpoint:
+Or, from an authenticated admin session, hit the system-info endpoint:
 
 ```bash
-curl -s https://sentry.yourcompany.com/api/health
-# {"status":"ok","service":"sentry-wms","proxy_fix_active":true}
+# Log in first to get a bearer token (TOKEN=...), then:
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://sentry.yourcompany.com/api/admin/system-info
+# {"proxy_fix_active":true}
 ```
 
-A green health response with `"proxy_fix_active": false` behind a reverse proxy means `TRUST_PROXY` did not reach the container. Check `docker-compose.yml` (v1.4.4 shipped without the Compose-side wiring; v1.4.5 added it; #136) and confirm you ran `up -d`, not `restart`, after changing `.env`.
+A response with `"proxy_fix_active": false` behind a reverse proxy means `TRUST_PROXY` did not reach the container. Check `docker-compose.yml` (v1.4.4 shipped without the Compose-side wiring; v1.4.5 added it; #136) and confirm you ran `up -d`, not `restart`, after changing `.env`.
+
+> **v1.5.1 note (V-215).** The unauthenticated `/api/health` endpoint no longer reports `proxy_fix_active`. Exposing proxy deployment state to anonymous callers helped an attacker shape their approach (e.g. deciding whether `X-Forwarded-For` spoofing would stick). The field moved to the admin-only `/api/admin/system-info`; the anonymous `/api/health` now returns `{status, service}` only.
 
 #### nginx
 

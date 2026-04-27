@@ -1,3 +1,23 @@
+# ============================================================
+# DEV-ONLY. DO NOT DEPLOY TO PRODUCTION.
+# ============================================================
+# v1.5.1 V-218 (umbrella #156): this file spins up an nginx TLS
+# terminator backed by mkcert-issued certs (see proxy/certs/,
+# gitignored). mkcert is a personal-CA setup: the certs this
+# stack uses are trusted only on the workstation that generated
+# them. Deploying this compose overlay to a prod host would
+# produce a browser "cert not trusted" error on every request
+# and a broken deployment -- no public-CA validation.
+#
+# Use this file for local TLS-behind-proxy reproduction only.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.proxied.yml up -d
+#
+# For production, use a real TLS terminator (Caddy, nginx with
+# a Let's Encrypt cert, ALB, Cloudflare Tunnel, etc.) and follow
+# the reverse-proxy section of docs/deployment.md.
+# ============================================================
+
 services:
   nginx-proxy:
     image: nginx:1.27-alpine

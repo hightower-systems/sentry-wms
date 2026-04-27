@@ -2,22 +2,35 @@
 
 Used by ``@require_wms_token`` in middleware/auth_middleware.py to
 avoid a DB round-trip on every polling or snapshot request. The cache
-is per-worker (gunicorn workers do not share memory in v1.5.0) and
-the TTL is the framework-doc stated revocation window: a token
-revoked in the admin panel is rejected within 60 seconds on every
-worker.
+is per-worker (gunicorn workers do not share memory) so the hot auth
+path pays zero extra hops on reads.
 
-Trade-off: a strictly shared cache (Redis) would give near-instant
-revocation but add a network hop to every auth check. The per-worker
-TTL trades up-to-60s revocation latency for zero extra hops on the
-hot path. Snapshot page latency and polling p95 live on this hop.
+Revocation model:
+
+v1.5.0 shipped "per-worker 60s TTL" as the only revocation path. A
+token revoked in the admin panel stayed authenticated on every other
+gunicorn worker until each worker's local entry expired (up to 60s).
+V-205 (#146) flagged this as an unacceptable latency floor: during an
+emergency rotation window the compromised token keeps working across
+N-1 workers for the full 60s.
+
+v1.5.1 adds Redis pubsub for targeted cross-worker invalidation.
+admin_tokens.py calls ``invalidate(token_id)`` on every rotate /
+revoke / delete; the call evicts the local entry AND publishes a
+message on the ``wms_token_events`` channel. Every worker subscribes
+to that channel at boot via a daemon thread that calls
+``_invalidate_token_id_local`` on receipt. Revocation latency drops
+from up to 60s to sub-second (pubsub delivery + one dict mutation
+per worker). If Redis is unavailable the TTL remains the backstop.
 
 Cache storage is a plain dict guarded by a threading.Lock. sync
 gunicorn workers serialise HTTP handling so the lock is only
-contended by background threads (Celery in-process workers or
+contended by the subscriber thread (and Celery in-process workers or
 similar); in practice contention is negligible.
 """
 
+import json
+import logging
 import os
 import threading
 import time
@@ -27,15 +40,31 @@ from sqlalchemy import text
 
 import models.database as _db
 
+LOGGER = logging.getLogger(__name__)
+
 # 60s per-entry TTL. Matches the framework doc's stated revocation
 # window and lines up with the admin panel "token revoked, wait up to
-# a minute" user-facing contract.
+# a minute" user-facing contract. v1.5.1 V-205 (#146) makes the
+# typical case sub-second via pubsub; TTL stays as the backstop when
+# Redis is unavailable or a message is dropped.
 TTL_SECONDS = 60
+
+# v1.5.1 V-205 (#146): pubsub channel for cross-worker invalidation.
+# Every worker subscribes; admin rotate / revoke / delete publishes.
+INVALIDATION_CHANNEL = "wms_token_events"
 
 
 # {token_hash: (row_dict_or_none, fetched_at_epoch_seconds)}
 _cache: Dict[str, Tuple[Optional[dict], float]] = {}
 _lock = threading.Lock()
+
+# v1.5.1 V-205 (#146): the Redis publisher is a thin handle used by
+# invalidate(); the subscriber thread is daemonised so it does not
+# block worker shutdown. Both are optional: a deployment without
+# Redis still gets the 60s TTL-based revocation contract.
+_redis_publisher = None
+_subscriber_thread: Optional[threading.Thread] = None
+_subscriber_started = threading.Event()
 
 
 def _fetch_by_hash(token_hash: str) -> Optional[dict]:
@@ -99,9 +128,155 @@ def get_by_hash(token_hash: str) -> Optional[dict]:
 
 
 def clear() -> None:
-    """Drop the entire cache. Test-only; production relies on TTL expiry."""
+    """Drop the entire local cache. Test-only; production relies on
+    ``invalidate`` (targeted + pubsub) and the TTL backstop."""
     with _lock:
         _cache.clear()
+
+
+def _invalidate_token_id_local(token_id: int) -> None:
+    """Evict every cached entry for the given token_id from THIS
+    worker's dict. Called by the pubsub subscriber on receipt of an
+    invalidation message and by ``invalidate`` on the publishing
+    worker. The cache is keyed by token_hash, not token_id, so the
+    eviction scans values for the matching token_id. Cost is O(n)
+    but n is bounded by the number of distinct tokens a worker has
+    ever authenticated (~ dozens in a realistic deployment).
+    """
+    with _lock:
+        to_drop = [
+            h for h, (row, _) in _cache.items()
+            if row and row.get("token_id") == token_id
+        ]
+        for h in to_drop:
+            del _cache[h]
+
+
+def invalidate(token_id: int) -> None:
+    """v1.5.1 V-205 (#146): evict this token across every worker.
+
+    Evicts the entry from the calling worker's cache immediately,
+    then publishes a message on ``wms_token_events`` so subscriber
+    threads on every other worker evict the same token from their
+    own dicts within one round-trip. Failure to publish is logged
+    at warning level and swallowed: the per-worker TTL still catches
+    the revocation within 60s.
+
+    Called by admin_tokens.py from rotate / revoke / delete handlers
+    instead of the v1.5.0 ``clear()`` (which only flushed the
+    handling worker).
+    """
+    _invalidate_token_id_local(int(token_id))
+    if _redis_publisher is None:
+        return
+    try:
+        _redis_publisher.publish(
+            INVALIDATION_CHANNEL,
+            json.dumps({"token_id": int(token_id)}),
+        )
+    except Exception:  # noqa: BLE001 -- best effort; TTL is the backstop
+        LOGGER.warning(
+            "token_cache: pubsub publish failed for token_id=%s; "
+            "relying on TTL backstop",
+            token_id,
+        )
+
+
+def start_invalidation_subscriber(redis_url: Optional[str]) -> None:
+    """Wire up the pubsub publisher + a daemon subscriber thread.
+
+    Idempotent: safe to call more than once per process. Called from
+    ``create_app`` after the rate-limiter's Redis URL has been
+    resolved. ``redis_url`` of None (or missing ``redis`` module)
+    disables pubsub and falls back to the TTL-only revocation path;
+    the cache still works, just with the v1.5.0 latency floor.
+    """
+    global _redis_publisher, _subscriber_thread
+    if _subscriber_started.is_set():
+        return
+    if not redis_url or not redis_url.startswith(("redis://", "rediss://")):
+        LOGGER.info(
+            "token_cache: no redis URL; invalidation pubsub disabled "
+            "(TTL %ds is the only revocation path)",
+            TTL_SECONDS,
+        )
+        _subscriber_started.set()
+        return
+    try:
+        import redis  # noqa: WPS433 -- localised to avoid import cost in tests
+    except ImportError:
+        LOGGER.warning(
+            "token_cache: redis package unavailable; invalidation "
+            "pubsub disabled (TTL %ds is the only revocation path)",
+            TTL_SECONDS,
+        )
+        _subscriber_started.set()
+        return
+
+    try:
+        _redis_publisher = redis.Redis.from_url(redis_url)
+        sub_client = redis.Redis.from_url(redis_url)
+        pubsub = sub_client.pubsub(ignore_subscribe_messages=True)
+        pubsub.subscribe(INVALIDATION_CHANNEL)
+    except Exception:  # noqa: BLE001
+        LOGGER.warning(
+            "token_cache: failed to open Redis pubsub connection; "
+            "invalidation falls back to %ds TTL",
+            TTL_SECONDS,
+        )
+        _redis_publisher = None
+        _subscriber_started.set()
+        return
+
+    def _run():
+        # The loop body handles malformed messages locally; the
+        # outer try/except exists for connection-level failures
+        # (Redis shutdown, network blip, test-process teardown
+        # closing the socket) so the daemon thread exits cleanly
+        # instead of raising an uncaught exception that pytest
+        # surfaces as PytestUnhandledThreadExceptionWarning.
+        # The parent process relies on the per-entry TTL as the
+        # backstop whenever the subscriber is not running.
+        try:
+            for message in pubsub.listen():
+                if not message or message.get("type") != "message":
+                    continue
+                try:
+                    payload = message.get("data")
+                    if isinstance(payload, bytes):
+                        payload = payload.decode("utf-8")
+                    data = json.loads(payload) if payload else {}
+                    tid = data.get("token_id")
+                    if tid is not None:
+                        _invalidate_token_id_local(int(tid))
+                except Exception:  # noqa: BLE001
+                    LOGGER.warning(
+                        "token_cache: malformed pubsub message ignored"
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # ConnectionError / ValueError (closed-file on the
+            # socket buffer) / anything else. Log once at INFO
+            # since this is the expected shape of a clean shutdown,
+            # then return. Invalidation falls back to the TTL
+            # until create_app re-invokes start_invalidation_subscriber
+            # (e.g. on worker restart).
+            LOGGER.info(
+                "token_cache: invalidation subscriber exiting (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+
+    _subscriber_thread = threading.Thread(
+        target=_run,
+        daemon=True,
+        name="wms-token-cache-subscriber",
+    )
+    _subscriber_thread.start()
+    _subscriber_started.set()
+    LOGGER.info(
+        "token_cache: invalidation subscriber started on channel %s",
+        INVALIDATION_CHANNEL,
+    )
 
 
 def _testing_override_ttl(new_ttl_seconds: float) -> None:
@@ -112,3 +287,13 @@ def _testing_override_ttl(new_ttl_seconds: float) -> None:
     """
     global TTL_SECONDS
     TTL_SECONDS = new_ttl_seconds
+
+
+def _testing_reset_subscriber() -> None:
+    """Test-only: reset the subscriber-started sentinel so a test can
+    force a re-initialisation with a different Redis configuration
+    (e.g., simulating "Redis unavailable" vs "Redis up")."""
+    global _redis_publisher, _subscriber_thread
+    _subscriber_started.clear()
+    _redis_publisher = None
+    _subscriber_thread = None

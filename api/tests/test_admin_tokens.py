@@ -73,7 +73,10 @@ class TestCreate:
                 "token_name": "hash-probe",
                 "warehouse_ids": [1],
                 "event_types": [],
-                "endpoints": [],
+                # v1.5.1 V-200 (#140): endpoints is required and
+                # non-empty; the hash-storage probe only needs one
+                # valid slug to pass schema validation.
+                "endpoints": ["events.poll"],
             },
             headers=auth_headers,
         )
@@ -88,7 +91,11 @@ class TestCreate:
     def test_default_expires_at_is_about_one_year_out(self, client, auth_headers):
         resp = client.post(
             "/api/admin/tokens",
-            json={"token_name": "expiry-default", "warehouse_ids": [1]},
+            json={
+                "token_name": "expiry-default",
+                "warehouse_ids": [1],
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         )
         body = resp.get_json()
@@ -111,7 +118,11 @@ class TestList:
     def test_list_never_contains_plaintext(self, client, auth_headers):
         client.post(
             "/api/admin/tokens",
-            json={"token_name": "list-target-1", "warehouse_ids": [1]},
+            json={
+                "token_name": "list-target-1",
+                "warehouse_ids": [1],
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         )
         resp = client.get("/api/admin/tokens", headers=auth_headers)
@@ -185,7 +196,10 @@ class TestRotate:
     def test_rotate_revoked_rejected(self, client, auth_headers):
         created = client.post(
             "/api/admin/tokens",
-            json={"token_name": "revoke-then-rotate"},
+            json={
+                "token_name": "revoke-then-rotate",
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         ).get_json()
         token_id = created["token_id"]
@@ -200,7 +214,10 @@ class TestRevoke:
     ):
         created = client.post(
             "/api/admin/tokens",
-            json={"token_name": "revokable"},
+            json={
+                "token_name": "revokable",
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         ).get_json()
         token_id = created["token_id"]
@@ -227,7 +244,10 @@ class TestDelete:
     def test_delete_removes_row(self, client, auth_headers):
         created = client.post(
             "/api/admin/tokens",
-            json={"token_name": "deletable"},
+            json={
+                "token_name": "deletable",
+                "endpoints": ["events.poll"],
+            },
             headers=auth_headers,
         ).get_json()
         token_id = created["token_id"]
@@ -242,3 +262,389 @@ class TestDelete:
             "/api/admin/tokens/99999999", headers=auth_headers
         )
         assert resp.status_code == 404
+
+
+def _audit_rows_for_token(token_id: int):
+    """Return audit_log rows tagged for the given wms_tokens entity,
+    newest first. Uses a raw connection so the assertion sees rows
+    committed by the handler even when the test lives inside a
+    rollback-isolated fixture."""
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT action_type, entity_type, entity_id, user_id, warehouse_id, "
+        "       details "
+        "  FROM audit_log "
+        " WHERE entity_type = 'WMS_TOKEN' AND entity_id = %s "
+        " ORDER BY log_id DESC",
+        (token_id,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    return rows
+
+
+class TestAuditLogLifecycle:
+    """v1.5.1 V-208 (#141): every token CRUD mutation writes one
+    audit_log row. The v1.4 hash chain trigger keeps the trail
+    tamper-evident. Plaintext NEVER appears in `details`; only the
+    scope snapshot does.
+    """
+
+    def test_issue_writes_token_issue_row(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-issue",
+                "warehouse_ids": [1],
+                "event_types": ["receipt.completed"],
+                "endpoints": ["events.poll", "events.ack"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        rows = _audit_rows_for_token(body["token_id"])
+        assert len(rows) == 1
+        action, entity_type, entity_id, user_id, warehouse_id, details = rows[0]
+        assert action == "TOKEN_ISSUE"
+        assert entity_type == "WMS_TOKEN"
+        assert entity_id == body["token_id"]
+        assert warehouse_id is None
+        assert details["token_name"] == "audited-issue"
+        assert details["warehouse_ids"] == [1]
+        assert details["event_types"] == ["receipt.completed"]
+        assert details["endpoints"] == ["events.poll", "events.ack"]
+        # Plaintext must never leak to audit_log.
+        assert body["token"] not in str(details)
+
+    def test_rotate_writes_token_rotate_row(self, client, auth_headers):
+        created = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-rotate",
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+        original_plaintext = created["token"]
+
+        rotated = client.post(
+            f"/api/admin/tokens/{token_id}/rotate", headers=auth_headers
+        ).get_json()
+        new_plaintext = rotated["token"]
+
+        rows = _audit_rows_for_token(token_id)
+        actions = [r[0] for r in rows]
+        assert actions == ["TOKEN_ROTATE", "TOKEN_ISSUE"], actions
+        # Plaintext of either value must not appear.
+        details_blob = str([r[5] for r in rows])
+        assert original_plaintext not in details_blob
+        assert new_plaintext not in details_blob
+
+    def test_revoke_writes_token_revoke_row(self, client, auth_headers):
+        created = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-revoke",
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+        client.post(f"/api/admin/tokens/{token_id}/revoke", headers=auth_headers)
+        rows = _audit_rows_for_token(token_id)
+        actions = [r[0] for r in rows]
+        assert actions == ["TOKEN_REVOKE", "TOKEN_ISSUE"], actions
+        revoke_details = rows[0][5]
+        assert revoke_details["token_name"] == "audited-revoke"
+
+    def test_delete_writes_token_delete_row_with_scope_snapshot(
+        self, client, auth_headers
+    ):
+        created = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "audited-delete",
+                "warehouse_ids": [1, 2],
+                "event_types": ["ship.confirmed"],
+                "endpoints": ["events.poll", "snapshot.inventory"],
+            },
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+        client.delete(f"/api/admin/tokens/{token_id}", headers=auth_headers)
+        # After delete the row is gone but the audit trail remains.
+        assert _row_by_id(token_id) is None
+        rows = _audit_rows_for_token(token_id)
+        actions = [r[0] for r in rows]
+        assert actions == ["TOKEN_DELETE", "TOKEN_ISSUE"], actions
+        delete_details = rows[0][5]
+        assert delete_details["token_name"] == "audited-delete"
+        snap = delete_details["previous_scope"]
+        assert snap["warehouse_ids"] == [1, 2]
+        assert snap["event_types"] == ["ship.confirmed"]
+        assert set(snap["endpoints"]) == {"events.poll", "snapshot.inventory"}
+        assert snap["status_at_delete"] == "active"
+
+
+class TestScopeCatalog:
+    """#159: /api/admin/scope-catalog backs the checkbox-driven
+    Token-create modal. The UI hits this on modal open and
+    renders its event_types + endpoints checkbox lists from the
+    response. Response content must match the server's
+    authoritative scope sources so "what the admin picks" and
+    "what the backend validates against" are guaranteed to
+    agree.
+    """
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.get("/api/admin/scope-catalog")
+        assert resp.status_code == 401
+
+    def test_returns_expected_keys(self, client, auth_headers):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert set(body.keys()) == {"event_types", "endpoints"}
+        assert isinstance(body["event_types"], list)
+        assert isinstance(body["endpoints"], list)
+
+    def test_event_types_match_v150_catalog(self, client, auth_headers):
+        """event_types must be the distinct set in V150_CATALOG; a
+        mismatch means the UI would offer a type the server does
+        not know about (or hide a type the server does)."""
+        from services.events_schema_registry import V150_CATALOG
+
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        expected = sorted({entry[0] for entry in V150_CATALOG})
+        assert body["event_types"] == expected
+
+    def test_endpoints_list_is_non_empty_and_includes_known_routes(
+        self, client, auth_headers
+    ):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        endpoints = set(body["endpoints"])
+        # Two concrete routes that must be registered on any v1.5+
+        # deployment -- if they disappear from the response, the
+        # decorator's V150_ENDPOINT_SLUGS + URL-map filter is
+        # mismatched and token scope would break silently.
+        assert "events.poll" in endpoints
+        assert "snapshot.inventory" in endpoints
+        # Full expected set matches the source-of-truth mapping.
+        from middleware.auth_middleware import V150_ENDPOINT_SLUGS
+        assert endpoints == set(V150_ENDPOINT_SLUGS.keys())
+
+    def test_event_types_are_sorted(self, client, auth_headers):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        assert body["event_types"] == sorted(body["event_types"])
+
+    def test_endpoints_are_sorted(self, client, auth_headers):
+        resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
+        body = resp.get_json()
+        assert body["endpoints"] == sorted(body["endpoints"])
+
+
+class TestScopeExistenceValidation:
+    """v1.5.1 V-210 (#150): warehouse_ids must reference real rows
+    in ``warehouses``; event_types must appear in V150_CATALOG.
+    Unknown values fail 400 with the offending entries enumerated
+    in the response body.
+    """
+
+    def test_unknown_warehouse_id_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "bad-wh",
+                "warehouse_ids": [1, 9_999_999],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["error"] == "unknown_warehouse_ids"
+        assert body["missing"] == [9_999_999]
+
+    def test_unknown_event_type_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "bad-et",
+                "warehouse_ids": [1],
+                "event_types": ["ship.confirmed", "not.a.real.event"],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert body["error"] == "unknown_event_types"
+        assert body["unknown"] == ["not.a.real.event"]
+
+    def test_known_scope_accepted(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "ok-scope",
+                "warehouse_ids": [1],
+                "event_types": ["receipt.completed", "ship.confirmed"],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+    def test_empty_scope_arrays_bypass_existence_check(
+        self, client, auth_headers
+    ):
+        """An empty warehouse_ids list is "no warehouse access"
+        per Decision S; there is nothing to validate. Same for
+        event_types. The existence check fires only when values
+        are present."""
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "empty-scope",
+                "warehouse_ids": [],
+                "event_types": [],
+                "endpoints": ["events.poll"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+
+
+class TestCrossWorkerInvalidation:
+    """v1.5.1 V-205 (#146): admin rotate / revoke / delete call
+    ``token_cache.invalidate(token_id)`` which publishes on the
+    Redis channel so every other worker evicts the matching entry
+    within one round-trip. The test patches the publisher to capture
+    calls; cross-worker propagation itself requires a live Redis
+    and is covered by the unit tests in test_token_cache.py.
+    """
+
+    def _capture_invalidations(self, monkeypatch):
+        """Return a list that records every (token_id,) passed to
+        invalidate during the test."""
+        from services import token_cache
+
+        captured = []
+        real_invalidate = token_cache.invalidate
+
+        def _spy(token_id):
+            captured.append(int(token_id))
+            return real_invalidate(token_id)
+
+        monkeypatch.setattr(token_cache, "invalidate", _spy)
+        # admin_tokens imported invalidate by attribute at call time
+        # (via ``from services import token_cache``), so the
+        # monkeypatch above covers both read paths.
+        return captured
+
+    def test_rotate_calls_invalidate(self, client, auth_headers, monkeypatch):
+        captured = self._capture_invalidations(monkeypatch)
+        created = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "rot-inv", "endpoints": ["events.poll"]},
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+
+        client.post(f"/api/admin/tokens/{token_id}/rotate", headers=auth_headers)
+
+        assert token_id in captured, (
+            f"rotate must invalidate the token across workers; captured={captured}"
+        )
+
+    def test_revoke_calls_invalidate(self, client, auth_headers, monkeypatch):
+        captured = self._capture_invalidations(monkeypatch)
+        created = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "rev-inv", "endpoints": ["events.poll"]},
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+
+        client.post(f"/api/admin/tokens/{token_id}/revoke", headers=auth_headers)
+
+        assert token_id in captured
+
+    def test_delete_calls_invalidate(self, client, auth_headers, monkeypatch):
+        captured = self._capture_invalidations(monkeypatch)
+        created = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "del-inv", "endpoints": ["events.poll"]},
+            headers=auth_headers,
+        ).get_json()
+        token_id = created["token_id"]
+
+        client.delete(f"/api/admin/tokens/{token_id}", headers=auth_headers)
+
+        assert token_id in captured
+
+
+class TestEndpointsValidation:
+    """v1.5.1 V-200 (#140): CreateTokenRequest now requires a
+    non-empty ``endpoints`` array of known slugs. Pre-v1.5.1 the
+    field was accepted silently and never enforced by the decorator.
+    """
+
+    def test_missing_endpoints_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={"token_name": "no-endpoints", "warehouse_ids": [1]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_empty_endpoints_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "empty-endpoints",
+                "warehouse_ids": [1],
+                "endpoints": [],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_slug_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "bogus-slug",
+                "warehouse_ids": [1],
+                "endpoints": ["events.poll", "not.a.real.route"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        # The error body should surface the invalid slug so the admin
+        # can correct it without digging through server logs.
+        assert "not.a.real.route" in str(body)
+
+    def test_every_known_slug_is_accepted(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/tokens",
+            json={
+                "token_name": "all-endpoints",
+                "warehouse_ids": [1],
+                "endpoints": [
+                    "events.poll",
+                    "events.ack",
+                    "events.types",
+                    "events.schema",
+                    "snapshot.inventory",
+                ],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()

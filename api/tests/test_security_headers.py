@@ -16,6 +16,10 @@ EXPECTED_CSP_DIRECTIVES = {
     "base-uri": "'self'",
     "form-action": "'self'",
     "object-src": "'none'",
+    # v1.5.1 V-109 (#54): report-uri points browsers at the
+    # /api/csp-report sink so CSP violations are logged rather
+    # than silently dropped.
+    "report-uri": "/api/csp-report",
 }
 
 
@@ -70,6 +74,55 @@ def test_csp_object_src_none(client):
     resp = client.get("/api/health")
     directives = _parse_csp(resp.headers["Content-Security-Policy"])
     assert directives["object-src"] == "'none'"
+
+
+class TestCspReportEndpoint:
+    """v1.5.1 V-109 (#54): /api/csp-report accepts POSTed CSP
+    violation reports from browsers and logs them at WARNING level.
+    Unauthenticated by design (the victim browser has no session
+    context); rate-limited to 60/min per IP to cap log-flood
+    attacks. Legacy report-uri wire format; modern report-to /
+    Reporting-Endpoints plumbing is deferred.
+    """
+
+    def test_post_returns_204(self, client):
+        resp = client.post(
+            "/api/csp-report",
+            data='{"csp-report":{"violated-directive":"script-src"}}',
+            content_type="application/csp-report",
+        )
+        assert resp.status_code == 204
+
+    def test_post_accepts_malformed_body(self, client):
+        """A hostile or buggy browser might send non-JSON; the sink
+        must not 500 and must not drop -- just log the raw prefix
+        so operators can see what the client sent."""
+        resp = client.post(
+            "/api/csp-report",
+            data="not-json-at-all",
+            content_type="application/csp-report",
+        )
+        assert resp.status_code == 204
+
+    def test_post_accepts_empty_body(self, client):
+        resp = client.post(
+            "/api/csp-report",
+            data="",
+            content_type="application/csp-report",
+        )
+        assert resp.status_code == 204
+
+    def test_endpoint_does_not_require_auth(self, client):
+        """CSP reports come from the user's browser after a page
+        loads but before the session may be established; no
+        Authorization header should be expected or parsed."""
+        resp = client.post(
+            "/api/csp-report",
+            data='{}',
+            content_type="application/csp-report",
+        )
+        # Any 2xx / 3xx is fine; critically NOT 401 / 403.
+        assert resp.status_code < 400
 
 
 def test_existing_security_headers_still_set(client):
