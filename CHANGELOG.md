@@ -2,7 +2,7 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
-## [Unreleased] - v1.5.1
+## [v1.5.1] - 2026-04-27
 
 Security patch release. Closes findings from the v1.5.1 post-v1.5.0 audit.
 
