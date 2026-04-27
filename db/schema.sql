@@ -860,3 +860,65 @@ CREATE TRIGGER tr_integration_events_notify
     AFTER UPDATE OF visible_at ON integration_events
     FOR EACH ROW
     EXECUTE FUNCTION notify_integration_event_visible();
+
+-- ============================================================
+-- WEBHOOK SUBSCRIPTIONS + SECRETS (v1.6.0 outbound push)
+-- ============================================================
+-- Subscription state for the v1.6.0 webhook dispatcher.
+-- subscription_id is UUID for opaque admin URLs; status is one
+-- of 'active' | 'paused' | 'revoked' (auto-pause writes 'paused'
+-- with pause_reason populated; soft delete writes 'revoked').
+-- Rate-limit and ceiling CHECK ranges are the bottom rung that
+-- catches bypass paths around the admin layer (which separately
+-- enforces upper bounds against env-var hard caps).
+--
+-- delivery_url CHECK is permissive ('^https?://') so dev/CI can
+-- use http; production HTTPS-only enforcement lives in the admin
+-- endpoint behind SENTRY_ALLOW_HTTP_WEBHOOKS opt-out.
+--
+-- webhook_secrets stores Fernet-encrypted HMAC signing material
+-- in two slots: generation=1 primary, generation=2 previous.
+-- The dispatcher signs with generation=1 only; consumers accept
+-- either until expires_at (24h dual-accept rotation window).
+-- ON DELETE CASCADE on subscription_id keeps secret rows from
+-- outliving their subscription.
+--
+-- The identical DDL lives in db/migrations/029_webhook_subscriptions_and_secrets.sql.
+CREATE TABLE webhook_subscriptions (
+    subscription_id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    connector_id             VARCHAR(64)  NOT NULL REFERENCES connectors(connector_id),
+    display_name             VARCHAR(128) NOT NULL,
+    delivery_url             TEXT         NOT NULL,
+    subscription_filter      JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    last_delivered_event_id  BIGINT       NOT NULL DEFAULT 0,
+    status                   VARCHAR(16)  NOT NULL DEFAULT 'active',
+    pause_reason             VARCHAR(32),
+    rate_limit_per_second    INTEGER      NOT NULL DEFAULT 50,
+    pending_ceiling          INTEGER      NOT NULL DEFAULT 10000,
+    dlq_ceiling              INTEGER      NOT NULL DEFAULT 1000,
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT webhook_subscriptions_delivery_url_scheme
+        CHECK (delivery_url ~ '^https?://'),
+    CONSTRAINT webhook_subscriptions_rate_limit_range
+        CHECK (rate_limit_per_second BETWEEN 1 AND 100),
+    CONSTRAINT webhook_subscriptions_pending_ceiling_range
+        CHECK (pending_ceiling BETWEEN 100 AND 100000),
+    CONSTRAINT webhook_subscriptions_dlq_ceiling_range
+        CHECK (dlq_ceiling BETWEEN 10 AND 10000)
+);
+
+CREATE INDEX webhook_subscriptions_status
+    ON webhook_subscriptions (status)
+    WHERE status = 'active';
+
+CREATE TABLE webhook_secrets (
+    subscription_id     UUID         NOT NULL REFERENCES webhook_subscriptions(subscription_id) ON DELETE CASCADE,
+    generation          SMALLINT     NOT NULL,
+    secret_ciphertext   BYTEA        NOT NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMPTZ,
+    PRIMARY KEY (subscription_id, generation),
+    CONSTRAINT webhook_secrets_generation_range
+        CHECK (generation IN (1, 2))
+);
