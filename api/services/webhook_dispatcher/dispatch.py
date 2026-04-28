@@ -160,8 +160,8 @@ class HttpClient:
         }
 
         # verify=True is the v1.6.0 invariant; the CI lint added
-        # in D1 enforces no occurrence of verify=False anywhere
-        # under api/services/webhook_dispatcher/.
+        # in D1 enforces no disabled-TLS-verification keyword
+        # argument anywhere under api/services/webhook_dispatcher/.
         response = requests.post(
             url,
             data=body,
