@@ -31,6 +31,26 @@ jobs:
       - name: Install dependencies
         run: pip install -r api/requirements.txt
 
+      - name: v1.6.0 lint -- no verify=False in webhook_dispatcher
+        # #173 (D1): the dispatcher MUST always send with TLS
+        # verification on. A regression that introduced verify=False
+        # would silently disable cert checking on every webhook POST
+        # and the dispatch-time SSRF guard would not catch it
+        # (SSRF guards address private-range targets, not cert
+        # spoofing). The lint scans the whole package; an
+        # intentional verify=False anywhere under
+        # api/services/webhook_dispatcher/ fails CI.
+        run: |
+          if grep -rn "verify\s*=\s*False" api/services/webhook_dispatcher/; then
+            echo ""
+            echo "ERROR: verify=False found in api/services/webhook_dispatcher/"
+            echo "The dispatcher MUST always send with TLS verification on."
+            echo "Plan §2.1 + §4.1: requests.Session.verify stays True"
+            echo "regardless of SENTRY_ALLOW_HTTP_WEBHOOKS."
+            exit 1
+          fi
+          echo "OK: no verify=False in api/services/webhook_dispatcher/"
+
       - name: Validate v1.5.0 event schemas
         # #111: importing the registry forces Draft 2020-12 validation
         # of every api/schemas_v1/events/*/*.json file and asserts
