@@ -48,12 +48,31 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DB_DIR = os.path.join(REPO_ROOT, "db")
 SCHEMA_SQL = os.path.join(DB_DIR, "schema.sql")
 
-PSQL_AVAILABLE = shutil.which("psql") is not None
 SCRIPTS_REACHABLE = (
     os.path.exists(SCHEMA_SQL)
     and os.path.exists(os.path.join(DB_DIR, "role-snapshot-keeper.sql"))
     and os.path.exists(os.path.join(DB_DIR, "role-dispatcher.sql"))
 )
+
+# Loud-fail at module import time when psql is missing. The earlier
+# silent-skip pattern (pytestmark = pytest.mark.skipif) hid the gap
+# in any environment where the test was supposed to run but lacked
+# the binary. This file guards against the V-214 #170 regression
+# class; silently skipping it would reproduce the V-214 silent-
+# failure pattern at the test layer. CI runs pytest on the
+# ubuntu-latest runner with psql provided by the postgres:16
+# service; local `docker exec sentry-api pytest` requires
+# postgresql-client in api/Dockerfile (added in the same commit
+# that introduces this loud-fail).
+if shutil.which("psql") is None:
+    pytest.fail(
+        "psql binary required by tests/test_role_creation_scripts.py "
+        "but not found in PATH. The api container must include "
+        "postgresql-client (see api/Dockerfile). This test guards "
+        "against the V-214 regression class; silently skipping it "
+        "reproduces the silent-failure pattern V-214 was about.",
+        pytrace=False,
+    )
 
 # Each entry is (script-path, role-name, var-name, expected-grants).
 # expected-grants is a set of (table_name, privilege_type) tuples
@@ -88,11 +107,12 @@ ROLE_SCRIPTS = [
 
 
 pytestmark = pytest.mark.skipif(
-    not (PSQL_AVAILABLE and SCRIPTS_REACHABLE),
+    not SCRIPTS_REACHABLE,
     reason=(
-        "requires psql binary on PATH and db/*.sql script files reachable; "
-        "locally these tests skip when run inside the api container "
-        "(psql not bundled). CI runs them on ubuntu-latest."
+        "db/*.sql script files not reachable from this test runner; "
+        "the test computes paths relative to the repo root and skips "
+        "when run from a context that does not mount db/ (e.g. an "
+        "image rebuild that copies only api/ into the container)."
     ),
 )
 
