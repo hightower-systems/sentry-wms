@@ -21,6 +21,21 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        # v1.6.0 D3 #175: the wake orchestrator's Redis pubsub
+        # subscriber tests need a live broker. CI runs an
+        # ephemeral, passwordless Redis instance; the local dev
+        # stack uses REDIS_PASSWORD via docker-compose.yml. Both
+        # paths exercise the same code; only the URL differs.
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -120,4 +135,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry
           JWT_SECRET: test-secret
+          # v1.6.0 D3 #175: wake.WakeOrchestrator pubsub tests
+          # need REDIS_URL pointing at the service container above.
+          # Passwordless URL because the CI Redis service does not
+          # set requirepass (matches the redis:7-alpine default).
+          REDIS_URL: redis://localhost:6379/0
         run: cd api && python -m pytest tests/ -v
