@@ -30,6 +30,40 @@ two retries of the same event for two distinct events. The
 runbook (R3) and the consumer integration guide
 (``docs/api/webhooks.md``) state this explicitly.
 
+Auto-pause invariants (plan §2.11, landed in D7):
+
+  * After a non-terminal failure (D6 retry-slot INSERT), the
+    pending count for the subscription is checked. If it has
+    reached ``pending_ceiling``, the subscription flips to
+    ``status='paused'`` with ``pause_reason='pending_ceiling'``
+    in the same transaction as the failed-row write. A
+    ``paused`` event is published on the
+    ``webhook_subscription_events`` channel so peer workers
+    evict their state.
+  * After a terminal failure (D6 dlq flip), the DLQ count for
+    the subscription is checked. If it has reached
+    ``dlq_ceiling``, the same auto-pause path fires with
+    ``pause_reason='dlq_ceiling'``.
+  * Hard caps from ``DISPATCHER_MAX_PENDING_HARD_CAP`` /
+    ``DISPATCHER_MAX_DLQ_HARD_CAP`` bound per-subscription
+    overrides at admin-set time (A1 owns the upper-bound
+    check; D7 lands the env-validator plumbing only).
+  * Audit_log writes on each auto-pause are deferred to A1
+    when webhook admin CRUD wires the audit_log hash chain.
+    D7 logs CRITICAL on every auto-pause so the operator
+    sees it in compose logs immediately.
+
+Worker eviction (plan §2.9 + D5 follow-up #177):
+
+  * A ``paused`` or ``deleted`` event on the pubsub channel
+    triggers ``SubscriptionWorkerPool._run_fanout`` to call
+    ``request_eviction()`` on the matching worker. The worker
+    closes its psycopg2 connection (which surfaces as a clean
+    exception in any in-flight SELECT), the run-loop exits,
+    and the next ``_refresh_active_subscriptions`` cycle
+    prunes the dead worker via the existing dead-worker
+    pruning logic from D5.
+
 D5 explicitly does NOT include:
   * Retry schedule (D6) -- D5 marks failures as ``failed`` and
     leaves the next-attempt scheduling to D6.
@@ -58,6 +92,7 @@ from psycopg2.extras import RealDictCursor
 from . import envelope as envelope_module
 from . import retry as retry_module
 from . import signing
+from . import wake as wake_module
 
 
 LOGGER = logging.getLogger("webhook_dispatcher.dispatch")
@@ -243,6 +278,110 @@ def _build_filter_clauses(sub_filter: Mapping[str, Any]) -> tuple[str, list]:
     return " AND " + " AND ".join(clauses), params
 
 
+def _count_pending(cur, subscription_id: str) -> int:
+    """Return the number of pending OR in_flight delivery rows
+    for a subscription. Hits the
+    webhook_deliveries_pending_count partial index. Used by the
+    auto-pause check after a non-terminal failure (D7)."""
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM webhook_deliveries
+         WHERE subscription_id = %s
+           AND status IN ('pending', 'in_flight')
+        """,
+        (str(subscription_id),),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    if hasattr(row, "keys"):
+        # RealDictRow -- COUNT(*) lands under the 'count' key.
+        return int(next(iter(row.values())))
+    return int(row[0])
+
+
+def _count_dlq(cur, subscription_id: str) -> int:
+    """Return the number of dlq delivery rows for a subscription.
+    Hits the webhook_deliveries_dlq partial index. Used by the
+    auto-pause check after a terminal DLQ flip (D7)."""
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM webhook_deliveries
+         WHERE subscription_id = %s
+           AND status = 'dlq'
+        """,
+        (str(subscription_id),),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    if hasattr(row, "keys"):
+        return int(next(iter(row.values())))
+    return int(row[0])
+
+
+def _maybe_auto_pause(
+    cur,
+    subscription_id: str,
+    pending_ceiling: int,
+    dlq_ceiling: int,
+    after_terminal_dlq: bool,
+) -> Optional[str]:
+    """Plan §2.11 ceiling auto-pause. Called after a failure
+    write (non-terminal or terminal-DLQ) but BEFORE the commit
+    that releases the row. Flips the subscription to
+    ``status='paused'`` with the appropriate ``pause_reason``
+    when the count crosses the threshold; returns the reason
+    string used (caller publishes to the pubsub channel).
+
+    Returns None when no auto-pause fired.
+
+    The flip is conditional on ``status='active'`` so a
+    subscription that is already paused (e.g., by an admin or a
+    prior auto-pause from a peer dispatcher) does not get
+    re-paused with a different reason. The conditional UPDATE
+    + the count read happen in the same transaction as the
+    failed-row write, which the caller commits together.
+    """
+    if after_terminal_dlq:
+        count = _count_dlq(cur, subscription_id)
+        if count < dlq_ceiling:
+            return None
+        reason = "dlq_ceiling"
+    else:
+        count = _count_pending(cur, subscription_id)
+        if count < pending_ceiling:
+            return None
+        reason = "pending_ceiling"
+
+    cur.execute(
+        """
+        UPDATE webhook_subscriptions
+           SET status = 'paused',
+               pause_reason = %s,
+               updated_at = NOW()
+         WHERE subscription_id = %s
+           AND status = 'active'
+        """,
+        (reason, str(subscription_id)),
+    )
+    if cur.rowcount > 0:
+        # CRITICAL log so the operator sees the auto-pause in
+        # compose logs immediately. The audit_log hash-chain
+        # row is deferred to A1 (admin webhook CRUD writes it).
+        LOGGER.critical(
+            "auto-paused subscription %s: pause_reason=%s, count=%d, "
+            "ceiling=%d. Triage required: open the DLQ viewer or fix "
+            "the consumer's failure mode, then resume the subscription.",
+            subscription_id,
+            reason,
+            count,
+            dlq_ceiling if after_terminal_dlq else pending_ceiling,
+        )
+        return reason
+    return None
+
+
 def _has_non_terminal_delivery(cur, subscription_id: str) -> bool:
     """True when the subscription has any non-terminal delivery
     row (pending or in_flight). Used by deliver_one to enforce
@@ -340,6 +479,7 @@ def deliver_one(
     conn,
     subscription_id: str,
     http_client: HttpClient,
+    redis_url: Optional[str] = None,
 ) -> Optional[DeliveryOutcome]:
     """One delivery cycle for a subscription. Returns None when
     no pending or fresh event exists for this subscription
@@ -357,7 +497,8 @@ def deliver_one(
     cur.execute(
         """
         SELECT subscription_id, connector_id, delivery_url,
-               subscription_filter, last_delivered_event_id, status
+               subscription_filter, last_delivered_event_id, status,
+               pending_ceiling, dlq_ceiling
           FROM webhook_subscriptions
          WHERE subscription_id = %s
         """,
@@ -566,7 +707,19 @@ def deliver_one(
             """,
             (event_row["event_id"], str(subscription_id), event_row["event_id"]),
         )
+        # Plan §2.11: auto-pause if dlq_ceiling crossed. Same
+        # transaction as the dlq write so peer dispatchers see
+        # the flip atomically with the row landing.
+        paused_reason = _maybe_auto_pause(
+            cur,
+            subscription_id,
+            pending_ceiling=int(subscription["pending_ceiling"]),
+            dlq_ceiling=int(subscription["dlq_ceiling"]),
+            after_terminal_dlq=True,
+        )
         conn.commit()
+        if paused_reason is not None:
+            wake_module.publish_subscription_event(redis_url, str(subscription_id), "paused")
         return DeliveryOutcome(
             delivery_id=pending["delivery_id"],
             event_id=event_row["event_id"],
@@ -611,7 +764,21 @@ def deliver_one(
         """,
         (str(subscription_id), event_row["event_id"], next_attempt),
     )
+    # Plan §2.11: auto-pause if pending_ceiling crossed. The
+    # retry-slot row we just INSERTed counts toward pending,
+    # which is intentional -- the ceiling exists to bound the
+    # backlog, and an unhealthy consumer that failed N times
+    # has N pending retry slots still alive.
+    paused_reason = _maybe_auto_pause(
+        cur,
+        subscription_id,
+        pending_ceiling=int(subscription["pending_ceiling"]),
+        dlq_ceiling=int(subscription["dlq_ceiling"]),
+        after_terminal_dlq=False,
+    )
     conn.commit()
+    if paused_reason is not None:
+        wake_module.publish_subscription_event(redis_url, str(subscription_id), "paused")
     return DeliveryOutcome(
         delivery_id=pending["delivery_id"],
         event_id=event_row["event_id"],
@@ -639,6 +806,7 @@ class SubscriptionWorker(threading.Thread):
         database_url: str,
         http_client: HttpClient,
         shutdown: threading.Event,
+        redis_url: Optional[str] = None,
     ):
         super().__init__(
             daemon=True,
@@ -647,18 +815,48 @@ class SubscriptionWorker(threading.Thread):
         self.subscription_id = subscription_id
         self.database_url = database_url
         self.http_client = http_client
+        self.redis_url = redis_url
         self._shutdown = shutdown
         self._wake = threading.Event()
+        self._evicted = threading.Event()
+        self._conn = None  # populated in run() so request_eviction can close
 
     def signal(self) -> None:
         self._wake.set()
+
+    def request_eviction(self) -> None:
+        """Plan §2.9 + D5 follow-up #177: cross-worker
+        invalidation of paused / deleted subscriptions.
+
+        Sets the per-worker eviction event AND closes the
+        worker's psycopg2 connection so a thread mid-deliver_one
+        exits its inner SELECT cleanly with a connection-closed
+        error rather than completing the in-flight POST.
+        Idempotent.
+        """
+        if self._evicted.is_set():
+            return
+        self._evicted.set()
+        self._wake.set()  # break out of the wake.wait
+        # Close the connection from the orchestrator thread so
+        # the worker's inner I/O surfaces a clean exception.
+        # psycopg2 connections are documented as not-thread-
+        # safe for concurrent use, but close() from a different
+        # thread is acceptable -- the worker thread's next
+        # operation will raise InterfaceError, which the run()
+        # loop catches and treats as a clean exit.
+        try:
+            if self._conn is not None:
+                self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     def run(self) -> None:
         # Each worker owns its own connection so a slow POST on
         # one subscription does not block another subscription's
         # SQL queries through a shared connection.
         try:
-            conn = psycopg2.connect(self.database_url)
+            self._conn = psycopg2.connect(self.database_url)
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning(
                 "subscription %s worker failed to connect to DB: %s",
@@ -667,18 +865,25 @@ class SubscriptionWorker(threading.Thread):
             )
             return
         try:
-            while not self._shutdown.is_set():
+            while not self._shutdown.is_set() and not self._evicted.is_set():
                 self._wake.wait(timeout=1.0)
-                if self._shutdown.is_set():
+                if self._shutdown.is_set() or self._evicted.is_set():
                     return
                 self._wake.clear()
-                while not self._shutdown.is_set():
+                while not self._shutdown.is_set() and not self._evicted.is_set():
                     try:
                         outcome = deliver_one(
-                            conn, self.subscription_id, self.http_client
+                            self._conn,
+                            self.subscription_id,
+                            self.http_client,
+                            redis_url=self.redis_url,
                         )
                     except AssertionError:
                         raise
+                    except psycopg2.InterfaceError:
+                        # Eviction closed the connection mid-
+                        # query. Clean exit shape per plan §2.9.
+                        return
                     except Exception as exc:  # noqa: BLE001
                         LOGGER.warning(
                             "subscription %s deliver_one raised: %s",
@@ -686,7 +891,7 @@ class SubscriptionWorker(threading.Thread):
                             exc,
                         )
                         try:
-                            conn.rollback()
+                            self._conn.rollback()
                         except Exception:  # noqa: BLE001
                             pass
                         break
@@ -702,8 +907,15 @@ class SubscriptionWorker(threading.Thread):
                         outcome.error_kind,
                     )
         finally:
+            if self._evicted.is_set():
+                LOGGER.info(
+                    "subscription %s worker evicted (paused/deleted/"
+                    "delivery_url_changed)",
+                    self.subscription_id,
+                )
             try:
-                conn.close()
+                if self._conn is not None:
+                    self._conn.close()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -725,11 +937,13 @@ class SubscriptionWorkerPool:
         wake_queue: "Queue",
         http_client: Optional[HttpClient] = None,
         refresh_interval_s: float = _SUBSCRIPTION_REFRESH_S,
+        redis_url: Optional[str] = None,
     ):
         self.database_url = database_url
         self.wake_queue = wake_queue
         self.http_client = http_client or HttpClient()
         self.refresh_interval_s = refresh_interval_s
+        self.redis_url = redis_url
         self._workers: Dict[str, SubscriptionWorker] = {}
         self._shutdown = threading.Event()
         self._refresh_thread: Optional[threading.Thread] = None
@@ -836,6 +1050,7 @@ class SubscriptionWorkerPool:
                     database_url=self.database_url,
                     http_client=self.http_client,
                     shutdown=self._shutdown,
+                    redis_url=self.redis_url,
                 )
                 worker.start()
                 worker.signal()  # wake immediately to drain anything pending
@@ -860,7 +1075,15 @@ class SubscriptionWorkerPool:
             if event.kind == "subscription_event":
                 with self._lock:
                     worker = self._workers.get(event.subscription_id)
-                if worker is not None:
+                if worker is None:
+                    continue
+                # Plan §2.9 action table: paused and deleted
+                # evict the worker; other events just signal it
+                # (the next deliver_one re-reads the row to pick
+                # up the new state).
+                if event.subscription_event_kind in ("paused", "deleted"):
+                    worker.request_eviction()
+                else:
                     worker.signal()
                 continue
             with self._lock:

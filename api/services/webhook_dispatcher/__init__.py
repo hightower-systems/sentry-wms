@@ -113,6 +113,7 @@ class WebhookDispatcher:
             self._pool = dispatch_module.SubscriptionWorkerPool(
                 database_url=database_url,
                 wake_queue=self._wake.queue,
+                redis_url=os.environ.get("REDIS_URL"),
             )
             self._pool.start()
             LOGGER.info(

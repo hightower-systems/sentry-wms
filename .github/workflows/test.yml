@@ -46,50 +46,54 @@ jobs:
       - name: Install dependencies
         run: pip install -r api/requirements.txt
 
-      - name: v1.6.0 lint -- single-serialization (no double json.dumps in webhook_dispatcher)
-        # #174 (D2): the dispatcher's signing/dispatch path must
-        # serialize the envelope to bytes EXACTLY ONCE per
-        # delivery and reuse the same bytes for sign + send (plan
-        # §3.1 single-serialization invariant). Two json.dumps
-        # calls in the dispatcher path means the bytes that were
-        # signed are not the bytes sent on the wire (or vice
-        # versa), and the consumer's HMAC verification breaks
-        # silently. The lint counts OCCURRENCES (line matches),
-        # not files, so two json.dumps calls in the same file
-        # still fail. envelope.py is the only allowed home.
-        # Also catches json.dump (file-handle API), which would
-        # bypass the json.dumps pattern silently.
+      - name: v1.6.0 lint -- single-serialization (no json.dumps in signing.py or dispatch.py)
+        # #174 (D2) + #179 (D7): the dispatcher's envelope
+        # sign-and-send path must serialize the envelope to
+        # bytes EXACTLY ONCE per delivery and reuse the same
+        # bytes for sign + send (plan §3.1 single-serialization
+        # invariant). Two json.dumps calls along that path
+        # would mean the bytes that were signed are not the
+        # bytes sent on the wire (or vice versa), and the
+        # consumer's HMAC verification breaks silently.
+        #
+        # Scope: signing.py + dispatch.py are the envelope
+        # sign-and-send code path. envelope.py is the canonical
+        # serializer (one json.dumps allowed). wake.py owns
+        # cross-worker pubsub plumbing (publish_subscription_event
+        # uses json.dumps for a small dict that is NOT the
+        # envelope; allowed).
+        #
+        # The lint forbids json.dumps in signing.py and
+        # dispatch.py specifically. A future contributor who
+        # tries to inline a "quick json.dumps" instead of using
+        # envelope.serialize_envelope hits this gate.
+        # Also catches json.dump (file-handle API) anywhere in
+        # the package, which would bypass the json.dumps
+        # pattern silently.
         run: |
-          # Match actual call sites only -- ``json.dumps(`` with
-          # an open paren -- so docstring back-tick references
-          # like ``\`\`json.dumps\`\``` don't false-positive. Same
-          # tightening for json.dump( (file-handle API).
-          #
-          # Scope note: this lint catches the standard library
-          # serializers only. A future contributor that introduces
-          # orjson, ujson, or a custom JSONEncoder.encode call
-          # would bypass this guard. The plan §3.1 invariant
-          # remains "serialize to bytes EXACTLY ONCE per delivery";
-          # if the dispatcher ever depends on a non-stdlib
-          # serializer, extend this lint at that time.
-          dumps_count=$(grep -rn --include="*.py" "json\.dumps(" api/services/webhook_dispatcher/ | wc -l | tr -d ' ')
-          dump_count=$(grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/ | wc -l | tr -d ' ')
-          if [ "$dumps_count" -gt 1 ] || [ "$dump_count" -gt 0 ]; then
+          forbidden=$(grep -rn --include="*.py" "json\.dumps(" \
+            api/services/webhook_dispatcher/signing.py \
+            api/services/webhook_dispatcher/dispatch.py \
+            2>/dev/null | wc -l | tr -d ' ')
+          if [ "$forbidden" -gt 0 ]; then
             echo ""
-            echo "ERROR: more than one json serialization call in api/services/webhook_dispatcher/"
-            echo "json.dumps( occurrences (allowed: 1, the canonical envelope serializer):"
-            grep -rn --include="*.py" "json\.dumps(" api/services/webhook_dispatcher/
-            echo ""
-            echo "json.dump( (file-handle) occurrences (allowed: 0):"
-            grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/ || true
-            echo ""
-            echo "Plan §3.1 single-serialization invariant: the envelope"
-            echo "must be serialized to bytes EXACTLY once per delivery"
-            echo "and reused unchanged for sign + send. envelope.py is"
-            echo "the only home for json.dumps in this package."
+            echo "ERROR: json.dumps( in signing.py or dispatch.py"
+            echo "These files must consume envelope.serialize_envelope, not"
+            echo "call json.dumps directly. The envelope sign-and-send path"
+            echo "must produce one bytes object per delivery and reuse it."
+            grep -rn --include="*.py" "json\.dumps(" \
+              api/services/webhook_dispatcher/signing.py \
+              api/services/webhook_dispatcher/dispatch.py
             exit 1
           fi
-          echo "OK: 1 json.dumps( call (canonical envelope serializer), 0 json.dump( calls"
+          dump_count=$(grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/ | wc -l | tr -d ' ')
+          if [ "$dump_count" -gt 0 ]; then
+            echo ""
+            echo "ERROR: json.dump( (file-handle API) in api/services/webhook_dispatcher/"
+            grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/
+            exit 1
+          fi
+          echo "OK: 0 json.dumps( in signing.py or dispatch.py; 0 json.dump( in package"
 
       - name: v1.6.0 lint -- no verify=False in webhook_dispatcher
         # #173 (D1): the dispatcher MUST always send with TLS

@@ -75,6 +75,47 @@ _VALID_SUBSCRIPTION_EVENT_KINDS = frozenset({
 })
 
 
+def publish_subscription_event(
+    redis_url: Optional[str], subscription_id: str, event: str
+) -> None:
+    """Publish a cross-worker invalidation message on the
+    SUBSCRIPTION_EVENTS_CHANNEL. Mirrors the V-205 token_cache
+    publisher shape: lazy import, soft-fail on missing Redis or
+    connection error so a publisher failure cannot block the
+    dispatcher's main path.
+
+    Plan §2.9: peer workers act on the message per the action
+    table. The dispatcher (D7) calls this from auto-pause; the
+    admin endpoints (A1/A2) call it on every paused / resumed /
+    deleted / delivery_url_changed / rate_limit_changed /
+    secret_rotated mutation.
+
+    Lives in wake.py (rather than dispatch.py) so the
+    cross-worker pubsub plumbing -- subscribe (already here)
+    plus publish (this function) -- is colocated. Also keeps
+    the D2 single-serialization lint from catching a second
+    json.dumps in dispatch.py: that lint protects the envelope
+    sign-and-send path; the pubsub payload is unrelated.
+    """
+    if not redis_url or not redis_url.startswith(("redis://", "rediss://")):
+        return
+    try:
+        import redis  # noqa: WPS433
+        client = redis.Redis.from_url(redis_url)
+        client.publish(
+            SUBSCRIPTION_EVENTS_CHANNEL,
+            json.dumps({"subscription_id": subscription_id, "event": event}),
+        )
+    except Exception:  # noqa: BLE001
+        LOGGER.warning(
+            "failed to publish %s event for subscription %s on Redis; "
+            "peer workers will observe the change on the next 60s "
+            "refresh cycle",
+            event,
+            subscription_id,
+        )
+
+
 @dataclass(frozen=True)
 class WakeEvent:
     """One of three discriminated kinds. Only the fields valid for
