@@ -56,6 +56,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from . import envelope as envelope_module
+from . import retry as retry_module
 from . import signing
 
 
@@ -242,6 +243,31 @@ def _build_filter_clauses(sub_filter: Mapping[str, Any]) -> tuple[str, list]:
     return " AND " + " AND ".join(clauses), params
 
 
+def _has_non_terminal_delivery(cur, subscription_id: str) -> bool:
+    """True when the subscription has any non-terminal delivery
+    row (pending or in_flight). Used by deliver_one to enforce
+    head-of-line blocking in the presence of future-scheduled
+    retry slots: a retry slot whose scheduled_at is past NOW()
+    is matched by _select_next_pending; a retry slot whose
+    scheduled_at is still in the future is NOT, but the event
+    has not terminated and the dispatcher must back off rather
+    than pick a newer event from integration_events.
+
+    Hits the webhook_deliveries_pending_count partial index
+    from migration 030.
+    """
+    cur.execute(
+        """
+        SELECT 1 FROM webhook_deliveries
+         WHERE subscription_id = %s
+           AND status IN ('pending', 'in_flight')
+         LIMIT 1
+        """,
+        (str(subscription_id),),
+    )
+    return cur.fetchone() is not None
+
+
 def _select_next_pending(cur, subscription_id: str) -> Optional[Mapping[str, Any]]:
     """Find the oldest pending delivery for this subscription.
     Hits the ``webhook_deliveries_dispatch`` partial index from
@@ -345,6 +371,15 @@ def deliver_one(
 
     pending = _select_next_pending(cur, subscription_id)
     if pending is None:
+        # Plan §2.5 head-of-line blocking: if any non-terminal
+        # delivery row exists for this subscription (a future-
+        # scheduled retry slot from D6, or an in_flight row),
+        # back off entirely. The fresh-select must NOT pick a
+        # newer event past the cursor while a prior event is
+        # still working through its retry schedule.
+        if _has_non_terminal_delivery(cur, subscription_id):
+            conn.rollback()
+            return None
         fresh = _select_next_fresh_event(cur, subscription)
         if fresh is None:
             conn.rollback()
@@ -493,6 +528,61 @@ def deliver_one(
         if error_detail is None:
             error_detail = f"HTTP {http_status}" if http_status is not None else "no response"
 
+    # Plan §2.3 step 8: failure branch splits on attempt_number.
+    # If the failed attempt is the 8th (terminal), flip the
+    # current row directly to 'dlq' and advance the cursor;
+    # otherwise mark the current row 'failed' and INSERT a fresh
+    # retry-slot pending row scheduled at NOW() + retry_delay.
+    current_attempt = pending["attempt_number"]
+
+    if retry_module.is_terminal_attempt(current_attempt):
+        cur.execute(
+            """
+            UPDATE webhook_deliveries
+               SET status = 'dlq',
+                   completed_at = NOW(),
+                   http_status = %s,
+                   response_time_ms = %s,
+                   error_kind = %s,
+                   error_detail = %s
+             WHERE delivery_id = %s
+            """,
+            (
+                http_status,
+                elapsed_ms,
+                error_kind,
+                (error_detail or "")[:512],
+                pending["delivery_id"],
+            ),
+        )
+        # DLQ is terminal -> cursor advances per plan §1.6.
+        cur.execute(
+            """
+            UPDATE webhook_subscriptions
+               SET last_delivered_event_id = %s,
+                   updated_at = NOW()
+             WHERE subscription_id = %s
+               AND last_delivered_event_id < %s
+            """,
+            (event_row["event_id"], str(subscription_id), event_row["event_id"]),
+        )
+        conn.commit()
+        return DeliveryOutcome(
+            delivery_id=pending["delivery_id"],
+            event_id=event_row["event_id"],
+            status="dlq",
+            http_status=http_status,
+            error_kind=error_kind,
+            terminal=True,
+        )
+
+    # Non-terminal failure: flip the current row and schedule
+    # a fresh retry slot. The retry slot's scheduled_at gates
+    # _select_next_pending so the dispatcher does not pick it
+    # up before the schedule says it should.
+    next_attempt = current_attempt + 1
+    delay_s = retry_module.retry_delay(next_attempt)
+
     cur.execute(
         """
         UPDATE webhook_deliveries
@@ -511,6 +601,15 @@ def deliver_one(
             (error_detail or "")[:512],
             pending["delivery_id"],
         ),
+    )
+    cur.execute(
+        f"""
+        INSERT INTO webhook_deliveries
+            (subscription_id, event_id, attempt_number, status,
+             scheduled_at, secret_generation)
+        VALUES (%s, %s, %s, 'pending', NOW() + INTERVAL '{delay_s} seconds', 1)
+        """,
+        (str(subscription_id), event_row["event_id"], next_attempt),
     )
     conn.commit()
     return DeliveryOutcome(

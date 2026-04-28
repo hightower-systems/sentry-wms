@@ -409,11 +409,35 @@ class TestSingleSerializationRuntimeAssertion:
 
 
 class TestHeadOfLineBlocking:
-    def test_failed_first_event_blocks_second(self):
+    def test_failed_first_event_blocks_second(self, monkeypatch):
         """Plan §2.5: a stuck event blocks newer events on the
-        same subscription. After a 500 on event A, deliver_one
-        retries A first (the pending row is still there) and
-        does NOT proceed to event B until A terminates."""
+        same subscription.
+
+        D6 changed the failure-branch semantics from "mark
+        failed and stop" to "mark failed and INSERT a fresh
+        retry slot scheduled at NOW() + retry_delay." The HOL
+        invariant is now enforced via two gates:
+        _select_next_pending matches only rows whose
+        scheduled_at <= NOW() (so a future-scheduled retry slot
+        is invisible until its time comes), and
+        _has_non_terminal_delivery makes deliver_one back off
+        from the fresh-event select while any non-terminal row
+        exists.
+
+        Patch RETRY_SCHEDULE_SECONDS to all-zero so the test
+        does not need to wait wall-clock seconds; the
+        invariant under test is "newer event waits for older
+        event to terminate," not the schedule's exact values
+        (which D6's own tests cover).
+        """
+        from services.webhook_dispatcher import retry as retry_mod
+
+        monkeypatch.setattr(
+            retry_mod,
+            "RETRY_SCHEDULE_SECONDS",
+            (0, 0, 0, 0, 0, 0, 0, 0),
+        )
+
         sub_id, _plaintext, cleanup = _make_subscription()
         emitted = []
         try:
@@ -430,25 +454,24 @@ class TestHeadOfLineBlocking:
                 assert first.event_id == e1
                 assert first.status == "failed"
 
-                # Second call -- the failed row's event_id is e1
-                # again because deliver_one only marks 'failed';
-                # D6 will spawn a retry slot. For D5 the cursor
-                # is still at 0 and the next call will re-pick
-                # event e1 (no pending row, fresh select returns
-                # e1 because it's > cursor) and INSERT a new row
-                # for it. This is the HOL invariant: e2 cannot
-                # be delivered until e1 terminates.
+                # Second call -- D6 inserted a retry slot
+                # (attempt 2) at NOW() + 0s; deliver_one picks
+                # it up. The retry slot is for e1, NOT e2: HOL
+                # blocking is preserved by
+                # _has_non_terminal_delivery refusing to pick
+                # e2 from integration_events while e1's retry
+                # slot is still alive.
                 second = dispatch_module.deliver_one(conn, sub_id, stub)
                 assert second is not None
                 assert second.event_id == e1, (
                     "head-of-line blocking: e2 must not be delivered "
-                    "until e1 reaches a terminal state (succeeded or dlq)"
+                    "until e1 reaches a terminal state"
                 )
                 assert second.status == "succeeded"
 
                 third = dispatch_module.deliver_one(conn, sub_id, stub)
                 assert third is not None
-                assert third.event_id == e2  # now e1 is terminal, so e2 picks up
+                assert third.event_id == e2  # e1 terminal now, e2 picks up
                 assert third.status == "succeeded"
             finally:
                 conn.close()
