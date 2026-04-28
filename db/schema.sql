@@ -922,3 +922,65 @@ CREATE TABLE webhook_secrets (
     CONSTRAINT webhook_secrets_generation_range
         CHECK (generation IN (1, 2))
 );
+
+-- ============================================================
+-- WEBHOOK DELIVERIES (v1.6.0 outbound push, per-attempt log)
+-- ============================================================
+-- Append-only with one exception: the terminal `dlq` transition
+-- flips the row that was last `in_flight` rather than inserting
+-- a fresh row, so an event that retried N times before
+-- terminating leaves N+1 rows. Cursor advances strictly on
+-- terminal state (`succeeded` or `dlq`), never on in-progress.
+--
+-- subscription_id FK is ON DELETE RESTRICT (not CASCADE) so
+-- delivery history outlives soft-delete and is retained for
+-- forensics; hard delete requires `?purge=true` plus no
+-- pending/in_flight rows. event_id has no FK because
+-- integration_events partitions in v2.1 and logical integrity
+-- is sufficient given the cursor-based contract.
+--
+-- attempt_number BETWEEN 1 AND 8 matches the hard-coded retry
+-- schedule [1s, 4s, 15s, 60s, 5m, 30m, 2h, 12h]. status enum
+-- is CHECKed; error_kind is not (enum grows with consumer
+-- feedback in v1.6.x).
+--
+-- Four indexes are each pinned to a specific dispatcher or
+-- admin query path; storing response_body_hash (sha256 hex)
+-- instead of full bodies keeps the table small under fan-out.
+--
+-- The identical DDL lives in db/migrations/030_webhook_deliveries.sql.
+CREATE TABLE webhook_deliveries (
+    delivery_id          BIGSERIAL    PRIMARY KEY,
+    subscription_id      UUID         NOT NULL REFERENCES webhook_subscriptions(subscription_id) ON DELETE RESTRICT,
+    event_id             BIGINT       NOT NULL,
+    attempt_number       SMALLINT     NOT NULL,
+    status               VARCHAR(16)  NOT NULL,
+    scheduled_at         TIMESTAMPTZ  NOT NULL,
+    attempted_at         TIMESTAMPTZ,
+    completed_at         TIMESTAMPTZ,
+    http_status          SMALLINT,
+    response_body_hash   CHAR(64),
+    response_time_ms     INTEGER,
+    error_kind           VARCHAR(32),
+    error_detail         VARCHAR(512),
+    secret_generation    SMALLINT     NOT NULL,
+    CONSTRAINT webhook_deliveries_attempt_number_range
+        CHECK (attempt_number BETWEEN 1 AND 8),
+    CONSTRAINT webhook_deliveries_status_enum
+        CHECK (status IN ('pending', 'in_flight', 'succeeded', 'failed', 'dlq'))
+);
+
+CREATE INDEX webhook_deliveries_dispatch
+    ON webhook_deliveries (subscription_id, scheduled_at)
+    WHERE status = 'pending';
+
+CREATE INDEX webhook_deliveries_latest
+    ON webhook_deliveries (subscription_id, event_id, delivery_id DESC);
+
+CREATE INDEX webhook_deliveries_dlq
+    ON webhook_deliveries (subscription_id, completed_at)
+    WHERE status = 'dlq';
+
+CREATE INDEX webhook_deliveries_pending_count
+    ON webhook_deliveries (subscription_id)
+    WHERE status IN ('pending', 'in_flight');
