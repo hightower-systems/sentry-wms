@@ -984,3 +984,134 @@ CREATE INDEX webhook_deliveries_dlq
 CREATE INDEX webhook_deliveries_pending_count
     ON webhook_deliveries (subscription_id)
     WHERE status IN ('pending', 'in_flight');
+
+-- ============================================================
+-- WEBHOOK AUDIT TRIGGERS (v1.6.0 forensic instrumentation;
+-- mirrors V-157 wms_tokens_audit shape)
+-- ============================================================
+-- DELETE / TRUNCATE forensic shadows for webhook_subscriptions
+-- and webhook_secrets, landing at the same time as the source
+-- tables (not after an incident, as wms_tokens_audit did).
+--
+-- Triggers are statement-level so a wipe-the-world DELETE
+-- produces exactly one audit row. The transition-tables feature
+-- (REFERENCING OLD TABLE AS deleted_rows) lets the DELETE
+-- trigger COUNT affected rows. TRUNCATE does not expose a
+-- transition table, so rows_affected is NULL on TRUNCATE events.
+-- Each row captures session_user / current_user / backend_pid /
+-- application_name / clock_timestamp so an incident is bindable
+-- to a specific role + backend.
+--
+-- The two source tables get separate audit tables (not one
+-- shared table) so a future column addition on either does not
+-- couple the schemas.
+--
+-- The identical DDL lives in db/migrations/032_webhook_audit_triggers.sql.
+
+CREATE TABLE webhook_subscriptions_audit (
+    audit_id          BIGSERIAL    PRIMARY KEY,
+    event_type        VARCHAR(16)  NOT NULL,
+    rows_affected     INTEGER,
+    sess_user         TEXT         NOT NULL,
+    curr_user         TEXT         NOT NULL,
+    backend_pid       INTEGER      NOT NULL,
+    application_name  TEXT,
+    event_at          TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX webhook_subscriptions_audit_event_at
+    ON webhook_subscriptions_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION webhook_subscriptions_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO webhook_subscriptions_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_subscriptions_audit_delete
+    AFTER DELETE ON webhook_subscriptions
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_subscriptions_audit_delete();
+
+CREATE OR REPLACE FUNCTION webhook_subscriptions_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO webhook_subscriptions_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_subscriptions_audit_truncate
+    AFTER TRUNCATE ON webhook_subscriptions
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_subscriptions_audit_truncate();
+
+CREATE TABLE webhook_secrets_audit (
+    audit_id          BIGSERIAL    PRIMARY KEY,
+    event_type        VARCHAR(16)  NOT NULL,
+    rows_affected     INTEGER,
+    sess_user         TEXT         NOT NULL,
+    curr_user         TEXT         NOT NULL,
+    backend_pid       INTEGER      NOT NULL,
+    application_name  TEXT,
+    event_at          TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX webhook_secrets_audit_event_at
+    ON webhook_secrets_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION webhook_secrets_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO webhook_secrets_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_secrets_audit_delete
+    AFTER DELETE ON webhook_secrets
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_delete();
+
+CREATE OR REPLACE FUNCTION webhook_secrets_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO webhook_secrets_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_secrets_audit_truncate
+    AFTER TRUNCATE ON webhook_secrets
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_truncate();
