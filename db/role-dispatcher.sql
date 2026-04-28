@@ -68,7 +68,15 @@
 -- Idempotent: safe to re-run. Both \gexec branches are predicated
 -- on pg_roles existence so re-runs only ALTER (which carries the
 -- new password); the GRANTs are themselves idempotent.
+--
+-- ON_ERROR_STOP discipline: the V-214 #170 regression on the
+-- snapshot-keeper sibling shipped because psql exited 0 despite
+-- a cascade of role-creation failures. Setting ON_ERROR_STOP at
+-- the top of every operator-run script means a future failure
+-- exits non-zero and deployment automation flags the step.
 -- ============================================================
+
+\set ON_ERROR_STOP on
 
 -- Branch 1: CREATE ROLE on first run.
 SELECT format('CREATE ROLE sentry_dispatcher LOGIN PASSWORD %L',
