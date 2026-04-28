@@ -1115,3 +1115,40 @@ $$;
 CREATE TRIGGER tr_webhook_secrets_audit_truncate
     AFTER TRUNCATE ON webhook_secrets
     FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_truncate();
+
+-- ============================================================
+-- WEBHOOK SUBSCRIPTIONS TOMBSTONES (v1.6.0 URL-reuse gate)
+-- ============================================================
+-- Per-deletion history that backs the URL-reuse acknowledgement
+-- gate on the admin webhook create endpoint. Hard-delete writes
+-- a tombstone; a subsequent CREATE under the same delivery_url
+-- with an unacknowledged tombstone is refused 409
+-- url_reuse_unacknowledged unless the request body carries
+-- acknowledge_url_reuse: true (which stamps acknowledged_at +
+-- acknowledged_by on every matching tombstone).
+--
+-- Tombstones are forensic history and are never deleted. The
+-- partial index covers only unacknowledged tombstones so the
+-- URL-reuse query stays fast as the table accumulates
+-- acknowledged rows.
+--
+-- subscription_id has no FK because the source row no longer
+-- exists by the time the tombstone is written. deleted_by is
+-- NOT NULL because the admin endpoint always runs under cookie
+-- auth; acknowledged_by is nullable until the gate is cleared.
+--
+-- The identical DDL lives in db/migrations/033_webhook_subscriptions_tombstones.sql.
+CREATE TABLE webhook_subscriptions_tombstones (
+    tombstone_id            BIGSERIAL    PRIMARY KEY,
+    subscription_id         UUID         NOT NULL,
+    delivery_url_at_delete  TEXT         NOT NULL,
+    connector_id            VARCHAR(64)  NOT NULL,
+    deleted_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_by              INTEGER      NOT NULL REFERENCES users(user_id),
+    acknowledged_at         TIMESTAMPTZ,
+    acknowledged_by         INTEGER      REFERENCES users(user_id)
+);
+
+CREATE INDEX webhook_subscriptions_tombstones_url_unack
+    ON webhook_subscriptions_tombstones (delivery_url_at_delete)
+    WHERE acknowledged_at IS NULL;
