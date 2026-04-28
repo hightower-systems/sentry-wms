@@ -618,13 +618,10 @@ class TestPausedSubscriptionSkipped:
 
 class TestErrorClassification:
     def test_timeout_exception_classifies_as_timeout(self):
-        class FakeTimeout(Exception):
-            pass
-
-        # Naming matters: _classify_request_exception inspects
-        # type name. Use a class whose name lowercases to contain
-        # "timeout".
-        FakeTimeout.__name__ = "ReadTimeout"
+        """D8 classifies via isinstance check against
+        requests.exceptions.Timeout (replaces the D5 name-
+        substring heuristic). Tests must raise a real Timeout."""
+        import requests
 
         sub_id, _plaintext, cleanup = _make_subscription()
         emitted = []
@@ -633,7 +630,9 @@ class TestErrorClassification:
             emitted.append(e1)
             _wait_for_visible(e1)
 
-            stub = StubHttpClient(exception=FakeTimeout("read timed out"))
+            stub = StubHttpClient(
+                exception=requests.exceptions.Timeout("read timed out")
+            )
             conn = _conn()
             try:
                 outcome = dispatch_module.deliver_one(conn, sub_id, stub)

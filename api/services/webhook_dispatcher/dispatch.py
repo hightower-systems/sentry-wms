@@ -90,18 +90,20 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from . import envelope as envelope_module
+from . import http_client as http_client_module
 from . import retry as retry_module
 from . import signing
 from . import wake as wake_module
 
+# Re-export for backwards-compatibility with tests/imports that
+# referenced the D5 in-dispatch HttpClient placeholder. D8 moved
+# the implementation to http_client.py.
+HttpClient = http_client_module.HttpClient
+HttpResponse = http_client_module.HttpResponse
+
 
 LOGGER = logging.getLogger("webhook_dispatcher.dispatch")
 
-
-# Default HTTP timeout for the placeholder client. D8 will pull
-# this from DISPATCHER_HTTP_TIMEOUT_MS via env_validator.int_var
-# and replace the placeholder with a real Session factory.
-_DEFAULT_HTTP_TIMEOUT_S = 10.0
 
 # Visible-at gate matches plan §1.6: events less than 2s old are
 # considered in-flight (transaction may not have committed across
@@ -130,94 +132,8 @@ class DeliveryOutcome:
     terminal: bool
 
 
-# ---------------------------------------------------------------------
-# HTTP client (placeholder; D8 replaces)
-# ---------------------------------------------------------------------
-
-
-class HttpClient:
-    """Placeholder synchronous HTTP client. D8 replaces this with
-    a full ``requests.Session`` factory + connection pool +
-    error-kind classification + ``allow_redirects=False``.
-
-    The ``send`` method takes a pre-built body bytes object
-    explicitly (rather than the envelope dict) because the
-    runtime ``request_body == signed_body`` assertion lives at
-    THIS boundary -- the caller serializes + signs once, hands
-    the bytes here, and the assertion fires inside :meth:`send`
-    if the bytes were transformed in flight.
-    """
-
-    def __init__(self, timeout_s: float = _DEFAULT_HTTP_TIMEOUT_S):
-        self.timeout_s = timeout_s
-
-    def send(
-        self,
-        url: str,
-        body: bytes,
-        signature: str,
-        timestamp: int,
-        secret_generation: int,
-        event_type: str,
-        event_id: int,
-        signed_body_for_assertion: bytes,
-    ) -> "HttpResponse":
-        """Send ``body`` to ``url`` with the v1.6.0 signature
-        headers. Returns :class:`HttpResponse` with status_code
-        and (truncated) error detail; raises HTTP-related
-        exceptions for the caller to classify.
-
-        Plan §3.1 single-serialization runtime assertion: the
-        bytes the HTTP layer is about to send MUST equal the
-        bytes that were signed. ``signed_body_for_assertion``
-        is the value produced by signing.sign_request().body;
-        if it ever differs from ``body`` here, a refactor has
-        introduced a transformation between sign and send and
-        the assertion catches it before the HTTP layer goes
-        live with mismatched bytes.
-        """
-        assert body is signed_body_for_assertion or body == signed_body_for_assertion, (
-            "single-serialization invariant violated: the bytes about to be "
-            "POSTed do not match the bytes that were signed. A refactor "
-            "introduced a transformation between sign and send."
-        )
-
-        # Localised import keeps this module cheap to load when
-        # tests stub the HTTP client out via dependency injection.
-        import requests  # noqa: WPS433
-
-        headers = {
-            "Content-Type": "application/json",
-            "X-Sentry-Signature": signature,
-            "X-Sentry-Signature-Generation": str(secret_generation),
-            "X-Sentry-Delivery-Id": f"{event_id}:{timestamp}",
-            "X-Sentry-Event-Type": event_type,
-            "X-Sentry-Timestamp": str(timestamp),
-        }
-
-        # verify=True is the v1.6.0 invariant; the CI lint added
-        # in D1 enforces no disabled-TLS-verification keyword
-        # argument anywhere under api/services/webhook_dispatcher/.
-        response = requests.post(
-            url,
-            data=body,
-            headers=headers,
-            timeout=self.timeout_s,
-            verify=True,
-            allow_redirects=False,
-        )
-        return HttpResponse(
-            status_code=response.status_code,
-            error_kind=None,
-            error_detail=None,
-        )
-
-
-@dataclass(frozen=True)
-class HttpResponse:
-    status_code: Optional[int]
-    error_kind: Optional[str]
-    error_detail: Optional[str]
+# HttpClient + HttpResponse moved to http_client.py in D8.
+# Re-exported above for backwards compatibility.
 
 
 # ---------------------------------------------------------------------
@@ -460,19 +376,12 @@ def _select_next_fresh_event(
 
 
 def _classify_request_exception(exc: Exception) -> tuple[str, str]:
-    """Map a Python exception from the placeholder HTTP client
-    to (error_kind, error_detail). D8 expands the mapping to
-    cover the full requests/urllib3 exception hierarchy; D5
-    handles the basic shapes that the test suite exercises."""
-    detail = (str(exc) or type(exc).__name__)[:512]
-    name = type(exc).__name__.lower()
-    if "timeout" in name:
-        return "timeout", detail
-    if "ssl" in name or "tls" in name:
-        return "tls", detail
-    if "connect" in name:
-        return "connection", detail
-    return "unknown", detail
+    """D5 placeholder retained for tests that pre-date D8.
+    Production code path uses
+    :func:`http_client.classify_exception` via HttpClient.send;
+    deliver_one's catch path here only fires when a stub
+    raises directly without producing an HttpResponse."""
+    return http_client_module.classify_exception(exc)
 
 
 def deliver_one(
