@@ -36,9 +36,9 @@ import os
 import signal
 import sys
 import time
-from queue import Empty
 from typing import Optional
 
+from . import dispatch as dispatch_module
 from . import env_validator
 from . import wake as wake_module
 
@@ -70,6 +70,7 @@ class WebhookDispatcher:
         self._shutdown = False
         self._last_heartbeat_monotonic = 0.0
         self._wake: Optional[wake_module.WakeOrchestrator] = None
+        self._pool: Optional[dispatch_module.SubscriptionWorkerPool] = None
 
     @property
     def enabled(self) -> bool:
@@ -98,67 +99,56 @@ class WebhookDispatcher:
                 "Set DISPATCHER_ENABLED=true (or unset) and restart to resume."
             )
         else:
+            database_url = os.environ.get(
+                "DISPATCHER_DATABASE_URL"
+            ) or os.environ["DATABASE_URL"]
             self._wake = wake_module.WakeOrchestrator(
-                database_url=os.environ.get(
-                    "DISPATCHER_DATABASE_URL"
-                ) or os.environ["DATABASE_URL"],
+                database_url=database_url,
                 redis_url=os.environ.get("REDIS_URL"),
                 fallback_poll_ms=env_validator.int_var(
                     "DISPATCHER_FALLBACK_POLL_MS"
                 ),
             )
             self._wake.start()
+            self._pool = dispatch_module.SubscriptionWorkerPool(
+                database_url=database_url,
+                wake_queue=self._wake.queue,
+            )
+            self._pool.start()
             LOGGER.info(
-                "webhook-dispatcher started (heartbeat=%s); D3 wake threads "
-                "running (LISTEN+poll+pubsub). D5 will fill in the dispatch "
-                "loop body that drains the queue.",
+                "webhook-dispatcher started (heartbeat=%s); D5 dispatch loop "
+                "running (per-subscription workers + fanout from wake queue).",
                 self.heartbeat_file,
             )
 
         try:
             while not self._shutdown:
                 self._write_heartbeat()
-                self._drain_wake_queue_for_diagnostics()
-                # D5 will replace this sleep with the per-subscription
-                # delivery loop. For D3 the daemon writes a heartbeat
-                # and DEBUG-logs each wake event, then sleeps. The
-                # short sleep is intentional: the queue may grow
-                # under heavy traffic until D5 drains it for real,
-                # and a 1s loop limits the worst-case backlog growth
-                # window during the D3-only branch state.
+                # The wake orchestrator and the worker pool run
+                # in their own threads; the main loop just keeps
+                # the heartbeat file fresh and the daemon
+                # responsive to SIGTERM. D6/D7 will adjust the
+                # pool's per-subscription state from this loop
+                # (auto-pause cleanup, retry-slot rescheduling
+                # nudges); D5 leaves it minimal.
                 time.sleep(1.0)
         finally:
-            if self._wake is not None:
-                drain_s = float(env_validator.int_var(
-                    "DISPATCHER_SHUTDOWN_DRAIN_S"
-                ))
+            drain_s = float(env_validator.int_var(
+                "DISPATCHER_SHUTDOWN_DRAIN_S"
+            ))
+            if self._pool is not None:
                 LOGGER.info(
-                    "webhook-dispatcher shutting down wake threads "
+                    "webhook-dispatcher shutting down worker pool "
                     "(drain timeout %.1fs)",
                     drain_s,
                 )
+                self._pool.shutdown()
+                self._pool.join(timeout_s=drain_s)
+            if self._wake is not None:
+                LOGGER.info("webhook-dispatcher shutting down wake threads")
                 self._wake.shutdown()
                 self._wake.join(timeout_s=drain_s)
             LOGGER.info("webhook-dispatcher exiting")
-
-    def _drain_wake_queue_for_diagnostics(self) -> None:
-        """D3-only: pull every available wake event off the queue
-        and log it at DEBUG. Without this drain the queue would
-        grow unbounded between heartbeat ticks because no consumer
-        exists yet (D5 will replace this method with the real
-        per-subscription delivery loop).
-
-        Non-blocking: pulls until the queue is empty, then returns
-        so the heartbeat loop can write its file and sleep.
-        """
-        if self._wake is None:
-            return
-        while True:
-            try:
-                event = self._wake.queue.get_nowait()
-            except Empty:
-                return
-            LOGGER.debug("wake event (D3 drain, no-op): %r", event)
 
     def _install_signal_handlers(self):
         signal.signal(signal.SIGTERM, lambda *_a: self._request_shutdown("SIGTERM"))

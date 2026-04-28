@@ -147,13 +147,24 @@ class SecretMaterial:
         return self._plaintext
 
 
+def _row_value(row, position: int, key: str):
+    """Read a column from a row that may be either a tuple (the
+    default psycopg2 cursor shape) or a RealDictRow (used by
+    dispatch.deliver_one). Tries key access first; falls back
+    to positional. Decouples the signer from the caller's
+    cursor type."""
+    if hasattr(row, "keys") and key in row.keys():
+        return row[key]
+    return row[position]
+
+
 def load_secret_for_signing(cur, subscription_id: str) -> SecretMaterial:
     """Load and decrypt the primary (generation=1) secret for a
     subscription. Raises RuntimeError if no primary secret exists.
 
     The cursor is the caller's responsibility (transaction scope,
     connection pooling, etc.); this function does not commit or
-    rollback.
+    rollback. Works with both default cursors and RealDictCursor.
     """
     cur.execute(
         "SELECT secret_ciphertext FROM webhook_secrets "
@@ -166,7 +177,7 @@ def load_secret_for_signing(cur, subscription_id: str) -> SecretMaterial:
             f"no primary (generation=1) secret found for subscription "
             f"{subscription_id}; the dispatcher cannot sign without one"
         )
-    ciphertext = bytes(row[0])
+    ciphertext = bytes(_row_value(row, 0, "secret_ciphertext"))
     plaintext = _decrypt(ciphertext)
     return SecretMaterial(plaintext, generation=1)
 
@@ -185,10 +196,13 @@ def load_all_active_secrets(cur, subscription_id: str) -> List[SecretMaterial]:
         "ORDER BY generation",
         (str(subscription_id),),
     )
-    return [
-        SecretMaterial(_decrypt(bytes(ciphertext)), generation=int(generation))
-        for generation, ciphertext in cur.fetchall()
-    ]
+    rows = cur.fetchall()
+    out: List[SecretMaterial] = []
+    for row in rows:
+        generation = int(_row_value(row, 0, "generation"))
+        ciphertext = bytes(_row_value(row, 1, "secret_ciphertext"))
+        out.append(SecretMaterial(_decrypt(ciphertext), generation=generation))
+    return out
 
 
 def compute_signature(timestamp: int, body: bytes, secret: SecretMaterial) -> str:
