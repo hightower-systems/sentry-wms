@@ -21,6 +21,7 @@ tombstone gate pattern from v1.5.1.
 
 import os
 import secrets
+import uuid
 from urllib.parse import urlparse
 
 from flask import g, jsonify, request
@@ -40,6 +41,81 @@ from utils.validation import validate_body
 
 
 _KNOWN_EVENT_TYPES = {entry[0] for entry in V150_CATALOG}
+
+
+def _row_to_listing(row, stats: dict) -> dict:
+    """Serialize a webhook_subscriptions row plus its stats block
+    for the admin list / detail endpoints. No plaintext secret
+    material."""
+    sub_filter = row.subscription_filter
+    if sub_filter is None:
+        sub_filter = {}
+    return {
+        "subscription_id": str(row.subscription_id),
+        "connector_id": row.connector_id,
+        "display_name": row.display_name,
+        "delivery_url": row.delivery_url,
+        "subscription_filter": sub_filter,
+        "status": row.status,
+        "pause_reason": row.pause_reason,
+        "rate_limit_per_second": row.rate_limit_per_second,
+        "pending_ceiling": row.pending_ceiling,
+        "dlq_ceiling": row.dlq_ceiling,
+        "last_delivered_event_id": row.last_delivered_event_id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "stats": stats,
+    }
+
+
+_STATS_QUERY = text(
+    """
+    SELECT
+        COUNT(*) FILTER (
+            WHERE attempted_at >= NOW() - INTERVAL '24 hours'
+        ) AS attempts_24h,
+        COUNT(*) FILTER (
+            WHERE attempted_at >= NOW() - INTERVAL '24 hours'
+              AND status = 'succeeded'
+        ) AS succeeded_24h,
+        COUNT(*) FILTER (
+            WHERE attempted_at >= NOW() - INTERVAL '24 hours'
+              AND status = 'failed'
+        ) AS failed_24h,
+        COUNT(*) FILTER (
+            WHERE attempted_at >= NOW() - INTERVAL '24 hours'
+              AND status = 'dlq'
+        ) AS dlq_24h,
+        COUNT(*) FILTER (
+            WHERE status IN ('pending', 'in_flight')
+        ) AS pending_count
+      FROM webhook_deliveries
+     WHERE subscription_id = :sid
+    """
+)
+
+
+def _stats_for(subscription_id: str) -> dict:
+    row = g.db.execute(_STATS_QUERY, {"sid": subscription_id}).fetchone()
+    attempts = int(row.attempts_24h or 0)
+    succeeded = int(row.succeeded_24h or 0)
+    success_rate = (succeeded / attempts) if attempts else None
+    return {
+        "attempts_24h": attempts,
+        "succeeded_24h": succeeded,
+        "failed_24h": int(row.failed_24h or 0),
+        "dlq_24h": int(row.dlq_24h or 0),
+        "success_rate_24h": success_rate,
+        "pending_count": int(row.pending_count or 0),
+    }
+
+
+_LIST_FIELDS = """
+    subscription_id, connector_id, display_name, delivery_url,
+    subscription_filter, status, pause_reason, rate_limit_per_second,
+    pending_ceiling, dlq_ceiling, last_delivered_event_id,
+    created_at, updated_at
+"""
 
 
 def _http_webhooks_allowed() -> bool:
@@ -290,3 +366,54 @@ def create_webhook(validated):
         ),
         201,
     )
+
+
+@admin_bp.route("/webhooks", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def list_webhooks():
+    """List every webhook subscription with a 24h stats rollup."""
+    rows = g.db.execute(
+        text(
+            f"""
+            SELECT {_LIST_FIELDS}
+              FROM webhook_subscriptions
+             ORDER BY created_at DESC
+            """
+        )
+    ).fetchall()
+    return jsonify(
+        {
+            "webhooks": [
+                _row_to_listing(row, _stats_for(str(row.subscription_id)))
+                for row in rows
+            ]
+        }
+    )
+
+
+@admin_bp.route("/webhooks/<subscription_id>", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def get_webhook(subscription_id):
+    """Detail view for a single webhook subscription."""
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    row = g.db.execute(
+        text(
+            f"""
+            SELECT {_LIST_FIELDS}
+              FROM webhook_subscriptions
+             WHERE subscription_id = :sid
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+    return jsonify(_row_to_listing(row, _stats_for(subscription_id)))
