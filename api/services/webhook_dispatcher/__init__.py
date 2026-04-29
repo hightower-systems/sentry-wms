@@ -102,6 +102,26 @@ class WebhookDispatcher:
             database_url = os.environ.get(
                 "DISPATCHER_DATABASE_URL"
             ) or os.environ["DATABASE_URL"]
+            # Crash recovery: any webhook_deliveries row left in
+            # ``in_flight`` at boot is by definition orphaned (the
+            # dispatcher is the sole writer) and must be retried.
+            try:
+                reset_count = dispatch_module.reset_orphaned_in_flight(database_url)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.error(
+                    "failed to reset orphaned in_flight rows on boot: %s; "
+                    "continuing -- dispatch will pick up pending rows but "
+                    "any stuck in_flight rows will not retry until the next "
+                    "successful boot",
+                    exc,
+                )
+            else:
+                if reset_count:
+                    LOGGER.info(
+                        "boot recovery: reset %d orphaned in_flight row(s) "
+                        "to pending",
+                        reset_count,
+                    )
             self._wake = wake_module.WakeOrchestrator(
                 database_url=database_url,
                 redis_url=os.environ.get("REDIS_URL"),

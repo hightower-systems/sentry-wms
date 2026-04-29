@@ -722,6 +722,35 @@ def deliver_one(
 # ---------------------------------------------------------------------
 
 
+def reset_orphaned_in_flight(database_url: str) -> int:
+    """Flip every webhook_deliveries row stuck in ``in_flight`` back
+    to ``pending`` with ``scheduled_at=NOW()``. Called on dispatcher
+    boot. The dispatcher is the sole writer of these rows; an
+    ``in_flight`` row at boot can only mean the prior process exited
+    mid-POST, so the row is orphaned and must be retried. No
+    age-threshold heuristic.
+
+    Returns the number of rows reset so the caller can log it.
+    """
+    conn = psycopg2.connect(database_url)
+    try:
+        conn.autocommit = False
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE webhook_deliveries
+               SET status = 'pending',
+                   scheduled_at = NOW()
+             WHERE status = 'in_flight'
+            """
+        )
+        count = cur.rowcount
+        conn.commit()
+        return count
+    finally:
+        conn.close()
+
+
 class SubscriptionWorker(threading.Thread):
     """One worker per active subscription. Drains its
     per-subscription wake signal and calls :func:`deliver_one`
@@ -931,14 +960,31 @@ class SubscriptionWorkerPool:
                 thread.join(timeout=timeout_s)
         with self._lock:
             workers = list(self._workers.values())
+        survivors = 0
         for worker in workers:
             worker.join(timeout=timeout_s)
             if worker.is_alive():
+                survivors += 1
                 LOGGER.warning(
                     "worker %s did not exit within %.1fs",
                     worker.name,
                     timeout_s,
                 )
+        if survivors:
+            LOGGER.warning(
+                "shutdown drain timed out: %d worker(s) still in flight; "
+                "process will exit and abandon them (threads are daemon=True). "
+                "On the next boot the orphaned in_flight rows are reset to "
+                "pending unconditionally.",
+                survivors,
+            )
+        # Tear down the shared HTTP session once, after workers are
+        # guaranteed not to be calling send() concurrently. close()
+        # is idempotent so a double-shutdown path is safe.
+        try:
+            self.http_client.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _refresh_active_subscriptions(self) -> None:
         """Pull the list of active subscriptions; spawn workers
