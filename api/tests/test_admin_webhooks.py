@@ -30,6 +30,12 @@ def _ensure_internal_webhook_opt_out(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _ensure_test_connector():
+    """Stage the connector row inside the per-test SQLAlchemy
+    transaction so the outer rollback cleans it up. A raw
+    ``conn.commit()`` here would escape the fixture's transaction
+    and leak rows across test modules; in a full-suite run that
+    surfaces as cross-module pollution (later tests see leftover
+    integration_events with cursor=0 subscriptions)."""
     conn = get_raw_connection()
     cur = conn.cursor()
     cur.execute(
@@ -37,7 +43,6 @@ def _ensure_test_connector():
         "VALUES (%s, %s) ON CONFLICT (connector_id) DO NOTHING",
         ("test-conn-webhook", "test connector"),
     )
-    conn.commit()
     cur.close()
 
 
@@ -288,7 +293,6 @@ class TestUrlReuseTombstone:
     def _seed_tombstone(self, delivery_url: str) -> int:
         conn = get_raw_connection()
         cur = conn.cursor()
-        cur.execute("SELECT subscription_id FROM webhook_subscriptions LIMIT 1")
         cur.execute(
             "INSERT INTO webhook_subscriptions_tombstones "
             "(subscription_id, delivery_url_at_delete, connector_id, deleted_by) "
@@ -296,7 +300,6 @@ class TestUrlReuseTombstone:
             (str(uuid.uuid4()), delivery_url, "test-conn-webhook", 1),
         )
         tombstone_id = cur.fetchone()[0]
-        conn.commit()
         cur.close()
         return tombstone_id
 
@@ -421,7 +424,6 @@ class TestList:
             "VALUES (%s, %s, 1, 'pending', NOW(), 1)",
             (sub_id, event_id),
         )
-        conn.commit()
         cur.close()
 
         resp = client.get(
