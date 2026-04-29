@@ -25,6 +25,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from . import ssrf_guard
+
 
 LOGGER = logging.getLogger("webhook_dispatcher.http_client")
 
@@ -155,6 +157,15 @@ class HttpClient:
             "single-serialization invariant violated: the bytes about to be "
             "POSTed do not match the bytes that were signed."
         )
+
+        try:
+            ssrf_guard.assert_url_safe(url)
+        except ssrf_guard.SsrfRejected as exc:
+            return HttpResponse(
+                status_code=None,
+                error_kind="ssrf_rejected",
+                error_detail=str(exc)[:512],
+            )
 
         import requests  # noqa: WPS433
 

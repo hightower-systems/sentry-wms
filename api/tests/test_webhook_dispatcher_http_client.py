@@ -21,6 +21,12 @@ os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432
 os.environ.setdefault("JWT_SECRET", "NEVER_USE_THIS_IN_PRODUCTION_32!")
 os.environ.setdefault("SENTRY_ENCRYPTION_KEY", "t5hPIEVn_O41qfiMqAiPEnwzQh68o3Es46YfSOBvEK8=")
 os.environ.setdefault("SENTRY_TOKEN_PEPPER", "NEVER_USE_THIS_PEPPER_IN_PRODUCTION")
+# These tests exercise the HTTP client against in-process servers
+# bound to 127.0.0.1. The dispatch-time SSRF guard rejects loopback
+# by design; enable the dev/CI opt-out for the duration of this
+# module so the network behavior under test is reachable. The
+# SSRF guard itself is exercised in test_webhook_dispatcher_ssrf_guard.
+os.environ["SENTRY_ALLOW_INTERNAL_WEBHOOKS"] = "true"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 

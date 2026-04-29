@@ -764,6 +764,7 @@ class SubscriptionWorker(threading.Thread):
         http_client: HttpClient,
         shutdown: threading.Event,
         redis_url: Optional[str] = None,
+        owns_http_client: bool = False,
     ):
         super().__init__(
             daemon=True,
@@ -778,6 +779,11 @@ class SubscriptionWorker(threading.Thread):
         self._evicted = threading.Event()
         self._conn = None  # populated in run() so request_eviction can close
         self._rate_bucket: Optional[rate_limiter_module.TokenBucket] = None
+        # When the pool spawned this worker via its HTTP client
+        # factory, the worker owns the client and is responsible
+        # for tearing it down on exit. When a shared client was
+        # injected (test path), the pool closes it in join().
+        self._owns_http_client = owns_http_client
 
     def _acquire_rate_token(self, rate: int) -> bool:
         if self._rate_bucket is None:
@@ -789,6 +795,19 @@ class SubscriptionWorker(threading.Thread):
         # past a shutdown signal indefinitely; the shutdown event
         # also short-circuits the wait.
         return self._rate_bucket.acquire(timeout_s=60.0, shutdown=self._shutdown)
+
+    def refresh_session(self) -> None:
+        """Tear down the worker's HTTP session. Called by the pool
+        fanout on ``delivery_url_changed`` events so the next
+        dispatch resolves DNS fresh against the (possibly new)
+        host and reopens the TLS connection. Safe on a stub
+        client that does not implement close()."""
+        close = getattr(self.http_client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def signal(self) -> None:
         self._wake.set()
@@ -888,6 +907,13 @@ class SubscriptionWorker(threading.Thread):
                     self._conn.close()
             except Exception:  # noqa: BLE001
                 pass
+            if self._owns_http_client:
+                close = getattr(self.http_client, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001
+                        pass
 
 
 class SubscriptionWorkerPool:
@@ -906,18 +932,51 @@ class SubscriptionWorkerPool:
         database_url: str,
         wake_queue: "Queue",
         http_client: Optional[HttpClient] = None,
+        http_client_factory: Optional[Callable[[], HttpClient]] = None,
         refresh_interval_s: float = _SUBSCRIPTION_REFRESH_S,
         redis_url: Optional[str] = None,
     ):
         self.database_url = database_url
         self.wake_queue = wake_queue
-        self.http_client = http_client or HttpClient()
+        # Per-subscription HTTP client ownership is required for
+        # the DNS-rebinding mitigation: a delivery_url_changed
+        # event tears down ONE worker's session without affecting
+        # the others. When a caller passes ``http_client_factory``
+        # the pool calls it once per worker; when a single shared
+        # ``http_client`` is passed (the test path with a stub),
+        # every worker gets the same instance and refresh_session
+        # is a no-op-by-design on the shared stub. Production
+        # callers pass neither argument and the pool installs the
+        # default HttpClient factory.
+        if http_client_factory is not None and http_client is not None:
+            raise ValueError(
+                "pass either http_client (shared) or http_client_factory "
+                "(per-worker), not both"
+            )
+        self._shared_http_client = http_client
+        if http_client_factory is None and http_client is None:
+            http_client_factory = HttpClient
+        self._http_client_factory = http_client_factory
         self.refresh_interval_s = refresh_interval_s
         self.redis_url = redis_url
         self._workers: Dict[str, SubscriptionWorker] = {}
         self._shutdown = threading.Event()
         self._refresh_thread: Optional[threading.Thread] = None
         self._fanout_thread: Optional[threading.Thread] = None
+        # RLock because start() takes the lock and then calls
+        # _refresh_active_subscriptions() which also takes it.
+        # A non-reentrant Lock would deadlock on the second
+        # acquisition.
+        self._lock = threading.RLock()
+
+    @property
+    def http_client(self):
+        """Backward-compatible accessor used by existing tests
+        that introspect the shared client. Returns the shared
+        instance if one was passed; otherwise None (the
+        per-worker factory path). Setting via this property is
+        not supported."""
+        return self._shared_http_client
         # RLock because start() takes the lock and then calls
         # _refresh_active_subscriptions() which also takes it.
         # A non-reentrant Lock would deadlock on the second
@@ -980,11 +1039,17 @@ class SubscriptionWorkerPool:
             )
         # Tear down the shared HTTP session once, after workers are
         # guaranteed not to be calling send() concurrently. close()
-        # is idempotent so a double-shutdown path is safe.
-        try:
-            self.http_client.close()
-        except Exception:  # noqa: BLE001
-            pass
+        # is idempotent so a double-shutdown path is safe. The
+        # per-worker factory path closes the worker's own client
+        # in the worker's finally block; this only fires for the
+        # shared-instance path used by tests.
+        if self._shared_http_client is not None:
+            close = getattr(self._shared_http_client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _refresh_active_subscriptions(self) -> None:
         """Pull the list of active subscriptions; spawn workers
@@ -1032,12 +1097,19 @@ class SubscriptionWorkerPool:
                 del self._workers[sub_id]
 
             for sub_id in active - set(self._workers.keys()):
+                if self._shared_http_client is not None:
+                    worker_client = self._shared_http_client
+                    owns = False
+                else:
+                    worker_client = self._http_client_factory()
+                    owns = True
                 worker = SubscriptionWorker(
                     subscription_id=sub_id,
                     database_url=self.database_url,
-                    http_client=self.http_client,
+                    http_client=worker_client,
                     shutdown=self._shutdown,
                     redis_url=self.redis_url,
+                    owns_http_client=owns,
                 )
                 worker.start()
                 worker.signal()  # wake immediately to drain anything pending
@@ -1071,6 +1143,19 @@ class SubscriptionWorkerPool:
                 if event.subscription_event_kind in ("paused", "deleted"):
                     worker.request_eviction()
                 else:
+                    if event.subscription_event_kind == "delivery_url_changed":
+                        # DNS-rebinding mitigation: drop the
+                        # worker's HTTP session so any keep-alive
+                        # connection to the prior resolved IP is
+                        # released. The next deliver_one creates a
+                        # fresh Session and the dispatch-time SSRF
+                        # check resolves the (possibly new) host
+                        # against the private-range list before
+                        # the request leaves.
+                        try:
+                            worker.refresh_session()
+                        except Exception:  # noqa: BLE001
+                            pass
                     worker.signal()
                 continue
             with self._lock:
