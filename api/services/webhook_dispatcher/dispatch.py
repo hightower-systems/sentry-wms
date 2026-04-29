@@ -84,13 +84,14 @@ import threading
 import time
 from dataclasses import dataclass
 from queue import Empty, Queue
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from . import envelope as envelope_module
 from . import http_client as http_client_module
+from . import rate_limiter as rate_limiter_module
 from . import retry as retry_module
 from . import signing
 from . import wake as wake_module
@@ -389,6 +390,7 @@ def deliver_one(
     subscription_id: str,
     http_client: HttpClient,
     redis_url: Optional[str] = None,
+    acquire_rate_token: Optional[Callable[[int], bool]] = None,
 ) -> Optional[DeliveryOutcome]:
     """One delivery cycle for a subscription. Returns None when
     no pending or fresh event exists for this subscription
@@ -403,21 +405,38 @@ def deliver_one(
     conn.autocommit = False
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    cur.execute(
-        """
+    select_subscription_sql = """
         SELECT subscription_id, connector_id, delivery_url,
                subscription_filter, last_delivered_event_id, status,
-               pending_ceiling, dlq_ceiling
+               pending_ceiling, dlq_ceiling, rate_limit_per_second
           FROM webhook_subscriptions
          WHERE subscription_id = %s
-        """,
-        (str(subscription_id),),
-    )
+        """
+    cur.execute(select_subscription_sql, (str(subscription_id),))
     subscription = cur.fetchone()
     if subscription is None:
         return None
     if subscription["status"] != "active":
         return None
+
+    if acquire_rate_token is not None:
+        rate = int(subscription["rate_limit_per_second"])
+        # Release the SELECT snapshot before sleeping for the
+        # token. A subscription throttled at rate=1/s would
+        # otherwise hold an idle transaction open for up to 1s
+        # per cycle.
+        conn.rollback()
+        if not acquire_rate_token(rate):
+            return None
+        # Re-read the subscription. The status or rate could have
+        # flipped during the wait (admin paused the subscription,
+        # rate_limit_changed fired); the worker eviction path also
+        # closes the connection mid-acquire on paused/deleted.
+        cur.execute(select_subscription_sql, (str(subscription_id),))
+        subscription = cur.fetchone()
+        if subscription is None or subscription["status"] != "active":
+            conn.rollback()
+            return None
 
     pending = _select_next_pending(cur, subscription_id)
     if pending is None:
@@ -729,6 +748,18 @@ class SubscriptionWorker(threading.Thread):
         self._wake = threading.Event()
         self._evicted = threading.Event()
         self._conn = None  # populated in run() so request_eviction can close
+        self._rate_bucket: Optional[rate_limiter_module.TokenBucket] = None
+
+    def _acquire_rate_token(self, rate: int) -> bool:
+        if self._rate_bucket is None:
+            self._rate_bucket = rate_limiter_module.TokenBucket(rate)
+        else:
+            self._rate_bucket.set_rate(rate)
+        # Bound the wait at 60s so a misconfigured rate combined
+        # with a stuck consumer cannot leave a worker stranded
+        # past a shutdown signal indefinitely; the shutdown event
+        # also short-circuits the wait.
+        return self._rate_bucket.acquire(timeout_s=60.0, shutdown=self._shutdown)
 
     def signal(self) -> None:
         self._wake.set()
@@ -786,6 +817,7 @@ class SubscriptionWorker(threading.Thread):
                             self.subscription_id,
                             self.http_client,
                             redis_url=self.redis_url,
+                            acquire_rate_token=self._acquire_rate_token,
                         )
                     except AssertionError:
                         raise
