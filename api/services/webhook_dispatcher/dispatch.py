@@ -94,6 +94,7 @@ from . import http_client as http_client_module
 from . import rate_limiter as rate_limiter_module
 from . import retry as retry_module
 from . import signing
+from . import subscription_filter as subscription_filter_module
 from . import wake as wake_module
 
 # Re-export for backwards-compatibility with tests/imports that
@@ -168,28 +169,29 @@ def _row_to_event_envelope(row: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_filter_clauses(sub_filter: Mapping[str, Any]) -> tuple[str, list]:
-    """Translate ``webhook_subscriptions.subscription_filter``
-    into a SQL fragment + parameter list. v1.6.0 supports two
-    keys per plan §2.12 (D12 will tighten to a strict-typed
-    Pydantic model):
+def _build_filter_clauses(
+    sub_filter: subscription_filter_module.SubscriptionFilter,
+) -> tuple[str, list]:
+    """Translate a :class:`SubscriptionFilter` into a SQL fragment
+    + parameter list. Each None/empty field contributes no clause;
+    a populated field contributes one ``ANY(...)`` predicate.
 
-      * event_types: list of strings -> event_type IN (...)
-      * warehouse_ids: list of ints -> warehouse_id IN (...)
-
-    Empty filter (the default) returns ('', []) so the SELECT
-    matches every event past the cursor.
+    Empty filter returns ``('', [])`` so the SELECT matches every
+    event past the cursor.
     """
     clauses: list[str] = []
     params: list = []
-    event_types = sub_filter.get("event_types") if isinstance(sub_filter, dict) else None
-    warehouse_ids = sub_filter.get("warehouse_ids") if isinstance(sub_filter, dict) else None
-    if event_types:
+    if sub_filter.event_types:
         clauses.append("event_type = ANY(%s)")
-        params.append(list(event_types))
-    if warehouse_ids:
+        params.append(list(sub_filter.event_types))
+    if sub_filter.warehouse_ids:
         clauses.append("warehouse_id = ANY(%s)")
-        params.append(list(warehouse_ids))
+        params.append(list(sub_filter.warehouse_ids))
+    if sub_filter.aggregate_external_id_allowlist:
+        clauses.append("aggregate_external_id = ANY(%s::uuid[])")
+        params.append(
+            [str(u) for u in sub_filter.aggregate_external_id_allowlist]
+        )
     if not clauses:
         return "", []
     return " AND " + " AND ".join(clauses), params
@@ -350,13 +352,24 @@ def _select_next_fresh_event(
     """Find the next integration_events row past the subscription
     cursor that matches the subscription filter and has cleared
     the visible-at gate."""
-    sub_filter = subscription.get("subscription_filter") or {}
-    if isinstance(sub_filter, str):
-        try:
-            sub_filter = json.loads(sub_filter)
-        except (TypeError, ValueError):
-            sub_filter = {}
-    filter_clause, filter_params = _build_filter_clauses(sub_filter)
+    raw_filter = subscription.get("subscription_filter")
+    try:
+        parsed_filter = subscription_filter_module.parse(raw_filter)
+    except Exception as exc:  # noqa: BLE001 -- pydantic + json both possible
+        # A legacy bad row surfaces here as a recoverable parse
+        # error. Fall back to the empty filter so the dispatcher
+        # keeps making forward progress; the operator runbook
+        # covers the WARN log -- the subscription stays active and
+        # the bad column gets fixed via admin update.
+        LOGGER.warning(
+            "subscription %s has unparseable subscription_filter; "
+            "falling back to empty filter (matches every event). "
+            "Fix the column via the admin endpoint. parse error: %s",
+            subscription.get("subscription_id"),
+            exc,
+        )
+        parsed_filter = subscription_filter_module.SubscriptionFilter()
+    filter_clause, filter_params = _build_filter_clauses(parsed_filter)
 
     cur.execute(
         f"""

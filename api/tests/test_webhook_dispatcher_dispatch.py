@@ -667,29 +667,39 @@ class TestErrorClassification:
 
 class TestBuildFilterClauses:
     def test_empty_filter(self):
-        clause, params = dispatch_module._build_filter_clauses({})
+        from services.webhook_dispatcher.subscription_filter import SubscriptionFilter
+
+        clause, params = dispatch_module._build_filter_clauses(SubscriptionFilter())
         assert clause == ""
         assert params == []
 
     def test_event_types_only(self):
+        from services.webhook_dispatcher.subscription_filter import SubscriptionFilter
+
         clause, params = dispatch_module._build_filter_clauses(
-            {"event_types": ["a", "b"]}
+            SubscriptionFilter(event_types=["a", "b"])
         )
         assert "event_type = ANY" in clause
         assert params == [["a", "b"]]
 
     def test_both_filters_combined(self):
+        from services.webhook_dispatcher.subscription_filter import SubscriptionFilter
+
         clause, params = dispatch_module._build_filter_clauses(
-            {"event_types": ["a"], "warehouse_ids": [1, 2]}
+            SubscriptionFilter(event_types=["a"], warehouse_ids=[1, 2])
         )
         assert "event_type = ANY" in clause and "warehouse_id = ANY" in clause
         assert params == [["a"], [1, 2]]
 
-    def test_unknown_keys_ignored(self):
-        """Plan §2.12 calls for strict-typed filters in D12.
-        D5 silently ignores unknown keys for forward-compat."""
-        clause, params = dispatch_module._build_filter_clauses(
-            {"future_field": ["x"]}
-        )
-        assert clause == ""
-        assert params == []
+    def test_unknown_keys_now_rejected(self):
+        """Strict-typed filter rejects unknown keys via the
+        Pydantic model. The dispatcher's parse path catches the
+        ValidationError and falls back to the empty filter; the
+        clause builder itself only sees a validated model so a
+        construction with an unknown key never reaches it."""
+        from pydantic import ValidationError
+
+        from services.webhook_dispatcher.subscription_filter import SubscriptionFilter
+
+        with pytest.raises(ValidationError):
+            SubscriptionFilter.model_validate({"future_field": ["x"]})
