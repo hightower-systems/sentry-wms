@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
+import { catalogEntry } from '../utils/errorCatalog.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
@@ -242,15 +243,22 @@ function DlqPanel({ subscription, onClose }) {
     {
       key: 'error_detail',
       label: 'Detail',
-      render: (r) => (
-        <span
-          className="mono"
-          style={{ fontSize: 11, display: 'inline-block', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
-          title={r.error_detail || ''}
-        >
-          {r.error_detail || '-'}
-        </span>
-      ),
+      render: (r) => {
+        // Both columns now read from the server-owned catalog. The
+        // hover tooltip enriches with the longer description from the
+        // client-side mirror so the operator can hover for context
+        // without opening the cross-subscription errors panel.
+        const entry = catalogEntry(r.error_kind);
+        const display = r.error_detail || entry.short_message;
+        return (
+          <span
+            style={{ fontSize: 12, display: 'inline-block', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
+            title={entry.description}
+          >
+            {display}
+          </span>
+        );
+      },
     },
     {
       key: 'completed_at',
@@ -450,6 +458,200 @@ const STATS_WINDOW_OPTIONS = ['1h', '6h', '24h', '7d'];
 function formatMs(v) {
   if (v === null || v === undefined) return '-';
   return `${Math.round(v)} ms`;
+}
+
+function WebhookErrorsPanel({ webhooks, onClose }) {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [errorKinds, setErrorKinds] = useState([]);
+  const [limit] = useState(50);
+  const [offset, setErrorsOffset] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [panelError, setPanelError] = useState('');
+  const [filterSubscription, setFilterSubscription] = useState('');
+  const [filterErrorKind, setFilterErrorKind] = useState('');
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setPanelError('');
+      const qp = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+      if (filterSubscription) qp.set('subscription_id', filterSubscription);
+      if (filterErrorKind) qp.set('error_kind', filterErrorKind);
+      if (filterFrom) qp.set('from', new Date(filterFrom).toISOString());
+      if (filterTo) qp.set('to', new Date(filterTo).toISOString());
+      const res = await api.get(`/admin/webhook-errors?${qp}`);
+      if (cancelled) return;
+      if (res?.ok) {
+        const data = await res.json();
+        setRows(data.deliveries || []);
+        setTotal(data.total || 0);
+        setErrorKinds(data.error_kinds || []);
+      } else {
+        const body = await res?.json();
+        setPanelError(body?.error || 'Failed to load errors');
+      }
+      setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [limit, offset, filterSubscription, filterErrorKind, filterFrom, filterTo]);
+
+  function clearFilters() {
+    setFilterSubscription('');
+    setFilterErrorKind('');
+    setFilterFrom('');
+    setFilterTo('');
+    setErrorsOffset(0);
+  }
+
+  const pageStart = total === 0 ? 0 : offset + 1;
+  const pageEnd = Math.min(offset + limit, total);
+
+  return (
+    <Modal
+      title="Webhook errors"
+      onClose={onClose}
+      footer={<button className="btn" onClick={onClose}>Close</button>}
+    >
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <select
+          className="form-input"
+          style={{ width: 200 }}
+          value={filterSubscription}
+          onChange={(e) => { setFilterSubscription(e.target.value); setErrorsOffset(0); }}
+        >
+          <option value="">All subscriptions</option>
+          {webhooks.map((w) => (
+            <option key={w.subscription_id} value={w.subscription_id}>
+              {w.display_name}
+            </option>
+          ))}
+        </select>
+        <select
+          className="form-input"
+          style={{ width: 160 }}
+          value={filterErrorKind}
+          onChange={(e) => { setFilterErrorKind(e.target.value); setErrorsOffset(0); }}
+        >
+          <option value="">All error kinds</option>
+          {errorKinds.map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
+        <input
+          type="datetime-local"
+          className="form-input"
+          style={{ width: 200 }}
+          value={filterFrom}
+          onChange={(e) => { setFilterFrom(e.target.value); setErrorsOffset(0); }}
+          placeholder="From"
+        />
+        <input
+          type="datetime-local"
+          className="form-input"
+          style={{ width: 200 }}
+          value={filterTo}
+          onChange={(e) => { setFilterTo(e.target.value); setErrorsOffset(0); }}
+          placeholder="To"
+        />
+        <button className="btn btn-sm" onClick={clearFilters}>Clear</button>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 13 }}>
+          {loading ? 'Loading…' : (total === 0 ? 'No errors found' : `${pageStart}-${pageEnd} of ${total}`)}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-sm"
+            disabled={offset === 0}
+            onClick={() => setErrorsOffset(Math.max(0, offset - limit))}
+          >
+            Prev
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={offset + limit >= total}
+            onClick={() => setErrorsOffset(offset + limit)}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      {panelError && <div className="form-error" style={{ marginBottom: 12 }}>{panelError}</div>}
+
+      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+            <th style={{ padding: 6 }}></th>
+            <th style={{ padding: 6 }}>Subscription</th>
+            <th style={{ padding: 6 }}>Delivery</th>
+            <th style={{ padding: 6 }}>Kind</th>
+            <th style={{ padding: 6 }}>HTTP</th>
+            <th style={{ padding: 6 }}>Completed</th>
+            <th style={{ padding: 6 }}>Short message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && !loading && (
+            <tr>
+              <td colSpan="7" style={{ padding: 12, color: 'var(--text-secondary)' }}>
+                No matching error rows.
+              </td>
+            </tr>
+          )}
+          {rows.map((r) => {
+            const isExpanded = expandedId === r.delivery_id;
+            return (
+              <>
+                <tr
+                  key={r.delivery_id}
+                  style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                  onClick={() => setExpandedId(isExpanded ? null : r.delivery_id)}
+                >
+                  <td style={{ padding: 6 }}>{isExpanded ? '▼' : '▶'}</td>
+                  <td style={{ padding: 6 }}>{r.subscription_display_name}</td>
+                  <td style={{ padding: 6 }} className="mono">{r.delivery_id}</td>
+                  <td style={{ padding: 6 }} className="mono">{r.error_kind}</td>
+                  <td style={{ padding: 6 }} className="mono">{r.http_status ?? '-'}</td>
+                  <td style={{ padding: 6 }}>{r.completed_at ? new Date(r.completed_at).toLocaleString() : '-'}</td>
+                  <td style={{ padding: 6 }}>{r.short_message}</td>
+                </tr>
+                {isExpanded && (
+                  <tr key={`${r.delivery_id}-detail`} style={{ background: 'var(--surface-muted)' }}>
+                    <td colSpan="7" style={{ padding: 12 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                          What happened
+                        </div>
+                        <div style={{ fontSize: 13, marginTop: 2 }}>{r.description}</div>
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                          Triage hint
+                        </div>
+                        <div style={{ fontSize: 13, marginTop: 2 }}>{r.triage_hint}</div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--text-secondary)' }}>
+                        <span>Connector: <span className="mono">{r.connector_id}</span></span>
+                        <span>Event: <span className="mono">{r.event_id ?? '-'}</span></span>
+                        <span>Attempt: {r.attempt_number}</span>
+                        <span>Status: {r.status}</span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
+    </Modal>
+  );
 }
 
 function StatsPanel({ subscription, onClose }) {
@@ -652,6 +854,7 @@ export default function Webhooks() {
   const [confirmRotate, setConfirmRotate] = useState(null);
   const [dlqRow, setDlqRow] = useState(null);
   const [statsRow, setStatsRow] = useState(null);
+  const [showErrors, setShowErrors] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -1013,6 +1216,7 @@ export default function Webhooks() {
   return (
     <div>
       <PageHeader title="Webhooks">
+        <button className="btn" onClick={() => setShowErrors(true)}>View errors</button>
         <button className="btn btn-primary" onClick={openCreate}>New webhook</button>
       </PageHeader>
 
@@ -1351,6 +1555,13 @@ export default function Webhooks() {
         <StatsPanel
           subscription={statsRow}
           onClose={() => setStatsRow(null)}
+        />
+      )}
+
+      {showErrors && (
+        <WebhookErrorsPanel
+          webhooks={webhooks}
+          onClose={() => setShowErrors(false)}
         />
       )}
 
