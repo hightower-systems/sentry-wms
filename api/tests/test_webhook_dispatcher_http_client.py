@@ -61,11 +61,17 @@ def _send(client, *, url, body=b"{}", signature="sha256=deadbeef",
 
 class TestClassifyException:
     def test_ssl_error_is_tls(self):
+        from services.webhook_dispatcher import error_catalog
         kind, detail = http_client_module.classify_exception(
             requests.exceptions.SSLError("bad cert")
         )
         assert kind == "tls"
-        assert "bad cert" in detail
+        # detail must be the server-owned catalog string, not the
+        # library exception's message. The library message can echo
+        # certificate subject names, hostnames, or upstream details
+        # the consumer's stack dumped; the catalog string is safe.
+        assert detail == error_catalog.get_short_message("tls")
+        assert "bad cert" not in detail
 
     def test_timeout_is_timeout(self):
         for cls in (
@@ -107,11 +113,13 @@ class TestClassifyException:
         assert kind == "unknown"
 
     def test_unknown_exception_is_unknown(self):
+        from services.webhook_dispatcher import error_catalog
         kind, detail = http_client_module.classify_exception(
             ValueError("not a network error")
         )
         assert kind == "unknown"
-        assert "not a network error" in detail
+        assert detail == error_catalog.get_short_message("unknown")
+        assert "not a network error" not in detail
 
     def test_detail_is_truncated_to_512(self):
         long = "x" * 1000
@@ -261,7 +269,12 @@ class TestSendStatusClassification:
         response = _send(client, url=f"http://127.0.0.1:{http_500_server}/")
         assert response.status_code == 500
         assert response.error_kind == "5xx"
-        assert "server error" in (response.error_detail or "")
+        # error_detail must come from the server-owned catalog, not
+        # the consumer's response body. Equality with the catalog
+        # short_message proves no extra consumer bytes leaked through:
+        # any concatenation of body content would break the equality.
+        from services.webhook_dispatcher import error_catalog
+        assert response.error_detail == error_catalog.get_short_message("5xx")
 
     def test_redirect_classifies_as_4xx_does_not_follow(self, http_redirect_server):
         """allow_redirects=False is a security invariant: a

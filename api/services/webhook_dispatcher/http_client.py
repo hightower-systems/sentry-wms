@@ -25,6 +25,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from . import error_catalog
 from . import ssrf_guard
 
 
@@ -51,29 +52,30 @@ def classify_exception(exc: Exception) -> tuple[str, str]:
     """Map a ``requests`` / ``urllib3`` exception to
     (error_kind, error_detail). The mapping uses isinstance
     checks against the documented exception hierarchy rather
-    than name-substring matching (the D5 placeholder used the
-    name-substring shape; D8 tightens to class hierarchy).
+    than name-substring matching.
 
-    Returns a tuple so the dispatcher can populate
-    ``webhook_deliveries.error_kind`` + ``error_detail`` in
-    one call.
+    The detail is sourced from :mod:`error_catalog`, never from
+    ``str(exc)``. Library exception strings can echo URL
+    fragments, hostnames, or upstream credential material the
+    consumer's stack trace dumped; the catalog string is
+    server-controlled and never carries external bytes.
     """
     import requests  # noqa: WPS433  -- localised import
 
-    detail = (str(exc) or type(exc).__name__)[:512]
-
     if isinstance(exc, requests.exceptions.SSLError):
-        return "tls", detail
-    if isinstance(exc, requests.exceptions.Timeout):
-        return "timeout", detail
-    if isinstance(exc, requests.exceptions.TooManyRedirects):
+        kind = "tls"
+    elif isinstance(exc, requests.exceptions.Timeout):
+        kind = "timeout"
+    elif isinstance(exc, requests.exceptions.TooManyRedirects):
         # allow_redirects=False makes this unreachable in
         # production; defensive mapping in case a future code
         # change flips the flag.
-        return "unknown", detail
-    if isinstance(exc, requests.exceptions.ConnectionError):
-        return "connection", detail
-    return "unknown", detail
+        kind = "unknown"
+    elif isinstance(exc, requests.exceptions.ConnectionError):
+        kind = "connection"
+    else:
+        kind = "unknown"
+    return kind, error_catalog.get_short_message(kind)
 
 
 def classify_status_code(status_code: int) -> str:
@@ -160,11 +162,11 @@ class HttpClient:
 
         try:
             ssrf_guard.assert_url_safe(url)
-        except ssrf_guard.SsrfRejected as exc:
+        except ssrf_guard.SsrfRejected:
             return HttpResponse(
                 status_code=None,
                 error_kind="ssrf_rejected",
-                error_detail=str(exc)[:512],
+                error_detail=error_catalog.get_short_message("ssrf_rejected"),
             )
 
         import requests  # noqa: WPS433
@@ -204,14 +206,16 @@ class HttpClient:
             )
 
         kind = classify_status_code(response.status_code)
-        # Truncate response body to fit error_detail (VARCHAR(512))
-        # so a chatty consumer cannot silently inflate the table.
-        try:
-            body_text = response.text[:512]
-        except Exception:  # noqa: BLE001
-            body_text = ""
+        # error_detail is sourced from the server-owned catalog. The
+        # consumer's response body is intentionally NOT stored: a
+        # misconfigured consumer endpoint can echo upstream
+        # credentials (DB connection strings, API tokens, session
+        # cookies) into a 5xx page. Persisting that body would make
+        # the DLQ admin viewer a credential-exfiltration channel for
+        # the consumer's secrets. Operators read the catalog
+        # description and triage hint via /admin/webhook-errors.
         return HttpResponse(
             status_code=response.status_code,
             error_kind=kind,
-            error_detail=body_text or f"HTTP {response.status_code}",
+            error_detail=error_catalog.get_short_message(kind),
         )

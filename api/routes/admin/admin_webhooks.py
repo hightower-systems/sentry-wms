@@ -51,6 +51,7 @@ from schemas.webhooks import (
 from services.audit_service import write_audit_log
 from services.events_schema_registry import V150_CATALOG
 from services.webhook_dispatcher import env_validator as dispatcher_env
+from services.webhook_dispatcher import error_catalog as dispatcher_error_catalog
 from services.webhook_dispatcher import signing as dispatcher_signing
 from services.webhook_dispatcher import ssrf_guard
 from services.webhook_dispatcher import wake as dispatcher_wake
@@ -1631,3 +1632,129 @@ def webhook_stats(subscription_id):
 
     _stats_cache_set(cache_key, payload)
     return jsonify(payload)
+
+
+_WEBHOOK_ERRORS_LIMIT_MAX = 500
+_WEBHOOK_ERRORS_LIMIT_DEFAULT = 50
+
+
+@admin_bp.route("/webhook-errors", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def list_webhook_errors():
+    """Cross-subscription error log. Returns delivery rows in
+    status failed / dlq joined to the server-owned error catalog.
+    The catalog supplies the operator-facing description and
+    triage hint at response time so the frontend never has to
+    render bytes the consumer's endpoint produced."""
+    try:
+        limit = int(request.args.get("limit", _WEBHOOK_ERRORS_LIMIT_DEFAULT))
+        offset = int(request.args.get("offset", 0))
+    except ValueError:
+        return jsonify({"error": "invalid_pagination"}), 400
+    if limit < 1 or limit > _WEBHOOK_ERRORS_LIMIT_MAX or offset < 0:
+        return (
+            jsonify(
+                {
+                    "error": "invalid_pagination",
+                    "detail": (
+                        f"limit must be in [1, {_WEBHOOK_ERRORS_LIMIT_MAX}]; "
+                        f"offset must be >= 0"
+                    ),
+                }
+            ),
+            400,
+        )
+
+    where = ["d.status IN ('failed', 'dlq')"]
+    params: dict = {"limit": limit, "offset": offset}
+    sub_id = request.args.get("subscription_id")
+    if sub_id:
+        try:
+            uuid.UUID(sub_id)
+        except ValueError:
+            return jsonify({"error": "invalid_subscription_id"}), 400
+        where.append("d.subscription_id = :sid")
+        params["sid"] = sub_id
+    error_kind = request.args.get("error_kind")
+    if error_kind:
+        where.append("d.error_kind = :ek")
+        params["ek"] = error_kind
+    completed_from = request.args.get("from")
+    if completed_from:
+        where.append("d.completed_at >= :cf")
+        params["cf"] = completed_from
+    completed_to = request.args.get("to")
+    if completed_to:
+        where.append("d.completed_at <= :ct")
+        params["ct"] = completed_to
+    where_sql = " AND ".join(where)
+
+    total = int(
+        g.db.execute(
+            text(f"SELECT COUNT(*) AS n FROM webhook_deliveries d WHERE {where_sql}"),
+            params,
+        ).fetchone().n
+        or 0
+    )
+
+    rows = g.db.execute(
+        text(
+            f"""
+            SELECT d.delivery_id, d.subscription_id, d.event_id,
+                   d.attempt_number, d.status, d.http_status,
+                   d.error_kind, d.error_detail, d.completed_at,
+                   d.attempted_at, d.scheduled_at,
+                   s.display_name, s.connector_id
+              FROM webhook_deliveries d
+              JOIN webhook_subscriptions s
+                ON s.subscription_id = d.subscription_id
+             WHERE {where_sql}
+             ORDER BY d.completed_at DESC NULLS LAST, d.delivery_id DESC
+             LIMIT :limit OFFSET :offset
+            """
+        ),
+        params,
+    ).fetchall()
+
+    deliveries = []
+    for r in rows:
+        kind = r.error_kind or "unknown"
+        entry = dispatcher_error_catalog.get_entry(kind)
+        deliveries.append(
+            {
+                "delivery_id": int(r.delivery_id),
+                "subscription_id": str(r.subscription_id),
+                "subscription_display_name": r.display_name,
+                "connector_id": r.connector_id,
+                "event_id": int(r.event_id) if r.event_id is not None else None,
+                "attempt_number": int(r.attempt_number),
+                "status": r.status,
+                "http_status": int(r.http_status) if r.http_status is not None else None,
+                "error_kind": kind,
+                "error_detail": r.error_detail,
+                "short_message": entry["short_message"],
+                "description": entry["description"],
+                "triage_hint": entry["triage_hint"],
+                "completed_at": (
+                    r.completed_at.isoformat() if r.completed_at else None
+                ),
+                "attempted_at": (
+                    r.attempted_at.isoformat() if r.attempted_at else None
+                ),
+                "scheduled_at": (
+                    r.scheduled_at.isoformat() if r.scheduled_at else None
+                ),
+            }
+        )
+
+    return jsonify(
+        {
+            "deliveries": deliveries,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "error_kinds": dispatcher_error_catalog.all_kinds(),
+        }
+    )

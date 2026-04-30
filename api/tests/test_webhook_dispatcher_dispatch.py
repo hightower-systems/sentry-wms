@@ -648,7 +648,8 @@ class TestErrorClassification:
                 (outcome.delivery_id,),
             )
             detail = cur.fetchone()[0]
-            assert "read timed out" in detail
+            from services.webhook_dispatcher import error_catalog
+            assert detail == error_catalog.get_short_message("timeout")
         finally:
             cleanup()
             cleanup_conn = _conn()
