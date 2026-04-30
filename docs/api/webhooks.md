@@ -158,6 +158,18 @@ If your clock skews more than ~30 seconds, signed requests will be rejected as r
 
 The replay-protection window also bounds the value of a stolen webhook: an attacker who captures one of your incoming requests cannot replay it more than 5 minutes later, even with a valid signature.
 
+## Latency characteristics
+
+Sentry's outbound dispatcher enforces a **2-second visibility floor** between when a warehouse operation commits and when its event becomes eligible for dispatch. The floor is inherited from the v1.5 cursor semantics that the polling endpoint also depends on; it absorbs the deferred-trigger / commit-order skew between the moment `visible_at` is set on an `integration_events` row and the moment a separate session can read that row in commit order. Without the floor, a poll or dispatch could observe an event whose `event_id` is greater than a not-yet-visible neighbor and advance the cursor past a hole; the floor closes that race at the cost of a fixed delay.
+
+What this means for the consumer:
+
+- The earliest possible delivery time for an event is `visible_at + 2 seconds`. Plan around this when setting your own SLA. A consumer expecting "instant" delivery will be disappointed; the contract is "near real-time, with a 2-second floor."
+- The dispatcher's NOTIFY-driven wake path is sub-second: the dispatcher knows about the event within ~10ms of commit. The 2-second wait is in the dispatch query, not in the wake path.
+- The end-to-end p95 budget for `visible_at -> POST sent` is 2.5 seconds under healthy load. The 500ms above the floor covers signing, the cursor query round-trip, the per-subscription rate-limit token acquisition, and the HTTP request-build phase; HTTP response time is on top of that.
+- Under a burst (multiple events committed within a short window for the same subscription), per-aggregate FIFO and head-of-line blocking serialize the dispatches. The N-th event in a burst sees `2 seconds + (N-1) * (your endpoint's response time)` before its POST goes out. Tune your endpoint's response time accordingly; sustained sub-200ms responses keep the queue draining at well above the 50 events/sec sustained budget.
+- The `X-Sentry-Timestamp` header reflects dispatch time, not the warehouse-operation time. The envelope's `event_timestamp` field carries the original time-of-record.
+
 ## Retry semantics
 
 The dispatcher retries any non-2xx response (and any network-level failure) on a fixed schedule:
