@@ -194,9 +194,50 @@ The guard is deliberately strict; see
 calls will fail fast for 5 minutes. Check `sync_state.last_error_message`
 in the admin dashboard or via the `/sync-status` endpoint.
 
-**Rotating `SENTRY_ENCRYPTION_KEY`.** Decrypt every row of
-`connector_credentials.encrypted_value` with the old key, re-encrypt
-with the new key, and write it back in a transaction. Restart the api
-and celery workers so they pick up the new env var. Do not try to
-change the key in place; the app will not roll its own reencrypt
-migration.
+**Rotating `SENTRY_ENCRYPTION_KEY`.** The key now protects two
+ciphertext stores: `connector_credentials.encrypted_value` (v1.3
+inbound credential vault) and `webhook_secrets.secret_ciphertext`
+(v1.6 outbound webhook HMAC secrets). Both must be re-encrypted
+in the same rotation transaction; missing one leaves a
+half-rotated deployment where the affected service cannot decrypt
+its own secrets after the next restart.
+
+Procedure:
+
+1. Stop dispatch and inbound sync to keep the ciphertext stores
+   quiescent during the rotation. `docker compose stop sentry-dispatcher
+   celery-worker` is sufficient; the api can stay up because it does not
+   read either ciphertext store on the cookie-auth admin path. Do not
+   `docker compose down` the db.
+2. In a single transaction, decrypt every row of
+   `connector_credentials.encrypted_value` and every row of
+   `webhook_secrets.secret_ciphertext` with the old key, re-encrypt
+   with the new key, and UPDATE in place. The two tables share no FK
+   so the order of the two UPDATEs inside the transaction does not
+   matter; what matters is that both COMMIT together or neither does.
+3. Update `SENTRY_ENCRYPTION_KEY` in `.env` at the repo root.
+4. `docker compose up -d` (NOT `restart`; restart does not re-read
+   `.env`). The api, celery-worker, and sentry-dispatcher all forward
+   `SENTRY_ENCRYPTION_KEY` and pick up the new value on container
+   recreation.
+5. Confirm: trigger a sync that reads `connector_credentials`
+   (existing v1.3 procedure) AND trigger an event that flows
+   through the dispatcher to a registered subscription (any
+   warehouse mutation that emits an event the subscription's
+   filter matches). Both paths exercising the new key without
+   error closes the rotation.
+
+Do not try to change the key in place without the rotation
+transaction; the app will not roll its own reencrypt migration.
+
+If you rotate `SENTRY_ENCRYPTION_KEY` without re-encrypting
+`webhook_secrets.secret_ciphertext`, the dispatcher will boot but
+fail every signing call with a Fernet-decrypt exception. Every
+delivery will retry through its 8 attempts and DLQ; the affected
+subscriptions will auto-pause via the DLQ ceiling. Recovery is to
+either restore the previous `SENTRY_ENCRYPTION_KEY` (if you have it)
+or, failing that, rotate every webhook secret via the admin panel
+(which writes a fresh plaintext at gen=1 with the new key, leaving
+the unreadable old gen=2 to be reaped by the cleanup beat). The
+[webhook secret compromise runbook](runbooks/webhook-secret-compromise.md)
+covers the per-subscription rotation procedure.
