@@ -771,6 +771,215 @@ class TestPatchUpdate:
         assert "pending_ceiling" not in diff
 
 
+class TestStats:
+    def _seed_event(self, event_type="test.stats", warehouse_id=1):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO integration_events "
+            "(event_type, event_version, aggregate_type, aggregate_id, "
+            " aggregate_external_id, warehouse_id, source_txn_id, payload) "
+            "VALUES (%s, 1, 'agg', %s, %s, %s, %s, '{}'::jsonb) "
+            "RETURNING event_id",
+            (
+                event_type,
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                warehouse_id,
+                str(uuid.uuid4()),
+            ),
+        )
+        eid = cur.fetchone()[0]
+        cur.close()
+        return eid
+
+    def _seed_delivery(
+        self,
+        sub_id: str,
+        event_id: int,
+        status: str = "succeeded",
+        response_time_ms: int = None,
+        error_kind: str = None,
+    ):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, attempted_at, completed_at, "
+            " response_time_ms, error_kind, secret_generation) "
+            "VALUES (%s, %s, %s, %s, NOW(), NOW(), NOW(), %s, %s, 1) "
+            "RETURNING delivery_id",
+            (
+                sub_id,
+                event_id,
+                8 if status == "dlq" else 1,
+                status,
+                response_time_ms,
+                error_kind,
+            ),
+        )
+        did = cur.fetchone()[0]
+        cur.close()
+        return did
+
+    def _clear_stats_cache(self):
+        from routes.admin.admin_webhooks import _STATS_CACHE
+
+        _STATS_CACHE.clear()
+
+    def test_empty_subscription_returns_zero_rollups(
+        self, client, auth_headers
+    ):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["window"] == "24h"
+        assert body["attempts_total"] == 0
+        assert body["success_rate"] is None
+        assert body["response_time_ms"]["p50"] is None
+        assert body["top_error_kinds"] == []
+        assert body["current_lag"] == 0
+
+    def test_rollups_reflect_seeded_deliveries(self, client, auth_headers):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "succeeded", response_time_ms=10)
+        self._seed_delivery(sub_id, event_id, "succeeded", response_time_ms=50)
+        self._seed_delivery(sub_id, event_id, "succeeded", response_time_ms=200)
+        self._seed_delivery(sub_id, event_id, "failed", error_kind="5xx")
+        self._seed_delivery(sub_id, event_id, "dlq", error_kind="connection")
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["attempts_total"] == 5
+        assert body["succeeded"] == 3
+        assert body["failed"] == 1
+        assert body["dlq"] == 1
+        assert body["success_rate"] == pytest.approx(0.6)
+        # Three samples (10, 50, 200): p50 ~ 50, p95 close to 200, p99 close to 200.
+        assert body["response_time_ms"]["p50"] == pytest.approx(50, rel=0.05)
+        assert body["response_time_ms"]["p95"] is not None
+        assert body["response_time_ms"]["p99"] is not None
+
+    def test_top_error_kinds_capped_and_ordered(self, client, auth_headers):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        # Seed seven distinct error_kinds with different counts.
+        kinds = [
+            ("connection", 5),
+            ("5xx", 4),
+            ("4xx", 3),
+            ("timeout", 2),
+            ("tls", 1),
+            ("ssrf_rejected", 1),
+            ("unknown", 1),
+        ]
+        for kind, n in kinds:
+            for _ in range(n):
+                self._seed_delivery(
+                    sub_id, event_id, "failed", error_kind=kind
+                )
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        top = resp.get_json()["top_error_kinds"]
+        assert len(top) == 5
+        assert [t["kind"] for t in top[:4]] == ["connection", "5xx", "4xx", "timeout"]
+        assert all(top[i]["count"] >= top[i + 1]["count"] for i in range(4))
+
+    def test_current_lag_reflects_uncovered_events(
+        self, client, auth_headers
+    ):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        # Seed three events past the cursor (which is 0 by default).
+        for _ in range(3):
+            self._seed_event()
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats", headers=auth_headers
+        )
+        body = resp.get_json()
+        assert body["current_lag"] >= 3
+
+    def test_cache_returns_same_generated_at_within_ttl(
+        self, client, auth_headers
+    ):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        first = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats", headers=auth_headers
+        ).get_json()
+        second = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats", headers=auth_headers
+        ).get_json()
+        assert first["generated_at"] == second["generated_at"]
+
+    def test_cache_key_distinguishes_window(self, client, auth_headers):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        a = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats?window=1h",
+            headers=auth_headers,
+        ).get_json()
+        b = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats?window=24h",
+            headers=auth_headers,
+        ).get_json()
+        assert a["window"] == "1h"
+        assert b["window"] == "24h"
+
+    def test_invalid_window_rejected(self, client, auth_headers):
+        self._clear_stats_cache()
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/stats?window=banana",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "invalid_window"
+
+    def test_unknown_uuid_returns_404(self, client, auth_headers):
+        self._clear_stats_cache()
+        resp = client.get(
+            f"/api/admin/webhooks/{uuid.uuid4()}/stats",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_uuid_returns_400(self, client, auth_headers):
+        self._clear_stats_cache()
+        resp = client.get(
+            "/api/admin/webhooks/not-a-uuid/stats", headers=auth_headers
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.get(f"/api/admin/webhooks/{uuid.uuid4()}/stats")
+        assert resp.status_code == 401
+
+
 class TestReplayBatch:
     def _seed_event(self, event_type="test.batch", warehouse_id=1):
         conn = get_raw_connection()

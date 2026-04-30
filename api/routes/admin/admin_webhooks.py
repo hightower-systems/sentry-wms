@@ -21,8 +21,12 @@ tombstone gate pattern from v1.5.1.
 
 import os
 import secrets
+import threading
+import time
 import uuid
 from urllib.parse import urlparse
+
+from services.webhook_dispatcher import subscription_filter as sf_module
 
 from flask import g, jsonify, request
 from sqlalchemy import text
@@ -1412,3 +1416,218 @@ def replay_batch(validated, subscription_id):
         ),
         201,
     )
+
+
+_STATS_WINDOW_INTERVAL = {
+    "1h": "1 hour",
+    "6h": "6 hours",
+    "24h": "24 hours",
+    "7d": "7 days",
+}
+_STATS_CACHE_TTL_S = 30
+_STATS_CACHE: dict = {}
+_STATS_CACHE_LOCK = threading.Lock()
+
+
+def _stats_cache_get(key: tuple):
+    with _STATS_CACHE_LOCK:
+        entry = _STATS_CACHE.get(key)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if time.monotonic() >= expires_at:
+            _STATS_CACHE.pop(key, None)
+            return None
+        return payload
+
+
+def _stats_cache_set(key: tuple, payload: dict) -> None:
+    with _STATS_CACHE_LOCK:
+        _STATS_CACHE[key] = (
+            time.monotonic() + _STATS_CACHE_TTL_S,
+            payload,
+        )
+
+
+def _compute_lag(subscription_row) -> int | None:
+    """Compute event_id-unit lag: the count of integration_events
+    rows past the subscription's cursor that match the
+    subscription's filter. None when the filter is unparseable."""
+    raw_filter = subscription_row.subscription_filter
+    try:
+        parsed = sf_module.parse(raw_filter)
+    except Exception:  # noqa: BLE001
+        return None
+
+    # Lag is a count of matching events past the cursor regardless
+    # of the visibility gate; the operator wants to see backlog
+    # depth, not "what is dispatchable right now".
+    clauses: list[str] = ["event_id > :cursor"]
+    params: dict = {"cursor": int(subscription_row.last_delivered_event_id or 0)}
+    if parsed.event_types:
+        clauses.append("event_type = ANY(:event_types)")
+        params["event_types"] = list(parsed.event_types)
+    if parsed.warehouse_ids:
+        clauses.append("warehouse_id = ANY(:warehouse_ids)")
+        params["warehouse_ids"] = list(parsed.warehouse_ids)
+    if parsed.aggregate_external_id_allowlist:
+        clauses.append(
+            "aggregate_external_id = ANY(CAST(:agg_ids AS uuid[]))"
+        )
+        params["agg_ids"] = [
+            str(u) for u in parsed.aggregate_external_id_allowlist
+        ]
+
+    row = g.db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+              FROM integration_events
+             WHERE {" AND ".join(clauses)}
+            """
+        ),
+        params,
+    ).fetchone()
+    return int(row.n or 0)
+
+
+@admin_bp.route("/webhooks/<subscription_id>/stats", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def webhook_stats(subscription_id):
+    """Per-subscription stats with a 30s in-process cache.
+    Includes response-time percentiles and top error kinds within
+    a configurable window, plus a point-in-time lag count."""
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    window = request.args.get("window", "24h")
+    if window not in _STATS_WINDOW_INTERVAL:
+        return (
+            jsonify(
+                {
+                    "error": "invalid_window",
+                    "valid": sorted(_STATS_WINDOW_INTERVAL.keys()),
+                }
+            ),
+            400,
+        )
+
+    cache_key = (subscription_id, window)
+    cached = _stats_cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
+    sub_row = g.db.execute(
+        text(
+            """
+            SELECT subscription_id, subscription_filter,
+                   last_delivered_event_id
+              FROM webhook_subscriptions
+             WHERE subscription_id = :sid
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if sub_row is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+
+    interval = _STATS_WINDOW_INTERVAL[window]
+
+    rollup = g.db.execute(
+        text(
+            f"""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                ) AS attempts_total,
+                COUNT(*) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                      AND status = 'succeeded'
+                ) AS succeeded,
+                COUNT(*) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                      AND status = 'failed'
+                ) AS failed,
+                COUNT(*) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                      AND status = 'dlq'
+                ) AS dlq,
+                COUNT(*) FILTER (WHERE status = 'in_flight') AS in_flight,
+                COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                PERCENTILE_CONT(0.50) WITHIN GROUP (
+                    ORDER BY response_time_ms
+                ) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                      AND status = 'succeeded'
+                      AND response_time_ms IS NOT NULL
+                ) AS p50_ms,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (
+                    ORDER BY response_time_ms
+                ) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                      AND status = 'succeeded'
+                      AND response_time_ms IS NOT NULL
+                ) AS p95_ms,
+                PERCENTILE_CONT(0.99) WITHIN GROUP (
+                    ORDER BY response_time_ms
+                ) FILTER (
+                    WHERE attempted_at >= NOW() - INTERVAL '{interval}'
+                      AND status = 'succeeded'
+                      AND response_time_ms IS NOT NULL
+                ) AS p99_ms
+              FROM webhook_deliveries
+             WHERE subscription_id = :sid
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+
+    error_rows = g.db.execute(
+        text(
+            f"""
+            SELECT error_kind, COUNT(*) AS n
+              FROM webhook_deliveries
+             WHERE subscription_id = :sid
+               AND attempted_at >= NOW() - INTERVAL '{interval}'
+               AND status IN ('failed', 'dlq')
+               AND error_kind IS NOT NULL
+             GROUP BY error_kind
+             ORDER BY n DESC, error_kind ASC
+             LIMIT 5
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchall()
+
+    attempts = int(rollup.attempts_total or 0)
+    succeeded = int(rollup.succeeded or 0)
+    success_rate = (succeeded / attempts) if attempts else None
+
+    payload = {
+        "subscription_id": subscription_id,
+        "window": window,
+        "generated_at": int(time.time()),
+        "attempts_total": attempts,
+        "succeeded": succeeded,
+        "failed": int(rollup.failed or 0),
+        "dlq": int(rollup.dlq or 0),
+        "in_flight": int(rollup.in_flight or 0),
+        "pending": int(rollup.pending or 0),
+        "success_rate": success_rate,
+        "response_time_ms": {
+            "p50": float(rollup.p50_ms) if rollup.p50_ms is not None else None,
+            "p95": float(rollup.p95_ms) if rollup.p95_ms is not None else None,
+            "p99": float(rollup.p99_ms) if rollup.p99_ms is not None else None,
+        },
+        "top_error_kinds": [
+            {"kind": r.error_kind, "count": int(r.n)} for r in error_rows
+        ],
+        "current_lag": _compute_lag(sub_row),
+    }
+
+    _stats_cache_set(cache_key, payload)
+    return jsonify(payload)
