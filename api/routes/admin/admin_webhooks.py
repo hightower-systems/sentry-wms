@@ -28,6 +28,7 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import (
+    ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH,
     ACTION_WEBHOOK_DELIVERY_REPLAY_SINGLE,
     ACTION_WEBHOOK_SECRET_ROTATE,
     ACTION_WEBHOOK_SUBSCRIPTION_CREATE,
@@ -38,7 +39,11 @@ from constants import (
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
-from schemas.webhooks import CreateWebhookRequest, UpdateWebhookRequest
+from schemas.webhooks import (
+    CreateWebhookRequest,
+    ReplayBatchRequest,
+    UpdateWebhookRequest,
+)
 from services.audit_service import write_audit_log
 from services.events_schema_registry import V150_CATALOG
 from services.webhook_dispatcher import env_validator as dispatcher_env
@@ -1196,6 +1201,213 @@ def replay_single(subscription_id, delivery_id):
                 "subscription_id": subscription_id,
                 "original_delivery_id": int(original.delivery_id),
                 "replayed_delivery_id": int(inserted.delivery_id),
+            }
+        ),
+        201,
+    )
+
+
+_REPLAY_BATCH_HARD_CAP_DEFAULT = 10_000
+_REPLAY_BATCH_THROTTLE_S = 60
+
+
+def _replay_batch_hard_cap() -> int:
+    raw = os.environ.get("DISPATCHER_REPLAY_BATCH_HARD_CAP")
+    if not raw:
+        return _REPLAY_BATCH_HARD_CAP_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _REPLAY_BATCH_HARD_CAP_DEFAULT
+    return max(1, value)
+
+
+def _replay_filter_clauses(f) -> tuple[str, dict]:
+    clauses: list[str] = ["d.subscription_id = :sid", "d.status = :status"]
+    params: dict = {"status": f.status}
+    if f.event_type is not None:
+        clauses.append("e.event_type = :event_type")
+        params["event_type"] = f.event_type
+    if f.warehouse_id is not None:
+        clauses.append("e.warehouse_id = :warehouse_id")
+        params["warehouse_id"] = f.warehouse_id
+    if f.completed_at_from is not None:
+        clauses.append("d.completed_at >= :completed_at_from")
+        params["completed_at_from"] = f.completed_at_from
+    if f.completed_at_to is not None:
+        clauses.append("d.completed_at <= :completed_at_to")
+        params["completed_at_to"] = f.completed_at_to
+    return " AND ".join(clauses), params
+
+
+@admin_bp.route("/webhooks/<subscription_id>/replay-batch", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(ReplayBatchRequest)
+@with_db
+def replay_batch(validated, subscription_id):
+    """Bulk replay rows that match the filter. Server-side count
+    bounds the operator-confirmed batch; a 60s throttle protects
+    the dispatcher from accidental double-fire."""
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    sub_row = g.db.execute(
+        text(
+            "SELECT subscription_id, status FROM webhook_subscriptions "
+            "WHERE subscription_id = :sid"
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if sub_row is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+    if sub_row.status == "revoked":
+        return (
+            jsonify(
+                {
+                    "error": "cannot_replay_to_revoked_subscription",
+                    "detail": (
+                        "the subscription is revoked. Resume / un-revoke "
+                        "before replaying."
+                    ),
+                }
+            ),
+            400,
+        )
+
+    # 60s throttle: refuse if a prior batch replay landed within
+    # the window. Tracked through audit_log so a missed-trigger
+    # restart cannot reset the timer.
+    throttle_row = g.db.execute(
+        text(
+            f"""
+            SELECT EXTRACT(EPOCH FROM (NOW() - created_at))::int AS age_s
+              FROM audit_log
+             WHERE action_type = '{ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH}'
+               AND details->>'subscription_id' = :sid
+             ORDER BY log_id DESC
+             LIMIT 1
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if throttle_row is not None and int(throttle_row.age_s) < _REPLAY_BATCH_THROTTLE_S:
+        return (
+            jsonify(
+                {
+                    "error": "replay_batch_throttled",
+                    "seconds_until_retry": (
+                        _REPLAY_BATCH_THROTTLE_S - int(throttle_row.age_s)
+                    ),
+                }
+            ),
+            429,
+        )
+
+    filter_clauses, filter_params = _replay_filter_clauses(validated.filter)
+    filter_params["sid"] = subscription_id
+
+    impact_row = g.db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+              FROM webhook_deliveries d
+              LEFT JOIN integration_events e ON e.event_id = d.event_id
+             WHERE {filter_clauses}
+            """
+        ),
+        filter_params,
+    ).fetchone()
+    impact = int(impact_row.n or 0)
+
+    hard_cap = _replay_batch_hard_cap()
+    if impact > hard_cap and not validated.acknowledge_large_replay:
+        return (
+            jsonify(
+                {
+                    "error": "batch_size_above_hard_cap",
+                    "impact_count": impact,
+                    "hard_cap": hard_cap,
+                    "detail": (
+                        "the matched batch exceeds the per-call cap. "
+                        "Re-submit with acknowledge_large_replay=true to "
+                        "confirm intentional replay at this size."
+                    ),
+                }
+            ),
+            409,
+        )
+
+    if impact == 0:
+        # Nothing to replay; still write an audit row so a
+        # zero-impact filter is visible in the trail.
+        write_audit_log(
+            g.db,
+            action_type=ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH,
+            entity_type="WEBHOOK_SUBSCRIPTION",
+            entity_id=0,
+            user_id=g.current_user["username"],
+            warehouse_id=None,
+            details={
+                "subscription_id": subscription_id,
+                "filter": validated.filter.model_dump(mode="json"),
+                "impact_count": 0,
+                "acknowledge_large_replay": validated.acknowledge_large_replay,
+            },
+        )
+        g.db.commit()
+        return (
+            jsonify(
+                {
+                    "subscription_id": subscription_id,
+                    "impact_count": 0,
+                    "replayed_count": 0,
+                }
+            ),
+            201,
+        )
+
+    # INSERT one new pending row per matching delivery, all in a
+    # single statement so the batch lands or fails atomically.
+    g.db.execute(
+        text(
+            f"""
+            INSERT INTO webhook_deliveries
+                (subscription_id, event_id, attempt_number, status,
+                 scheduled_at, secret_generation)
+            SELECT :sid, d.event_id, 1, 'pending', NOW(), 1
+              FROM webhook_deliveries d
+              LEFT JOIN integration_events e ON e.event_id = d.event_id
+             WHERE {filter_clauses}
+            """
+        ),
+        filter_params,
+    )
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH,
+        entity_type="WEBHOOK_SUBSCRIPTION",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "subscription_id": subscription_id,
+            "filter": validated.filter.model_dump(mode="json"),
+            "impact_count": impact,
+            "acknowledge_large_replay": validated.acknowledge_large_replay,
+        },
+    )
+
+    g.db.commit()
+    return (
+        jsonify(
+            {
+                "subscription_id": subscription_id,
+                "impact_count": impact,
+                "replayed_count": impact,
             }
         ),
         201,

@@ -6,6 +6,7 @@ than slipping past the validator and silently dropping at the SQL
 projection step. Mirrors the v1.5 token-CRUD schema shape.
 """
 
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -74,3 +75,35 @@ class CreateWebhookRequest(BaseModel):
     @classmethod
     def _strip_url(cls, v: str) -> str:
         return v.strip()
+
+
+_REPLAY_STATUS_VALUES = ("dlq", "failed", "succeeded")
+
+
+class ReplayBatchFilter(BaseModel):
+    """Filter narrowing for batch replays. Each absent field
+    contributes no SQL clause."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "dlq"
+    event_type: Optional[str] = Field(None, min_length=1, max_length=64)
+    warehouse_id: Optional[int] = Field(None, ge=1)
+    completed_at_from: Optional[datetime] = None
+    completed_at_to: Optional[datetime] = None
+
+    @field_validator("status")
+    @classmethod
+    def _status_in_allowed(cls, v: str) -> str:
+        if v not in _REPLAY_STATUS_VALUES:
+            raise ValueError(
+                f"status must be one of {_REPLAY_STATUS_VALUES}; got {v!r}"
+            )
+        return v
+
+
+class ReplayBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filter: ReplayBatchFilter = Field(default_factory=ReplayBatchFilter)
+    acknowledge_large_replay: bool = False

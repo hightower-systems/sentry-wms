@@ -771,6 +771,303 @@ class TestPatchUpdate:
         assert "pending_ceiling" not in diff
 
 
+class TestReplayBatch:
+    def _seed_event(self, event_type="test.batch", warehouse_id=1):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO integration_events "
+            "(event_type, event_version, aggregate_type, aggregate_id, "
+            " aggregate_external_id, warehouse_id, source_txn_id, payload) "
+            "VALUES (%s, 1, 'agg', %s, %s, %s, %s, '{}'::jsonb) "
+            "RETURNING event_id",
+            (
+                event_type,
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                warehouse_id,
+                str(uuid.uuid4()),
+            ),
+        )
+        event_id = cur.fetchone()[0]
+        cur.close()
+        return event_id
+
+    def _seed_delivery(
+        self, sub_id: str, event_id: int, status: str = "dlq"
+    ):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, attempted_at, completed_at, secret_generation) "
+            "VALUES (%s, %s, %s, %s, NOW(), NOW(), NOW(), 1) "
+            "RETURNING delivery_id",
+            (sub_id, event_id, 8 if status == "dlq" else 1, status),
+        )
+        delivery_id = cur.fetchone()[0]
+        cur.close()
+        return delivery_id
+
+    def _pending_count(self, sub_id: str):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM webhook_deliveries "
+            "WHERE subscription_id = %s AND status = 'pending'",
+            (sub_id,),
+        )
+        n = cur.fetchone()[0]
+        cur.close()
+        return n
+
+    def test_batch_replay_inserts_pending_rows_and_writes_audit(
+        self, client, auth_headers
+    ):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        for _ in range(3):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        assert body["impact_count"] == 3
+        assert body["replayed_count"] == 3
+        assert self._pending_count(sub_id) == 3
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_DELIVERY_REPLAY_BATCH' "
+            "AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        assert row is not None
+        details = row[0]
+        assert details["impact_count"] == 3
+        assert details["acknowledge_large_replay"] is False
+
+    def test_filter_event_type_narrows(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        match_event = self._seed_event(event_type="want.this")
+        skip_event = self._seed_event(event_type="skip.this")
+        for _ in range(2):
+            self._seed_delivery(sub_id, match_event, "dlq")
+        self._seed_delivery(sub_id, skip_event, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq", "event_type": "want.this"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        assert resp.get_json()["impact_count"] == 2
+
+    def test_filter_warehouse_id_narrows(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        match_event = self._seed_event(warehouse_id=1)
+        skip_event = self._seed_event(warehouse_id=2)
+        self._seed_delivery(sub_id, match_event, "dlq")
+        self._seed_delivery(sub_id, skip_event, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"warehouse_id": 1}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        assert resp.get_json()["impact_count"] == 1
+
+    def test_zero_impact_writes_audit_and_returns_201(
+        self, client, auth_headers
+    ):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        assert resp.get_json()["impact_count"] == 0
+        # No new pending rows.
+        assert self._pending_count(sub_id) == 0
+
+    def test_hard_cap_refuses_without_acknowledgement(
+        self, client, auth_headers, monkeypatch
+    ):
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_HARD_CAP", "2")
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        for _ in range(3):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["error"] == "batch_size_above_hard_cap"
+        assert body["impact_count"] == 3
+        assert body["hard_cap"] == 2
+        # No insert, no audit.
+        assert self._pending_count(sub_id) == 0
+
+    def test_hard_cap_bypassed_with_acknowledgement(
+        self, client, auth_headers, monkeypatch
+    ):
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_HARD_CAP", "2")
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        for _ in range(3):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {"status": "dlq"},
+                "acknowledge_large_replay": True,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        assert resp.get_json()["impact_count"] == 3
+        assert self._pending_count(sub_id) == 3
+
+    def test_throttle_returns_429_within_window(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        first = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+        assert first.status_code == 201
+
+        second = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+        assert second.status_code == 429
+        body = second.get_json()
+        assert body["error"] == "replay_batch_throttled"
+        assert body["seconds_until_retry"] >= 1
+
+    def test_revoked_subscription_rejected(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions SET status = 'revoked' "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "cannot_replay_to_revoked_subscription"
+
+    def test_unknown_filter_key_rejected(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"bogus": "x"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_status_value_rejected(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "pending"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_subscription_returns_404(self, client, auth_headers):
+        resp = client.post(
+            f"/api/admin/webhooks/{uuid.uuid4()}/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_uuid_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/webhooks/not-a-uuid/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.post(
+            f"/api/admin/webhooks/{uuid.uuid4()}/replay-batch",
+            json={"filter": {}},
+        )
+        assert resp.status_code == 401
+
+    def test_cursor_unchanged_after_batch(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "dlq")
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_delivered_event_id FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        before = cur.fetchone()[0]
+        cur.close()
+
+        client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {}},
+            headers=auth_headers,
+        )
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_delivered_event_id FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        after = cur.fetchone()[0]
+        cur.close()
+        assert before == after
+
+
 class TestReplaySingle:
     def _seed_event_and_delivery(self, sub_id: str, status: str = "dlq"):
         conn = get_raw_connection()
