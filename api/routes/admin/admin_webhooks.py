@@ -28,6 +28,7 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import (
+    ACTION_WEBHOOK_DELIVERY_REPLAY_SINGLE,
     ACTION_WEBHOOK_SECRET_ROTATE,
     ACTION_WEBHOOK_SUBSCRIPTION_CREATE,
     ACTION_WEBHOOK_SUBSCRIPTION_DELETE_HARD,
@@ -1082,4 +1083,120 @@ def list_dlq(subscription_id):
             "limit": limit,
             "offset": offset,
         }
+    )
+
+
+@admin_bp.route(
+    "/webhooks/<subscription_id>/replay/<int:delivery_id>", methods=["POST"]
+)
+@require_auth
+@require_role("ADMIN")
+@with_db
+def replay_single(subscription_id, delivery_id):
+    """Replay one delivery by INSERTing a fresh pending row that
+    points at the original event_id. The original row stays put
+    as the audit trail; the subscription cursor is NOT touched."""
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    sub_row = g.db.execute(
+        text(
+            "SELECT subscription_id, status FROM webhook_subscriptions "
+            "WHERE subscription_id = :sid"
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if sub_row is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+
+    original = g.db.execute(
+        text(
+            """
+            SELECT delivery_id, subscription_id, event_id, status
+              FROM webhook_deliveries
+             WHERE delivery_id = :did
+            """
+        ),
+        {"did": delivery_id},
+    ).fetchone()
+    if original is None:
+        return jsonify({"error": "delivery_not_found"}), 404
+
+    if str(original.subscription_id) != subscription_id:
+        # URL-tampering check: a delivery_id that exists but
+        # belongs to a different subscription is rejected with
+        # the same shape an admin would see for any cross-
+        # subscription scope violation. Does not echo the actual
+        # owner.
+        return (
+            jsonify(
+                {
+                    "error": "delivery_subscription_mismatch",
+                    "detail": (
+                        "delivery_id does not belong to the subscription "
+                        "in the URL path."
+                    ),
+                }
+            ),
+            400,
+        )
+
+    if sub_row.status == "revoked":
+        return (
+            jsonify(
+                {
+                    "error": "cannot_replay_to_revoked_subscription",
+                    "detail": (
+                        "the subscription is revoked. Resume / un-revoke "
+                        "before replaying; a revoked subscription is not "
+                        "actively dispatching."
+                    ),
+                }
+            ),
+            400,
+        )
+
+    inserted = g.db.execute(
+        text(
+            """
+            INSERT INTO webhook_deliveries
+                (subscription_id, event_id, attempt_number, status,
+                 scheduled_at, secret_generation)
+            VALUES (:sid, :event_id, 1, 'pending', NOW(), 1)
+            RETURNING delivery_id
+            """
+        ),
+        {"sid": subscription_id, "event_id": original.event_id},
+    ).fetchone()
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_WEBHOOK_DELIVERY_REPLAY_SINGLE,
+        entity_type="WEBHOOK_SUBSCRIPTION",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "subscription_id": subscription_id,
+            "original_delivery_id": int(original.delivery_id),
+            "replayed_delivery_id": int(inserted.delivery_id),
+            "event_id": (
+                int(original.event_id) if original.event_id is not None else None
+            ),
+            "original_status": original.status,
+        },
+    )
+
+    g.db.commit()
+    return (
+        jsonify(
+            {
+                "subscription_id": subscription_id,
+                "original_delivery_id": int(original.delivery_id),
+                "replayed_delivery_id": int(inserted.delivery_id),
+            }
+        ),
+        201,
     )

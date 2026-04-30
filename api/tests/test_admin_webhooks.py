@@ -771,6 +771,216 @@ class TestPatchUpdate:
         assert "pending_ceiling" not in diff
 
 
+class TestReplaySingle:
+    def _seed_event_and_delivery(self, sub_id: str, status: str = "dlq"):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO integration_events "
+            "(event_type, event_version, aggregate_type, aggregate_id, "
+            " aggregate_external_id, warehouse_id, source_txn_id, payload) "
+            "VALUES ('test.replay', 1, 'agg', %s, %s, 1, %s, '{}'::jsonb) "
+            "RETURNING event_id",
+            (
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+            ),
+        )
+        event_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, attempted_at, completed_at, secret_generation) "
+            "VALUES (%s, %s, %s, %s, NOW(), NOW(), NOW(), 1) "
+            "RETURNING delivery_id",
+            (sub_id, event_id, 8 if status == "dlq" else 1, status),
+        )
+        delivery_id = cur.fetchone()[0]
+        cur.close()
+        return event_id, delivery_id
+
+    def _delivery_count(self, sub_id: str, status: str = None):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        if status is None:
+            cur.execute(
+                "SELECT COUNT(*) FROM webhook_deliveries WHERE subscription_id = %s",
+                (sub_id,),
+            )
+        else:
+            cur.execute(
+                "SELECT COUNT(*) FROM webhook_deliveries "
+                "WHERE subscription_id = %s AND status = %s",
+                (sub_id, status),
+            )
+        n = cur.fetchone()[0]
+        cur.close()
+        return n
+
+    def test_replay_dlq_creates_pending_row(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id, delivery_id = self._seed_event_and_delivery(sub_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{delivery_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        body = resp.get_json()
+        assert body["original_delivery_id"] == delivery_id
+        assert isinstance(body["replayed_delivery_id"], int)
+        assert body["replayed_delivery_id"] != delivery_id
+
+        assert self._delivery_count(sub_id, "pending") == 1
+        assert self._delivery_count(sub_id, "dlq") == 1
+
+    def test_replay_does_not_advance_cursor(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        _, delivery_id = self._seed_event_and_delivery(sub_id, "dlq")
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_delivered_event_id FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        before = cur.fetchone()[0]
+        cur.close()
+
+        client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{delivery_id}",
+            headers=auth_headers,
+        )
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT last_delivered_event_id FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        after = cur.fetchone()[0]
+        cur.close()
+        assert before == after
+
+    def test_replay_failed_or_succeeded_also_creates_pending(
+        self, client, auth_headers
+    ):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        _, failed_id = self._seed_event_and_delivery(sub_id, "failed")
+        _, success_id = self._seed_event_and_delivery(sub_id, "succeeded")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{failed_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{success_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+
+        assert self._delivery_count(sub_id, "pending") == 2
+
+    def test_double_replay_creates_two_pending_rows(
+        self, client, auth_headers
+    ):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        _, delivery_id = self._seed_event_and_delivery(sub_id, "dlq")
+
+        client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{delivery_id}",
+            headers=auth_headers,
+        )
+        client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{delivery_id}",
+            headers=auth_headers,
+        )
+        assert self._delivery_count(sub_id, "pending") == 2
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_DELIVERY_REPLAY_SINGLE' "
+            "AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        audit_count = cur.fetchone()[0]
+        cur.close()
+        assert audit_count == 2
+
+    def test_url_tampering_rejected(self, client, auth_headers):
+        # Create two subscriptions; replay across them must fail.
+        a = _create_one(client, auth_headers, display_name="a")
+        b = _create_one(client, auth_headers, display_name="b")
+        _, delivery_id = self._seed_event_and_delivery(
+            a["subscription_id"], "dlq"
+        )
+
+        resp = client.post(
+            f"/api/admin/webhooks/{b['subscription_id']}/replay/{delivery_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "delivery_subscription_mismatch"
+
+    def test_replay_to_revoked_rejected(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        _, delivery_id = self._seed_event_and_delivery(sub_id, "dlq")
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions SET status = 'revoked' "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/{delivery_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "cannot_replay_to_revoked_subscription"
+
+    def test_unknown_subscription_returns_404(self, client, auth_headers):
+        resp = client.post(
+            f"/api/admin/webhooks/{uuid.uuid4()}/replay/1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "subscription_not_found"
+
+    def test_unknown_delivery_returns_404(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay/99999999",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "delivery_not_found"
+
+    def test_invalid_uuid_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/webhooks/not-a-uuid/replay/1", headers=auth_headers
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.post(f"/api/admin/webhooks/{uuid.uuid4()}/replay/1")
+        assert resp.status_code == 401
+
+
 class TestDlqViewer:
     def _seed_event(self):
         conn = get_raw_connection()
