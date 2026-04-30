@@ -445,6 +445,174 @@ function DlqPanel({ subscription, onClose }) {
   );
 }
 
+const STATS_WINDOW_OPTIONS = ['1h', '6h', '24h', '7d'];
+
+function formatMs(v) {
+  if (v === null || v === undefined) return '-';
+  return `${Math.round(v)} ms`;
+}
+
+function StatsPanel({ subscription, onClose }) {
+  const [window, setStatsWindow] = useState('24h');
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [panelError, setPanelError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setPanelError('');
+      const res = await api.get(
+        `/admin/webhooks/${subscription.subscription_id}/stats?window=${window}`,
+      );
+      if (cancelled) return;
+      if (res?.ok) {
+        setStats(await res.json());
+      } else {
+        const body = await res?.json();
+        setPanelError(body?.error || 'Failed to load stats');
+      }
+      setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [subscription.subscription_id, window]);
+
+  const counters = [
+    { label: 'Attempts', key: 'attempts_total' },
+    { label: 'Succeeded', key: 'succeeded' },
+    { label: 'Failed', key: 'failed' },
+    { label: 'DLQ', key: 'dlq' },
+    { label: 'In flight', key: 'in_flight' },
+    { label: 'Pending', key: 'pending' },
+  ];
+
+  return (
+    <Modal
+      title={`Stats - ${subscription.display_name}`}
+      onClose={onClose}
+      footer={<button className="btn" onClick={onClose}>Close</button>}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          Server caches for 30s; switch windows to force a re-read.
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {STATS_WINDOW_OPTIONS.map((w) => (
+            <button
+              key={w}
+              className={`btn btn-sm${w === window ? ' btn-primary' : ''}`}
+              onClick={() => setStatsWindow(w)}
+            >
+              {w}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {panelError && <div className="form-error" style={{ marginBottom: 12 }}>{panelError}</div>}
+
+      {loading && !stats && (
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Loading…</div>
+      )}
+
+      {stats && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+            {counters.map((c) => (
+              <div
+                key={c.key}
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  padding: 12,
+                }}
+              >
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                  {c.label}
+                </div>
+                <div className="mono" style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>
+                  {stats[c.key] ?? 0}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                Success rate
+              </div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>
+                {formatRate(stats.success_rate)}
+              </div>
+            </div>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                Current lag (events)
+              </div>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>
+                {stats.current_lag ?? 0}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 8 }}>
+              Response time (succeeded only)
+            </div>
+            <div style={{ display: 'flex', gap: 24 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>p50</div>
+                <div className="mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                  {formatMs(stats.response_time_ms?.p50)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>p95</div>
+                <div className="mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                  {formatMs(stats.response_time_ms?.p95)}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>p99</div>
+                <div className="mono" style={{ fontSize: 16, fontWeight: 600 }}>
+                  {formatMs(stats.response_time_ms?.p99)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12, marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 8 }}>
+              Top error kinds
+            </div>
+            {(stats.top_error_kinds || []).length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No errors in window.</div>
+            ) : (
+              <table style={{ width: '100%', fontSize: 13 }}>
+                <tbody>
+                  {stats.top_error_kinds.map((e) => (
+                    <tr key={e.kind}>
+                      <td className="mono">{e.kind}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{e.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            Window {stats.window}. Generated at {new Date(stats.generated_at * 1000).toLocaleString()}.
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 const EMPTY_FORM = {
   display_name: '',
   connector_id: '',
@@ -483,6 +651,7 @@ export default function Webhooks() {
   const [purgeError, setPurgeError] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(null);
   const [dlqRow, setDlqRow] = useState(null);
+  const [statsRow, setStatsRow] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -812,6 +981,13 @@ export default function Webhooks() {
             title="DLQ viewer + replay"
           >
             DLQ
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={(e) => { e.stopPropagation(); setStatsRow(r); }}
+            title="Stats"
+          >
+            Stats
           </button>
           <button
             className="btn btn-sm btn-danger"
@@ -1168,6 +1344,13 @@ export default function Webhooks() {
         <DlqPanel
           subscription={dlqRow}
           onClose={() => { setDlqRow(null); load(); }}
+        />
+      )}
+
+      {statsRow && (
+        <StatsPanel
+          subscription={statsRow}
+          onClose={() => setStatsRow(null)}
         />
       )}
 
