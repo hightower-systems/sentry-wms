@@ -18,6 +18,7 @@ from routes.admin import (  # noqa: E402, F401
     admin_consumer_groups,
     admin_items,
     admin_orders,
+    admin_search,
     admin_tokens,
     admin_users,
     admin_warehouse,
