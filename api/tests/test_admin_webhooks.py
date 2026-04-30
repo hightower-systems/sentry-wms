@@ -771,6 +771,238 @@ class TestPatchUpdate:
         assert "pending_ceiling" not in diff
 
 
+class TestDelete:
+    def _publishes(self, monkeypatch):
+        from services.webhook_dispatcher import wake as wake_module
+
+        captured = []
+
+        def fake_publish(redis_url, subscription_id, event):
+            captured.append({"subscription_id": subscription_id, "event": event})
+
+        monkeypatch.setattr(wake_module, "publish_subscription_event", fake_publish)
+        from routes.admin import admin_webhooks as route_module
+
+        monkeypatch.setattr(route_module, "dispatcher_wake", wake_module)
+        return captured
+
+    def _subscription_status(self, sub_id: str):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT status, pause_reason FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row
+
+    def test_soft_delete_flips_status_and_publishes_deleted(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        resp = client.delete(
+            f"/api/admin/webhooks/{sub_id}", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["purged"] is False
+        assert body["status"] == "revoked"
+
+        status, pause_reason = self._subscription_status(sub_id)
+        assert status == "revoked"
+        assert pause_reason is None
+        assert any(c["event"] == "deleted" for c in captured)
+
+    def test_soft_delete_idempotent_on_revoked(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        client.delete(f"/api/admin/webhooks/{sub_id}", headers=auth_headers)
+        first_count = len(captured)
+
+        resp = client.delete(
+            f"/api/admin/webhooks/{sub_id}", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        # Second call must not publish a duplicate or write a
+        # second audit row.
+        assert len(captured) == first_count
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_DELETE_SOFT' "
+            "AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        soft_count = cur.fetchone()[0]
+        cur.close()
+        assert soft_count == 1
+
+    def test_hard_delete_removes_row_writes_tombstone_publishes_deleted(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        url = f"https://example.com/hard-{uuid.uuid4()}"
+        created = _create_one(client, auth_headers, delivery_url=url)
+        sub_id = created["subscription_id"]
+
+        resp = client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["purged"] is True
+        tombstone_id = body["tombstone_id"]
+        assert isinstance(tombstone_id, int)
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM webhook_subscriptions WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        assert cur.fetchone() is None
+
+        cur.execute(
+            "SELECT delivery_url_at_delete, acknowledged_at "
+            "FROM webhook_subscriptions_tombstones WHERE tombstone_id = %s",
+            (tombstone_id,),
+        )
+        ts_row = cur.fetchone()
+        assert ts_row is not None
+        assert ts_row[0] == url
+        assert ts_row[1] is None  # tombstone fresh, not acknowledged
+
+        # webhook_secrets cascades on the FK; the row(s) are gone.
+        cur.execute(
+            "SELECT COUNT(*) FROM webhook_secrets WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        assert cur.fetchone()[0] == 0
+        cur.close()
+
+        assert any(c["event"] == "deleted" for c in captured)
+
+    def test_hard_delete_blocked_by_live_deliveries(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO integration_events "
+            "(event_type, event_version, aggregate_type, aggregate_id, "
+            " aggregate_external_id, warehouse_id, source_txn_id, payload) "
+            "VALUES ('test.live', 1, 'agg', %s, %s, 1, %s, '{}'::jsonb) "
+            "RETURNING event_id",
+            (
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+            ),
+        )
+        event_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, secret_generation) "
+            "VALUES (%s, %s, 1, 'pending', NOW(), 1)",
+            (sub_id, event_id),
+        )
+        cur.close()
+
+        resp = client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["error"] == "live_deliveries_block_hard_delete"
+        assert body["live_count"] >= 1
+
+        # Row still exists; nothing was published.
+        assert self._subscription_status(sub_id)[0] == "active"
+        assert captured == []
+
+    def test_hard_delete_tombstone_triggers_url_reuse_gate_on_recreate(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        url = f"https://example.com/reuse-after-purge-{uuid.uuid4()}"
+        created = _create_one(client, auth_headers, delivery_url=url)
+        sub_id = created["subscription_id"]
+        client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+
+        # Re-create with the same URL: the URL-reuse gate fires.
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "reuse",
+                "delivery_url": url,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        assert resp.get_json()["error"] == "url_reuse_tombstone"
+
+    def test_hard_delete_writes_audit_row(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_DELETE_HARD' "
+            "AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        assert row is not None
+        details = row[0]
+        assert details["status_before"] == "active"
+        assert "tombstone_id" in details
+
+    def test_unknown_uuid_returns_404(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        resp = client.delete(
+            f"/api/admin/webhooks/{uuid.uuid4()}", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_uuid_returns_400(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        resp = client.delete(
+            "/api/admin/webhooks/not-a-uuid", headers=auth_headers
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.delete(f"/api/admin/webhooks/{uuid.uuid4()}")
+        assert resp.status_code == 401
+
+
 class TestRotateSecret:
     def _secrets_for(self, subscription_id: str):
         conn = get_raw_connection()

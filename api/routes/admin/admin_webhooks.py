@@ -30,6 +30,8 @@ from sqlalchemy import text
 from constants import (
     ACTION_WEBHOOK_SECRET_ROTATE,
     ACTION_WEBHOOK_SUBSCRIPTION_CREATE,
+    ACTION_WEBHOOK_SUBSCRIPTION_DELETE_HARD,
+    ACTION_WEBHOOK_SUBSCRIPTION_DELETE_SOFT,
     ACTION_WEBHOOK_SUBSCRIPTION_UPDATE,
 )
 from middleware.auth_middleware import require_auth, require_role
@@ -776,4 +778,178 @@ def rotate_webhook_secret(subscription_id):
             }
         ),
         200,
+    )
+
+
+@admin_bp.route("/webhooks/<subscription_id>", methods=["DELETE"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def delete_webhook(subscription_id):
+    """Soft delete (default) or hard delete (?purge=true).
+
+    Soft delete flips status to 'revoked' and clears pause_reason;
+    the row stays so historical webhook_deliveries keep their FK
+    target. Hard delete removes the row and writes a tombstone;
+    refuses with 409 when any pending / in_flight delivery exists
+    so the RESTRICT FK on webhook_deliveries.subscription_id is
+    not the failure surface.
+    """
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    purge = request.args.get("purge", "").lower() == "true"
+
+    current = g.db.execute(
+        text(
+            """
+            SELECT subscription_id, connector_id, delivery_url, status
+              FROM webhook_subscriptions
+             WHERE subscription_id = :sid
+             FOR UPDATE
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if current is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+
+    redis_url = os.environ.get("REDIS_URL")
+
+    if purge:
+        live = g.db.execute(
+            text(
+                """
+                SELECT COUNT(*) AS n
+                  FROM webhook_deliveries
+                 WHERE subscription_id = :sid
+                   AND status IN ('pending', 'in_flight')
+                """
+            ),
+            {"sid": subscription_id},
+        ).fetchone()
+        if int(live.n or 0) > 0:
+            return (
+                jsonify(
+                    {
+                        "error": "live_deliveries_block_hard_delete",
+                        "live_count": int(live.n),
+                        "detail": (
+                            "the subscription has pending or in_flight "
+                            "delivery rows; hard delete is refused while "
+                            "any live row references it. Soft-delete to "
+                            "stop dispatch, then re-issue with ?purge=true "
+                            "after the deliveries terminate."
+                        ),
+                    }
+                ),
+                409,
+            )
+
+        tombstone_row = g.db.execute(
+            text(
+                """
+                INSERT INTO webhook_subscriptions_tombstones
+                    (subscription_id, delivery_url_at_delete,
+                     connector_id, deleted_by)
+                VALUES (:sid, :url, :connector_id, :uid)
+                RETURNING tombstone_id
+                """
+            ),
+            {
+                "sid": subscription_id,
+                "url": current.delivery_url,
+                "connector_id": current.connector_id,
+                "uid": g.current_user["user_id"],
+            },
+        ).fetchone()
+        tombstone_id = int(tombstone_row.tombstone_id)
+
+        g.db.execute(
+            text(
+                "DELETE FROM webhook_subscriptions WHERE subscription_id = :sid"
+            ),
+            {"sid": subscription_id},
+        )
+
+        write_audit_log(
+            g.db,
+            action_type=ACTION_WEBHOOK_SUBSCRIPTION_DELETE_HARD,
+            entity_type="WEBHOOK_SUBSCRIPTION",
+            entity_id=0,
+            user_id=g.current_user["username"],
+            warehouse_id=None,
+            details={
+                "subscription_id": subscription_id,
+                "delivery_url": current.delivery_url,
+                "connector_id": current.connector_id,
+                "status_before": current.status,
+                "tombstone_id": tombstone_id,
+            },
+        )
+
+        g.db.commit()
+
+        dispatcher_wake.publish_subscription_event(
+            redis_url, subscription_id, "deleted"
+        )
+        return jsonify(
+            {
+                "subscription_id": subscription_id,
+                "purged": True,
+                "tombstone_id": tombstone_id,
+            }
+        )
+
+    # Soft delete path
+    if current.status == "revoked":
+        # Idempotent: a second soft delete on an already-revoked
+        # subscription returns 200 without writing a new audit
+        # row or publishing pubsub. The status is already terminal
+        # and the dispatcher is already evicted.
+        return jsonify(
+            {"subscription_id": subscription_id, "purged": False, "status": "revoked"}
+        )
+
+    g.db.execute(
+        text(
+            """
+            UPDATE webhook_subscriptions
+               SET status = 'revoked',
+                   pause_reason = NULL,
+                   updated_at = NOW()
+             WHERE subscription_id = :sid
+            """
+        ),
+        {"sid": subscription_id},
+    )
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_WEBHOOK_SUBSCRIPTION_DELETE_SOFT,
+        entity_type="WEBHOOK_SUBSCRIPTION",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "subscription_id": subscription_id,
+            "delivery_url": current.delivery_url,
+            "connector_id": current.connector_id,
+            "status_before": current.status,
+        },
+    )
+
+    g.db.commit()
+
+    dispatcher_wake.publish_subscription_event(
+        redis_url, subscription_id, "deleted"
+    )
+    return jsonify(
+        {
+            "subscription_id": subscription_id,
+            "purged": False,
+            "status": "revoked",
+        }
     )
