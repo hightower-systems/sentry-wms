@@ -415,6 +415,62 @@ class TestSubscriptionWorkerPoolFanout:
         finally:
             cleanup()
 
+    def test_orphan_worker_evicted_on_refresh(self):
+        """Issue #207: a worker whose subscription_id is no
+        longer in the active set gets evicted on the next
+        refresh cycle. Reproduces the phantom-worker shape from
+        the v1.6.0 pre-merge gate (test fixture rolls back, direct
+        SQL DELETE, etc.) where the admin pubsub publication is
+        bypassed and the pool keeps a stale worker forever."""
+        sub_id, _plaintext, cleanup = _make_subscription()
+        cleanup_ran = False
+        try:
+            queue = Queue()
+            pool = dispatch_module.SubscriptionWorkerPool(
+                database_url=os.environ["DATABASE_URL"],
+                wake_queue=queue,
+                refresh_interval_s=300.0,
+            )
+            pool.start()
+            try:
+                worker = None
+                for _ in range(30):
+                    with pool._lock:  # noqa: SLF001
+                        worker = pool._workers.get(sub_id)  # noqa: SLF001
+                    if worker is not None:
+                        break
+                    time.sleep(0.1)
+                assert worker is not None, "pool did not spawn worker"
+
+                # Simulate the out-of-band removal path: cleanup
+                # deletes the subscription via direct SQL without
+                # publishing the cross-worker pubsub event the
+                # admin API would have published. This is the
+                # phantom-worker reproduction.
+                cleanup()
+                cleanup_ran = True
+
+                # Drive a refresh manually instead of waiting for
+                # the 300s interval. The orphan reconciliation
+                # should evict our worker since sub_id is no
+                # longer in webhook_subscriptions.
+                pool._refresh_active_subscriptions()  # noqa: SLF001
+
+                worker.join(timeout=3.0)
+                assert not worker.is_alive(), (
+                    "orphan worker must exit after reconciliation"
+                )
+                with pool._lock:  # noqa: SLF001
+                    assert sub_id not in pool._workers, (  # noqa: SLF001
+                        "orphan worker must be removed from the pool dict"
+                    )
+            finally:
+                pool.shutdown()
+                pool.join(timeout_s=5)
+        finally:
+            if not cleanup_ran:
+                cleanup()
+
     def test_resumed_event_just_signals_does_not_evict(self):
         """Plan §2.9: ``resumed`` is NOT in the eviction set.
         The fanout signals the worker (so its next deliver_one

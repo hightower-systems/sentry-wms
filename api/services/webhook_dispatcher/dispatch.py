@@ -887,11 +887,33 @@ class SubscriptionWorker(threading.Thread):
                         # query. Clean exit shape per plan §2.9.
                         return
                     except Exception as exc:  # noqa: BLE001
-                        LOGGER.warning(
-                            "subscription %s deliver_one raised: %s",
-                            self.subscription_id,
-                            exc,
-                        )
+                        # "set_session cannot be used inside a
+                        # transaction" indicates the connection is
+                        # in a corrupted state (a transaction is
+                        # open while psycopg2 is trying to set
+                        # session-level isolation). Surface at
+                        # ERROR with the exception type so the
+                        # operator sees structured signal, not a
+                        # silent retry loop. The phantom-worker
+                        # case (#207) was the original repro: an
+                        # orphan worker without a matching
+                        # subscription kept a connection in a
+                        # half-open transaction state and the
+                        # warning fired every fallback-poll tick.
+                        msg = str(exc)
+                        if "set_session cannot be used inside a transaction" in msg:
+                            LOGGER.error(
+                                "subscription %s connection state corrupted "
+                                "(set_session inside transaction); type=%s",
+                                self.subscription_id,
+                                type(exc).__name__,
+                            )
+                        else:
+                            LOGGER.warning(
+                                "subscription %s deliver_one raised: %s",
+                                self.subscription_id,
+                                exc,
+                            )
                         try:
                             self._conn.rollback()
                         except Exception:  # noqa: BLE001
@@ -1128,6 +1150,27 @@ class SubscriptionWorkerPool:
                 worker.signal()  # wake immediately to drain anything pending
                 self._workers[sub_id] = worker
                 LOGGER.info("spawned worker for subscription %s", sub_id)
+
+            # Reconcile orphans (#207). The plan §2.9 cross-worker
+            # invalidation table covers admin-driven mutations
+            # (paused / deleted via the API publish a pubsub
+            # event). It does not cover out-of-band removals: a
+            # rolled-back test fixture, a direct SQL DELETE, or a
+            # subscription_id we registered a worker for that is
+            # no longer in the active set for any reason. Without
+            # this loop the orphan worker stays alive forever,
+            # logs every fallback-poll tick, and pins a DB
+            # connection slot. Evict here so reconciliation
+            # converges on the DB's authoritative active set.
+            orphans = set(self._workers.keys()) - active
+            for sub_id in orphans:
+                LOGGER.info(
+                    "evicting orphan worker for subscription %s "
+                    "(no longer in webhook_subscriptions active set)",
+                    sub_id,
+                )
+                worker = self._workers.pop(sub_id)
+                worker.request_eviction()
 
     def _run_refresh(self) -> None:
         while not self._shutdown.wait(timeout=self.refresh_interval_s):
