@@ -771,6 +771,154 @@ class TestPatchUpdate:
         assert "pending_ceiling" not in diff
 
 
+class TestDlqViewer:
+    def _seed_event(self):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO integration_events "
+            "(event_type, event_version, aggregate_type, aggregate_id, "
+            " aggregate_external_id, warehouse_id, source_txn_id, payload) "
+            "VALUES ('test.dlq', 1, 'agg', %s, %s, 1, %s, '{}'::jsonb) "
+            "RETURNING event_id, aggregate_external_id, source_txn_id",
+            (
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+            ),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row[0], row[1], row[2]
+
+    def _seed_delivery(self, sub_id: str, event_id: int, status: str):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, attempted_at, completed_at, http_status, "
+            " error_kind, error_detail, secret_generation) "
+            "VALUES (%s, %s, %s, %s, NOW(), NOW(), NOW(), %s, %s, %s, 1) "
+            "RETURNING delivery_id",
+            (
+                sub_id,
+                event_id,
+                8 if status == "dlq" else 1,
+                status,
+                500 if status in ("dlq", "failed") else 200,
+                "5xx" if status in ("dlq", "failed") else None,
+                "consumer 500" if status in ("dlq", "failed") else None,
+            ),
+        )
+        delivery_id = cur.fetchone()[0]
+        cur.close()
+        return delivery_id
+
+    def test_empty_dlq_returns_zero_total(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/dlq", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["total"] == 0
+        assert body["deliveries"] == []
+        assert body["limit"] == 50
+        assert body["offset"] == 0
+
+    def test_dlq_returns_rows_newest_first_with_event_context(
+        self, client, auth_headers
+    ):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id, ext_id, txn_id = self._seed_event()
+        first_id = self._seed_delivery(sub_id, event_id, "dlq")
+        second_id = self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/dlq", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["total"] == 2
+        ids = [d["delivery_id"] for d in body["deliveries"]]
+        # Stable secondary order: delivery_id DESC on identical
+        # completed_at ties.
+        assert ids == [second_id, first_id]
+
+        first_payload = body["deliveries"][0]
+        assert first_payload["event"]["event_type"] == "test.dlq"
+        assert first_payload["event"]["aggregate_external_id"] == str(ext_id)
+        assert first_payload["event"]["source_txn_id"] == str(txn_id)
+        assert first_payload["http_status"] == 500
+        assert first_payload["error_kind"] == "5xx"
+
+    def test_non_dlq_rows_excluded(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id, _, _ = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "failed")
+        self._seed_delivery(sub_id, event_id, "succeeded")
+        kept = self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/dlq", headers=auth_headers
+        )
+        body = resp.get_json()
+        assert body["total"] == 1
+        assert [d["delivery_id"] for d in body["deliveries"]] == [kept]
+
+    def test_pagination_limit_and_offset(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        event_id, _, _ = self._seed_event()
+        ids = [self._seed_delivery(sub_id, event_id, "dlq") for _ in range(5)]
+        ids_desc = list(reversed(ids))
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/dlq?limit=2&offset=0",
+            headers=auth_headers,
+        )
+        page1 = [d["delivery_id"] for d in resp.get_json()["deliveries"]]
+        assert page1 == ids_desc[:2]
+
+        resp = client.get(
+            f"/api/admin/webhooks/{sub_id}/dlq?limit=2&offset=2",
+            headers=auth_headers,
+        )
+        page2 = [d["delivery_id"] for d in resp.get_json()["deliveries"]]
+        assert page2 == ids_desc[2:4]
+
+    def test_pagination_invalid_inputs_rejected(self, client, auth_headers):
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        for bad in ("limit=0", "limit=501", "offset=-1", "limit=abc"):
+            resp = client.get(
+                f"/api/admin/webhooks/{sub_id}/dlq?{bad}",
+                headers=auth_headers,
+            )
+            assert resp.status_code == 400, bad
+
+    def test_unknown_uuid_returns_404(self, client, auth_headers):
+        resp = client.get(
+            f"/api/admin/webhooks/{uuid.uuid4()}/dlq", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_uuid_returns_400(self, client, auth_headers):
+        resp = client.get(
+            "/api/admin/webhooks/not-a-uuid/dlq", headers=auth_headers
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.get(f"/api/admin/webhooks/{uuid.uuid4()}/dlq")
+        assert resp.status_code == 401
+
+
 class TestDelete:
     def _publishes(self, monkeypatch):
         from services.webhook_dispatcher import wake as wake_module

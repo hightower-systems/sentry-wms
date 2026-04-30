@@ -953,3 +953,133 @@ def delete_webhook(subscription_id):
             "status": "revoked",
         }
     )
+
+
+_DLQ_LIMIT_MAX = 500
+_DLQ_LIMIT_DEFAULT = 50
+
+
+@admin_bp.route("/webhooks/<subscription_id>/dlq", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def list_dlq(subscription_id):
+    """Paginated DLQ viewer. Returns the dead-letter delivery
+    rows for the subscription joined with the source
+    integration_events context so the operator can read what
+    payload failed without a second round-trip."""
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    try:
+        limit = int(request.args.get("limit", _DLQ_LIMIT_DEFAULT))
+        offset = int(request.args.get("offset", 0))
+    except ValueError:
+        return jsonify({"error": "invalid_pagination"}), 400
+    if limit < 1 or limit > _DLQ_LIMIT_MAX or offset < 0:
+        return (
+            jsonify(
+                {
+                    "error": "invalid_pagination",
+                    "detail": (
+                        f"limit must be in [1, {_DLQ_LIMIT_MAX}]; "
+                        f"offset must be >= 0"
+                    ),
+                }
+            ),
+            400,
+        )
+
+    sub_row = g.db.execute(
+        text("SELECT 1 FROM webhook_subscriptions WHERE subscription_id = :sid"),
+        {"sid": subscription_id},
+    ).fetchone()
+    if sub_row is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+
+    total = int(
+        g.db.execute(
+            text(
+                """
+                SELECT COUNT(*) AS n
+                  FROM webhook_deliveries
+                 WHERE subscription_id = :sid
+                   AND status = 'dlq'
+                """
+            ),
+            {"sid": subscription_id},
+        ).fetchone().n
+        or 0
+    )
+
+    rows = g.db.execute(
+        text(
+            """
+            SELECT d.delivery_id, d.event_id, d.attempt_number,
+                   d.http_status, d.error_kind, d.error_detail,
+                   d.attempted_at, d.completed_at, d.scheduled_at,
+                   d.secret_generation,
+                   e.event_type, e.event_timestamp,
+                   e.aggregate_external_id, e.warehouse_id,
+                   e.source_txn_id
+              FROM webhook_deliveries d
+              LEFT JOIN integration_events e ON e.event_id = d.event_id
+             WHERE d.subscription_id = :sid
+               AND d.status = 'dlq'
+             ORDER BY d.completed_at DESC, d.delivery_id DESC
+             LIMIT :limit OFFSET :offset
+            """
+        ),
+        {"sid": subscription_id, "limit": limit, "offset": offset},
+    ).fetchall()
+
+    deliveries = [
+        {
+            "delivery_id": int(r.delivery_id),
+            "event_id": int(r.event_id) if r.event_id is not None else None,
+            "attempt_number": int(r.attempt_number),
+            "http_status": (
+                int(r.http_status) if r.http_status is not None else None
+            ),
+            "error_kind": r.error_kind,
+            "error_detail": r.error_detail,
+            "attempted_at": (
+                r.attempted_at.isoformat() if r.attempted_at else None
+            ),
+            "completed_at": (
+                r.completed_at.isoformat() if r.completed_at else None
+            ),
+            "scheduled_at": (
+                r.scheduled_at.isoformat() if r.scheduled_at else None
+            ),
+            "secret_generation": int(r.secret_generation),
+            "event": {
+                "event_type": r.event_type,
+                "event_timestamp": (
+                    r.event_timestamp.isoformat() if r.event_timestamp else None
+                ),
+                "aggregate_external_id": (
+                    str(r.aggregate_external_id)
+                    if r.aggregate_external_id is not None
+                    else None
+                ),
+                "warehouse_id": (
+                    int(r.warehouse_id) if r.warehouse_id is not None else None
+                ),
+                "source_txn_id": r.source_txn_id,
+            },
+        }
+        for r in rows
+    ]
+
+    return jsonify(
+        {
+            "subscription_id": subscription_id,
+            "deliveries": deliveries,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
