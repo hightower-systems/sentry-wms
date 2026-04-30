@@ -156,6 +156,8 @@ class WakeOrchestrator:
         redis_url: Optional[str],
         fallback_poll_ms: int,
         queue_maxsize: int = 0,
+        listen_keepalive_s: float = 30.0,
+        listen_reconnect_backoff_s: float = 1.0,
     ):
         self.database_url = database_url
         self.redis_url = redis_url
@@ -169,6 +171,19 @@ class WakeOrchestrator:
         self._pubsub_thread: Optional[threading.Thread] = None
         self._started = False
         self._lock = threading.Lock()
+        # #208: LISTEN connection keepalive + reconnect counters.
+        # listen_keepalive_s drives a SELECT 1 every N seconds in
+        # the absence of NOTIFY traffic so a silently dead
+        # connection is detected before the dispatcher quietly
+        # falls back to poll-only mode for the rest of its
+        # lifetime. listen_reconnect_backoff_s is the floor sleep
+        # between failed reconnect attempts.
+        self.listen_keepalive_s = listen_keepalive_s
+        self.listen_reconnect_backoff_s = listen_reconnect_backoff_s
+        self._notify_count = 0
+        self._poll_count = 0
+        self._listen_reconnect_count = 0
+        self._counters_lock = threading.Lock()
 
     # -- Lifecycle ----------------------------------------------------
 
@@ -176,17 +191,41 @@ class WakeOrchestrator:
         with self._lock:
             if self._started:
                 return
-            self._open_listen_connection()
+            # #208: do not raise if the initial LISTEN open fails;
+            # the run loop reconnects with backoff. Pre-208, a
+            # transient DB blip at boot would crash the dispatcher.
+            try:
+                self._open_listen_connection()
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "wake: initial LISTEN connection failed (%s); the run "
+                    "loop will retry with backoff",
+                    exc,
+                )
+                self._listen_conn = None
             self._listen_thread = self._spawn(self._run_listen, "wake-listen")
             self._poll_thread = self._spawn(self._run_fallback_poll, "wake-poll")
             self._pubsub_thread = self._spawn(self._run_pubsub, "wake-pubsub")
             self._started = True
             LOGGER.info(
-                "wake orchestrator started (listen=%s, poll=%.2fs, redis=%s)",
+                "wake orchestrator started (listen=%s, poll=%.2fs, redis=%s, "
+                "listen_keepalive=%.1fs)",
                 INTEGRATION_EVENTS_CHANNEL,
                 self.fallback_poll_s,
                 "on" if self.redis_url else "off",
+                self.listen_keepalive_s,
             )
+
+    def health_snapshot(self) -> dict:
+        """Counter snapshot for operator-visible metrics. Returns
+        the running NOTIFY-arrival, fallback-poll, and LISTEN-
+        reconnect totals since process start."""
+        with self._counters_lock:
+            return {
+                "notify_count": self._notify_count,
+                "poll_count": self._poll_count,
+                "listen_reconnect_count": self._listen_reconnect_count,
+            }
 
     def shutdown(self) -> None:
         """Request shutdown. Idempotent. Closes the blocking I/O
@@ -251,34 +290,92 @@ class WakeOrchestrator:
         cur.close()
 
     def _run_listen(self) -> None:
-        """LISTEN thread. Blocks on select() with a 1s timeout so
-        a shutdown event is observed within one cycle. Mirrors the
-        ``snapshot_keeper._drain_notifications`` pattern.
+        """LISTEN thread with reconnect + keepalive (#208).
 
-        On a connection error (typical shape: shutdown closed the
-        connection out from under us) the loop exits cleanly; the
-        fallback poll continues to wake the dispatcher in the
-        meantime, and a future re-init can re-open the LISTEN
-        connection if needed.
+        Pre-208: any connection error silently exited the thread;
+        the dispatcher then ran on poll-only mode for the rest of
+        its lifetime, with NOTIFY-driven sub-second wakes
+        permanently broken. Symptom: p95 visible_to_scheduled_ms
+        floor at the fallback poll cadence.
+
+        Post-208 the loop:
+
+          1. Reopens the LISTEN connection on any transient
+             failure (network blip, idle timeout, server restart).
+             Backoff floor is ``listen_reconnect_backoff_s``;
+             retries until shutdown.
+          2. Runs ``SELECT 1`` every ``listen_keepalive_s`` in the
+             absence of NOTIFY traffic so a silently dead
+             connection surfaces an OperationalError the loop can
+             react to, instead of waiting for the next NOTIFY that
+             will never arrive.
+          3. Counts NOTIFY arrivals and reconnects so the
+             :meth:`health_snapshot` view can show operators
+             whether the fast path is alive.
+
+        Shutdown is observed within one select cycle (1s) on the
+        live-connection path and within the backoff sleep on the
+        reconnect path; both call out via ``_shutdown.wait``.
         """
-        try:
-            while not self._shutdown.is_set():
-                conn = self._listen_conn
-                if conn is None:
-                    # Shutdown set the connection to None or close()
-                    # raised. Exit cleanly.
-                    return
+        last_keepalive = time.monotonic()
+        while not self._shutdown.is_set():
+            conn = self._listen_conn
+            if conn is None:
+                # Either initial open failed, or the previous
+                # iteration tore down a dead connection. Try to
+                # reconnect.
                 try:
-                    rlist, _, _ = select.select([conn], [], [], 1.0)
-                except (ValueError, OSError):
-                    # Connection closed under us (shutdown path).
-                    return
-                if not rlist:
+                    self._open_listen_connection()
+                    conn = self._listen_conn
+                    last_keepalive = time.monotonic()
+                    LOGGER.info(
+                        "wake: LISTEN connection (re)opened on %s",
+                        INTEGRATION_EVENTS_CHANNEL,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning(
+                        "wake: LISTEN reconnect failed (%s: %s); "
+                        "retrying after %.1fs backoff",
+                        type(exc).__name__,
+                        exc,
+                        self.listen_reconnect_backoff_s,
+                    )
+                    if self._shutdown.wait(timeout=self.listen_reconnect_backoff_s):
+                        return
                     continue
+
+            try:
+                rlist, _, _ = select.select([conn], [], [], 1.0)
+            except (ValueError, OSError) as exc:
+                # Connection's fileno() raised because the conn
+                # was closed (shutdown path) OR the OS dropped the
+                # socket. Distinguish: if shutdown is set, exit;
+                # otherwise tear down and reconnect.
+                if self._shutdown.is_set():
+                    return
+                LOGGER.warning(
+                    "wake: LISTEN select failed (%s: %s); reconnecting",
+                    type(exc).__name__,
+                    exc,
+                )
+                self._tear_down_listen_connection()
+                self._record_reconnect()
+                continue
+
+            if rlist:
                 try:
                     conn.poll()
-                except Exception:  # noqa: BLE001
-                    return
+                except Exception as exc:  # noqa: BLE001
+                    if self._shutdown.is_set():
+                        return
+                    LOGGER.warning(
+                        "wake: conn.poll() raised (%s: %s); reconnecting",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    self._tear_down_listen_connection()
+                    self._record_reconnect()
+                    continue
                 while conn.notifies:
                     notify = conn.notifies.pop(0)
                     if notify.channel != INTEGRATION_EVENTS_CHANNEL:
@@ -292,15 +389,54 @@ class WakeOrchestrator:
                             notify.payload,
                         )
                         continue
+                    self._record_notify()
                     self.queue.put(
                         WakeEvent(kind="fresh_event", event_id=event_id)
                     )
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.info(
-                "wake listen thread exiting (%s: %s)",
-                type(exc).__name__,
-                exc,
-            )
+                last_keepalive = time.monotonic()
+                continue
+
+            # select timed out; check whether a keepalive is due.
+            if time.monotonic() - last_keepalive >= self.listen_keepalive_s:
+                try:
+                    cur = conn.cursor()
+                    cur.execute("SELECT 1")
+                    cur.close()
+                    last_keepalive = time.monotonic()
+                except Exception as exc:  # noqa: BLE001
+                    if self._shutdown.is_set():
+                        return
+                    LOGGER.warning(
+                        "wake: LISTEN keepalive failed (%s: %s); reconnecting",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    self._tear_down_listen_connection()
+                    self._record_reconnect()
+
+    def _tear_down_listen_connection(self) -> None:
+        """Close the LISTEN connection from the listen thread on
+        a detected failure. Idempotent. Sets ``_listen_conn`` to
+        ``None`` so the next loop iteration re-opens it."""
+        conn = self._listen_conn
+        self._listen_conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _record_notify(self) -> None:
+        with self._counters_lock:
+            self._notify_count += 1
+
+    def _record_poll(self) -> None:
+        with self._counters_lock:
+            self._poll_count += 1
+
+    def _record_reconnect(self) -> None:
+        with self._counters_lock:
+            self._listen_reconnect_count += 1
 
     def _run_fallback_poll(self) -> None:
         """Fallback poll thread. ``Event.wait`` sleeps until the
@@ -316,6 +452,7 @@ class WakeOrchestrator:
             # timeout.
             if self._shutdown.is_set():
                 return
+            self._record_poll()
             self.queue.put(WakeEvent(kind="poll_all"))
 
     def _run_pubsub(self) -> None:

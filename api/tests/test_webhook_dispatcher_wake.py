@@ -193,6 +193,61 @@ class TestListenNotifyWake:
         finally:
             self._cleanup_event(event_id)
 
+    def test_listen_thread_reconnects_after_connection_drop(self):
+        """Issue #208: pre-fix, dropping the LISTEN connection
+        silently exited the listen thread and the dispatcher ran
+        on poll-only mode for the rest of its life. Post-fix the
+        listen thread reconnects and NOTIFY-driven dispatch
+        recovers. Asserts both behaviors: (1) the reconnect counter
+        increments; (2) a fresh INSERT after the drop lands on
+        the queue as fresh_event, not as a poll-driven generic
+        wake."""
+        before = self.orchestrator.health_snapshot()
+        assert before["listen_reconnect_count"] == 0
+
+        # Drop the LISTEN connection out from under the
+        # orchestrator. The select() in the listen loop sees the
+        # closed fd, the loop tears down + reconnects.
+        try:
+            self.orchestrator._listen_conn.close()  # noqa: SLF001
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Give the reconnect path a moment to fire. The default
+        # listen_reconnect_backoff_s is 1.0s; allow up to 3s for
+        # the reconnect counter to tick.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            snap = self.orchestrator.health_snapshot()
+            if snap["listen_reconnect_count"] >= 1:
+                break
+            time.sleep(0.05)
+        assert self.orchestrator.health_snapshot()["listen_reconnect_count"] >= 1, (
+            "listen thread must increment listen_reconnect_count after a drop"
+        )
+
+        # Drain anything queued during the reconnect window so we
+        # observe the post-reconnect NOTIFY specifically.
+        while not self.orchestrator.queue.empty():
+            try:
+                self.orchestrator.queue.get_nowait()
+            except Exception:  # noqa: BLE001
+                break
+
+        # Emit a fresh event AFTER the reconnect; it must land via
+        # NOTIFY, not via the slow poll fallback.
+        event_id = self._emit_test_event()
+        try:
+            event = _drain_until(
+                self.orchestrator,
+                lambda e: e.kind == "fresh_event" and e.event_id == event_id,
+                timeout_s=3.0,
+            )
+            assert event.kind == "fresh_event"
+            assert event.event_id == event_id
+        finally:
+            self._cleanup_event(event_id)
+
 
 # ----------------------------------------------------------------------
 # Fallback poll path
