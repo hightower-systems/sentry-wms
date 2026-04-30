@@ -115,6 +115,336 @@ function Slider({ label, min, max, step, value, onChange, hint }) {
   );
 }
 
+const DLQ_LIMIT_OPTIONS = [25, 50, 100, 250];
+
+const REPLAY_STATUS_OPTIONS = ['dlq', 'failed', 'succeeded'];
+
+const EMPTY_REPLAY_FILTER = {
+  status: 'dlq',
+  event_type: '',
+  warehouse_id: '',
+  completed_at_from: '',
+  completed_at_to: '',
+};
+
+function DlqPanel({ subscription, onClose }) {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [limit, setLimit] = useState(50);
+  const [offset, setOffset] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [panelError, setPanelError] = useState('');
+  const [showReplayBatch, setShowReplayBatch] = useState(false);
+  const [replayFilter, setReplayFilter] = useState(EMPTY_REPLAY_FILTER);
+  const [replayResult, setReplayResult] = useState(null);
+  const [replayError, setReplayError] = useState(null);
+
+  useEffect(() => { load(); }, [limit, offset]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    setLoading(true);
+    setPanelError('');
+    const res = await api.get(
+      `/admin/webhooks/${subscription.subscription_id}/dlq?limit=${limit}&offset=${offset}`,
+    );
+    if (res?.ok) {
+      const data = await res.json();
+      setRows(data.deliveries || []);
+      setTotal(data.total || 0);
+    } else {
+      const body = await res?.json();
+      setPanelError(body?.error || 'Failed to load DLQ');
+    }
+    setLoading(false);
+  }
+
+  async function replaySingle(deliveryId) {
+    const res = await api.post(
+      `/admin/webhooks/${subscription.subscription_id}/replay/${deliveryId}`,
+      {},
+    );
+    const body = await res?.json();
+    if (res?.ok) {
+      load();
+      return;
+    }
+    setPanelError(body?.detail || body?.error || 'Failed to replay delivery');
+  }
+
+  function buildReplayPayload(acknowledge) {
+    const filter = { status: replayFilter.status };
+    if (replayFilter.event_type.trim()) filter.event_type = replayFilter.event_type.trim();
+    if (replayFilter.warehouse_id !== '' && replayFilter.warehouse_id !== null) {
+      const wid = Number(replayFilter.warehouse_id);
+      if (Number.isInteger(wid) && wid > 0) filter.warehouse_id = wid;
+    }
+    if (replayFilter.completed_at_from) {
+      filter.completed_at_from = new Date(replayFilter.completed_at_from).toISOString();
+    }
+    if (replayFilter.completed_at_to) {
+      filter.completed_at_to = new Date(replayFilter.completed_at_to).toISOString();
+    }
+    return { filter, acknowledge_large_replay: !!acknowledge };
+  }
+
+  async function submitReplayBatch(acknowledge = false) {
+    setReplayError(null);
+    setReplayResult(null);
+    const res = await api.post(
+      `/admin/webhooks/${subscription.subscription_id}/replay-batch`,
+      buildReplayPayload(acknowledge),
+    );
+    const body = await res?.json();
+    if (res?.ok) {
+      setReplayResult({
+        replayed_count: body.replayed_count ?? 0,
+        impact_count: body.impact_count ?? 0,
+      });
+      load();
+      return;
+    }
+    if (res?.status === 409 && body?.error === 'batch_size_above_hard_cap') {
+      setReplayError({
+        kind: 'hard_cap',
+        impact_count: body.impact_count,
+        hard_cap: body.hard_cap,
+        detail: body.detail,
+      });
+      return;
+    }
+    if (res?.status === 429 && body?.error === 'replay_batch_throttled') {
+      setReplayError({
+        kind: 'throttled',
+        seconds_until_retry: body.seconds_until_retry,
+      });
+      return;
+    }
+    setReplayError({ kind: 'other', detail: body?.detail || body?.error || 'Failed to replay batch' });
+  }
+
+  function closeReplayBatch() {
+    setShowReplayBatch(false);
+    setReplayFilter(EMPTY_REPLAY_FILTER);
+    setReplayResult(null);
+    setReplayError(null);
+  }
+
+  const pageStart = total === 0 ? 0 : offset + 1;
+  const pageEnd = Math.min(offset + limit, total);
+
+  const dlqColumns = [
+    { key: 'delivery_id', label: 'Delivery', render: (r) => <span className="mono">{r.delivery_id}</span> },
+    { key: 'event_id', label: 'Event', render: (r) => <span className="mono">{r.event_id ?? '-'}</span> },
+    { key: 'event_type', label: 'Type', render: (r) => <span className="mono" style={{ fontSize: 12 }}>{r.event?.event_type || '-'}</span> },
+    { key: 'attempt_number', label: 'Attempt', render: (r) => r.attempt_number },
+    { key: 'http_status', label: 'HTTP', render: (r) => r.http_status ?? '-' },
+    { key: 'error_kind', label: 'Error', render: (r) => <span className="mono" style={{ fontSize: 12 }}>{r.error_kind || '-'}</span> },
+    {
+      key: 'error_detail',
+      label: 'Detail',
+      render: (r) => (
+        <span
+          className="mono"
+          style={{ fontSize: 11, display: 'inline-block', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
+          title={r.error_detail || ''}
+        >
+          {r.error_detail || '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'completed_at',
+      label: 'Completed',
+      render: (r) => r.completed_at ? new Date(r.completed_at).toLocaleString() : '-',
+    },
+    { key: 'gen', label: 'Gen', render: (r) => r.secret_generation },
+    {
+      key: 'actions',
+      label: '',
+      render: (r) => (
+        <button className="btn btn-sm" onClick={() => replaySingle(r.delivery_id)} title="Replay">
+          Replay
+        </button>
+      ),
+    },
+  ];
+
+  return (
+    <Modal
+      title={`DLQ - ${subscription.display_name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>Close</button>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 13 }}>
+          {loading ? 'Loading…' : (total === 0 ? 'No DLQ rows' : `${pageStart}-${pageEnd} of ${total}`)}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Page size</label>
+          <select
+            className="form-input"
+            style={{ width: 80, padding: '2px 6px' }}
+            value={limit}
+            onChange={(e) => { setLimit(Number(e.target.value)); setOffset(0); }}
+          >
+            {DLQ_LIMIT_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <button
+            className="btn btn-sm"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - limit))}
+          >
+            Prev
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={offset + limit >= total}
+            onClick={() => setOffset(offset + limit)}
+          >
+            Next
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => setShowReplayBatch(true)}
+            disabled={subscription.status === 'revoked'}
+            title={subscription.status === 'revoked' ? 'Subscription is revoked' : 'Replay batch'}
+          >
+            Replay batch
+          </button>
+        </div>
+      </div>
+
+      {panelError && <div className="form-error" style={{ marginBottom: 12 }}>{panelError}</div>}
+
+      <DataTable
+        columns={dlqColumns}
+        data={rows}
+        emptyMessage={loading ? 'Loading…' : 'No DLQ rows for this subscription'}
+      />
+
+      {showReplayBatch && (
+        <Modal
+          title="Replay batch"
+          onClose={closeReplayBatch}
+          footer={
+            <>
+              <button className="btn" onClick={closeReplayBatch}>Close</button>
+              {replayError?.kind === 'hard_cap' ? (
+                <button
+                  className="btn btn-primary"
+                  style={{ background: 'var(--copper)' }}
+                  onClick={() => submitReplayBatch(true)}
+                >
+                  Acknowledge and replay {replayError.impact_count}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => submitReplayBatch(false)}
+                  disabled={replayResult !== null}
+                >
+                  Replay matching deliveries
+                </button>
+              )}
+            </>
+          }
+        >
+          <div className="form-group">
+            <label>Status</label>
+            <select
+              className="form-input"
+              value={replayFilter.status}
+              onChange={(e) => setReplayFilter({ ...replayFilter, status: e.target.value })}
+            >
+              {REPLAY_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Source bucket the batch reads from. Default dlq.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Event type (optional)</label>
+            <input
+              className="form-input"
+              value={replayFilter.event_type}
+              onChange={(e) => setReplayFilter({ ...replayFilter, event_type: e.target.value })}
+              placeholder="ship.confirmed"
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Warehouse ID (optional)</label>
+            <input
+              className="form-input"
+              type="number"
+              min="1"
+              value={replayFilter.warehouse_id}
+              onChange={(e) => setReplayFilter({ ...replayFilter, warehouse_id: e.target.value })}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label>Completed from (optional)</label>
+              <input
+                className="form-input"
+                type="datetime-local"
+                value={replayFilter.completed_at_from}
+                onChange={(e) => setReplayFilter({ ...replayFilter, completed_at_from: e.target.value })}
+              />
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label>Completed to (optional)</label>
+              <input
+                className="form-input"
+                type="datetime-local"
+                value={replayFilter.completed_at_to}
+                onChange={(e) => setReplayFilter({ ...replayFilter, completed_at_to: e.target.value })}
+              />
+            </div>
+          </div>
+
+          {replayError?.kind === 'hard_cap' && (
+            <div className="form-error" style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 600 }}>
+                Matched {replayError.impact_count} deliveries, above the {replayError.hard_cap} hard cap.
+              </div>
+              <div style={{ marginTop: 4, fontSize: 12 }}>{replayError.detail}</div>
+            </div>
+          )}
+          {replayError?.kind === 'throttled' && (
+            <div className="form-error" style={{ marginTop: 12 }}>
+              Throttled. Try again in {replayError.seconds_until_retry}s.
+            </div>
+          )}
+          {replayError?.kind === 'other' && (
+            <div className="form-error" style={{ marginTop: 12 }}>
+              {replayError.detail}
+            </div>
+          )}
+          {replayResult && (
+            <div style={{ marginTop: 12, padding: 12, background: 'var(--surface-muted)', borderRadius: 4 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
+                Replayed {replayResult.replayed_count} deliver{replayResult.replayed_count === 1 ? 'y' : 'ies'}.
+              </div>
+              {replayResult.impact_count !== replayResult.replayed_count && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Server-computed impact: {replayResult.impact_count}.
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
+      )}
+    </Modal>
+  );
+}
+
 const EMPTY_FORM = {
   display_name: '',
   connector_id: '',
@@ -152,6 +482,7 @@ export default function Webhooks() {
   const [confirmPurge, setConfirmPurge] = useState(null);
   const [purgeError, setPurgeError] = useState(null);
   const [confirmRotate, setConfirmRotate] = useState(null);
+  const [dlqRow, setDlqRow] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -474,6 +805,13 @@ export default function Webhooks() {
             title="Rotate secret"
           >
             Rotate
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={(e) => { e.stopPropagation(); setDlqRow(r); }}
+            title="DLQ viewer + replay"
+          >
+            DLQ
           </button>
           <button
             className="btn btn-sm btn-danger"
@@ -824,6 +1162,13 @@ export default function Webhooks() {
             onChange={(v) => setEditForm({ ...editForm, dlq_ceiling: v })}
           />
         </Modal>
+      )}
+
+      {dlqRow && (
+        <DlqPanel
+          subscription={dlqRow}
+          onClose={() => { setDlqRow(null); load(); }}
+        />
       )}
 
       {confirmRotate && (
