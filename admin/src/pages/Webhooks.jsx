@@ -151,6 +151,7 @@ export default function Webhooks() {
   const [confirmSoftDelete, setConfirmSoftDelete] = useState(null);
   const [confirmPurge, setConfirmPurge] = useState(null);
   const [purgeError, setPurgeError] = useState(null);
+  const [confirmRotate, setConfirmRotate] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -232,6 +233,7 @@ export default function Webhooks() {
     if (res?.ok) {
       setShowCreate(false);
       setReveal({
+        kind: 'issued',
         display_name: body.display_name,
         secret: body.secret,
         secret_generation: body.secret_generation,
@@ -255,6 +257,7 @@ export default function Webhooks() {
     if (res?.ok) {
       setShowCreate(false);
       setReveal({
+        kind: 'issued',
         display_name: body.display_name,
         secret: body.secret,
         secret_generation: body.secret_generation,
@@ -364,6 +367,25 @@ export default function Webhooks() {
     }
   }
 
+  async function rotateSecret(row) {
+    const res = await api.post(`/admin/webhooks/${row.subscription_id}/rotate-secret`, {});
+    const body = await res?.json();
+    if (res?.ok) {
+      setConfirmRotate(null);
+      setReveal({
+        kind: 'rotated',
+        display_name: row.display_name,
+        secret: body.secret,
+        secret_generation: body.secret_generation,
+      });
+      setRevealAcked(false);
+      load();
+    } else {
+      setConfirmRotate(null);
+      setPageError(body?.detail || body?.error || 'Failed to rotate secret');
+    }
+  }
+
   async function hardPurge(row) {
     setPurgeError(null);
     const res = await api.delete(`/admin/webhooks/${row.subscription_id}?purge=true`);
@@ -444,6 +466,14 @@ export default function Webhooks() {
             title={r.status === 'active' ? 'Pause' : 'Resume'}
           >
             {r.status === 'active' ? 'Pause' : 'Resume'}
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={(e) => { e.stopPropagation(); setConfirmRotate(r); }}
+            disabled={r.status === 'revoked'}
+            title="Rotate secret"
+          >
+            Rotate
           </button>
           <button
             className="btn btn-sm btn-danger"
@@ -640,7 +670,7 @@ export default function Webhooks() {
 
       {reveal && (
         <Modal
-          title="Webhook secret issued"
+          title={reveal.kind === 'rotated' ? 'Webhook secret rotated' : 'Webhook secret issued'}
           onClose={() => { /* reveal modal must be explicitly acknowledged */ }}
           footer={
             <button
@@ -793,6 +823,40 @@ export default function Webhooks() {
             value={editForm.dlq_ceiling}
             onChange={(v) => setEditForm({ ...editForm, dlq_ceiling: v })}
           />
+        </Modal>
+      )}
+
+      {confirmRotate && (
+        <Modal
+          title="Rotate webhook secret"
+          onClose={() => setConfirmRotate(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmRotate(null)}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => rotateSecret(confirmRotate)}
+              >
+                Rotate
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, fontWeight: 600 }}>
+            Rotate the HMAC secret for {confirmRotate.display_name}?
+          </p>
+          <p style={{ fontSize: 13 }}>
+            The current secret is demoted to generation 2 with a 24-hour
+            dual-accept window. Consumers can verify against either
+            generation until the window expires; the dispatcher signs new
+            POSTs with the fresh generation 1 immediately. The new
+            plaintext is shown once on the next screen.
+          </p>
+          <p style={{ fontSize: 13, color: 'var(--copper)' }}>
+            A second rotation within 24 hours overwrites the demoted
+            secret and shortens the cutover window for any consumer that
+            has not yet picked up the new value.
+          </p>
         </Modal>
       )}
 
