@@ -128,7 +128,7 @@ const EMPTY_FORM = {
 };
 
 function formatRate(rate) {
-  if (rate === null || rate === undefined) return '—';
+  if (rate === null || rate === undefined) return '-';
   return `${(rate * 100).toFixed(1)}%`;
 }
 
@@ -145,6 +145,12 @@ export default function Webhooks() {
   const [connectors, setConnectors] = useState([]);
   const [scopeCatalog, setScopeCatalog] = useState({ event_types: [] });
   const [warehouses, setWarehouses] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [editError, setEditError] = useState('');
+  const [confirmSoftDelete, setConfirmSoftDelete] = useState(null);
+  const [confirmPurge, setConfirmPurge] = useState(null);
+  const [purgeError, setPurgeError] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -269,8 +275,117 @@ export default function Webhooks() {
     }
   }
 
+  async function openEdit(row) {
+    setEditError('');
+    const filter = row.subscription_filter || {};
+    setEditing(row);
+    setEditForm({
+      display_name: row.display_name,
+      delivery_url: row.delivery_url,
+      event_types: filter.event_types || [],
+      warehouse_ids: filter.warehouse_ids || [],
+      rate_limit_per_second: row.rate_limit_per_second,
+      pending_ceiling: row.pending_ceiling,
+      dlq_ceiling: row.dlq_ceiling,
+    });
+    // Reuse the cached pickers when present; lazy-load if the
+    // admin opens edit before ever opening create in this session.
+    if (scopeCatalog.event_types.length === 0 || warehouses.length === 0) {
+      const [catalogRes, whRes] = await Promise.all([
+        api.get('/admin/scope-catalog'),
+        api.get('/admin/warehouses'),
+      ]);
+      if (catalogRes?.ok) {
+        const data = await catalogRes.json();
+        setScopeCatalog({ event_types: data.event_types || [] });
+      }
+      if (whRes?.ok) {
+        const data = await whRes.json();
+        setWarehouses(data.warehouses || []);
+      }
+    }
+  }
+
+  function closeEdit() {
+    setEditing(null);
+    setEditForm(null);
+    setEditError('');
+  }
+
+  async function submitEdit() {
+    if (!editing || !editForm) return;
+    if (!editForm.display_name.trim()) { setEditError('Display name is required'); return; }
+    if (!editForm.delivery_url.trim()) { setEditError('Delivery URL is required'); return; }
+    // PATCH accepts only the keys the admin actually mutated; sending
+    // the full form is fine because the backend short-circuits when
+    // the supplied value matches the persisted one (no audit row, no
+    // pubsub publish).
+    const subscription_filter = {};
+    if (editForm.event_types.length > 0) subscription_filter.event_types = editForm.event_types;
+    if (editForm.warehouse_ids.length > 0) subscription_filter.warehouse_ids = editForm.warehouse_ids;
+    const payload = {
+      display_name: editForm.display_name.trim(),
+      delivery_url: editForm.delivery_url.trim(),
+      subscription_filter,
+      rate_limit_per_second: editForm.rate_limit_per_second,
+      pending_ceiling: editForm.pending_ceiling,
+      dlq_ceiling: editForm.dlq_ceiling,
+    };
+    const res = await api.patch(`/admin/webhooks/${editing.subscription_id}`, payload);
+    const body = await res?.json();
+    if (res?.ok) {
+      closeEdit();
+      load();
+    } else {
+      setEditError(body?.error || 'Failed to update webhook');
+    }
+  }
+
+  async function togglePause(row) {
+    const next = row.status === 'active' ? 'paused' : 'active';
+    const res = await api.patch(`/admin/webhooks/${row.subscription_id}`, { status: next });
+    if (res?.ok) {
+      load();
+    } else {
+      const body = await res?.json();
+      setPageError(body?.error || `Failed to ${next === 'paused' ? 'pause' : 'resume'} webhook`);
+    }
+  }
+
+  async function softDelete(row) {
+    const res = await api.delete(`/admin/webhooks/${row.subscription_id}`);
+    if (res?.ok) {
+      setConfirmSoftDelete(null);
+      load();
+    } else {
+      const body = await res?.json();
+      setPageError(body?.error || 'Failed to revoke webhook');
+      setConfirmSoftDelete(null);
+    }
+  }
+
+  async function hardPurge(row) {
+    setPurgeError(null);
+    const res = await api.delete(`/admin/webhooks/${row.subscription_id}?purge=true`);
+    const body = await res?.json();
+    if (res?.ok) {
+      setConfirmPurge(null);
+      load();
+      return;
+    }
+    if (res?.status === 409 && body?.error === 'live_deliveries_block_hard_delete') {
+      // Surface the live count and detail in-place so the operator
+      // can switch to soft-delete instead of dismissing the modal.
+      setPurgeError({ live_count: body.live_count, detail: body.detail });
+      return;
+    }
+    setPageError(body?.error || 'Failed to purge webhook');
+    setConfirmPurge(null);
+  }
+
   const httpsValid = form.delivery_url.trim().toLowerCase().startsWith('https://');
   const httpAttempt = form.delivery_url.trim().toLowerCase().startsWith('http://');
+  const editHttpAttempt = (editForm?.delivery_url || '').trim().toLowerCase().startsWith('http://');
 
   const columns = [
     { key: 'display_name', label: 'Name' },
@@ -288,7 +403,7 @@ export default function Webhooks() {
       label: 'Pause reason',
       render: (r) => r.pause_reason
         ? <span className="mono" style={{ fontSize: 12 }}>{r.pause_reason}</span>
-        : <span style={{ color: 'var(--text-secondary)' }}>—</span>,
+        : <span style={{ color: 'var(--text-secondary)' }}>-</span>,
     },
     {
       key: 'success_rate_24h',
@@ -307,6 +422,46 @@ export default function Webhooks() {
         <span className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>
           {r.delivery_url}
         </span>
+      ),
+    },
+    {
+      key: 'actions',
+      label: '',
+      render: (r) => (
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            className="btn btn-sm"
+            onClick={(e) => { e.stopPropagation(); openEdit(r); }}
+            disabled={r.status === 'revoked'}
+            title="Edit"
+          >
+            Edit
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={(e) => { e.stopPropagation(); togglePause(r); }}
+            disabled={r.status === 'revoked'}
+            title={r.status === 'active' ? 'Pause' : 'Resume'}
+          >
+            {r.status === 'active' ? 'Pause' : 'Resume'}
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={(e) => { e.stopPropagation(); setConfirmSoftDelete(r); }}
+            disabled={r.status === 'revoked'}
+            title="Revoke (soft delete)"
+          >
+            Revoke
+          </button>
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={(e) => { e.stopPropagation(); setPurgeError(null); setConfirmPurge(r); }}
+            title="Purge (hard delete + tombstone)"
+            aria-label="Purge"
+          >
+            &#128465;
+          </button>
+        </div>
       ),
     },
   ];
@@ -529,6 +684,179 @@ export default function Webhooks() {
               I have saved this secret in a secure location.
             </label>
           </div>
+        </Modal>
+      )}
+
+      {editing && editForm && (
+        <Modal
+          title={`Edit ${editing.display_name}`}
+          onClose={closeEdit}
+          footer={
+            <>
+              <button className="btn" onClick={closeEdit}>Cancel</button>
+              <button className="btn btn-primary" onClick={submitEdit}>Save</button>
+            </>
+          }
+        >
+          {editError && <div className="form-error" style={{ marginBottom: 12 }}>{editError}</div>}
+
+          <div className="form-group">
+            <label>Connector</label>
+            <input
+              className="form-input mono"
+              value={editing.connector_id}
+              readOnly
+              disabled
+            />
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Connector is fixed at create time. Recreate the subscription to change.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Display name</label>
+            <input
+              className="form-input"
+              value={editForm.display_name}
+              onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Delivery URL</label>
+            <input
+              className="form-input"
+              value={editForm.delivery_url}
+              onChange={(e) => setEditForm({ ...editForm, delivery_url: e.target.value })}
+            />
+            {editHttpAttempt && (
+              <div className="form-error" style={{ marginTop: 4, fontSize: 12 }}>
+                http:// is rejected in production. Use https:// or set
+                SENTRY_ALLOW_HTTP_WEBHOOKS=true in dev / CI.
+              </div>
+            )}
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Changing the URL forces dispatcher session teardown and a fresh DNS resolution on the next dispatch.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Event types (filter)</label>
+            <ScopeCheckboxList
+              options={scopeCatalog.event_types}
+              value={editForm.event_types}
+              onChange={(types) => setEditForm({ ...editForm, event_types: types })}
+              keyOf={(t) => t}
+              renderLabel={(t) => <span className="mono">{t}</span>}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Warehouses (filter)</label>
+            <ScopeCheckboxList
+              options={warehouses}
+              value={editForm.warehouse_ids}
+              onChange={(ids) => setEditForm({ ...editForm, warehouse_ids: ids })}
+              keyOf={(w) => w.warehouse_id}
+              renderLabel={(w) => (
+                <span>
+                  <span className="mono">{w.warehouse_code}</span>
+                  {w.warehouse_name ? ` - ${w.warehouse_name}` : ''}
+                </span>
+              )}
+            />
+          </div>
+
+          <Slider
+            label="Rate limit (req/sec)"
+            min={1}
+            max={100}
+            step={1}
+            value={editForm.rate_limit_per_second}
+            onChange={(v) => setEditForm({ ...editForm, rate_limit_per_second: v })}
+          />
+
+          <Slider
+            label="Pending ceiling"
+            min={100}
+            max={100000}
+            step={100}
+            value={editForm.pending_ceiling}
+            onChange={(v) => setEditForm({ ...editForm, pending_ceiling: v })}
+          />
+
+          <Slider
+            label="DLQ ceiling"
+            min={10}
+            max={10000}
+            step={10}
+            value={editForm.dlq_ceiling}
+            onChange={(v) => setEditForm({ ...editForm, dlq_ceiling: v })}
+          />
+        </Modal>
+      )}
+
+      {confirmSoftDelete && (
+        <Modal
+          title="Revoke webhook"
+          onClose={() => setConfirmSoftDelete(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmSoftDelete(null)}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                style={{ background: 'var(--copper)' }}
+                onClick={() => softDelete(confirmSoftDelete)}
+              >
+                Revoke
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, fontWeight: 600 }}>
+            Revoke {confirmSoftDelete.display_name}? Dispatch stops within
+            seconds (Redis pubsub eviction); the row stays in the list with
+            status=revoked so historical webhook_deliveries keep their FK
+            target. Use Purge to remove the row entirely after the live
+            deliveries terminate.
+          </p>
+        </Modal>
+      )}
+
+      {confirmPurge && (
+        <Modal
+          title="Purge webhook"
+          onClose={() => setConfirmPurge(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmPurge(null)}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                style={{ background: 'var(--danger)' }}
+                onClick={() => hardPurge(confirmPurge)}
+              >
+                Purge
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--danger)' }}>
+            Permanently delete {confirmPurge.display_name}?
+          </p>
+          <p style={{ fontSize: 13 }}>
+            The row is removed and a tombstone is written. The next admin
+            who creates a webhook with the same delivery URL ({confirmPurge.delivery_url})
+            will see the URL-reuse warning. Refused while pending or
+            in_flight deliveries reference this subscription.
+          </p>
+          {purgeError && (
+            <div className="form-error" style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 600 }}>
+                {purgeError.live_count} live deliver{purgeError.live_count === 1 ? 'y' : 'ies'} block this purge.
+              </div>
+              <div style={{ marginTop: 4, fontSize: 12 }}>{purgeError.detail}</div>
+            </div>
+          )}
         </Modal>
       )}
     </div>
