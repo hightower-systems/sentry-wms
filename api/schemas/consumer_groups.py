@@ -12,6 +12,16 @@ class ConnectorCreateRequest(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=128)
 
 
+class ConnectorUpdateRequest(BaseModel):
+    """display_name only. connector_id is the FK target from
+    consumer_groups + webhook_subscriptions; renaming would orphan
+    rows so the schema does not accept it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(..., min_length=1, max_length=128)
+
+
 class SubscriptionFilter(BaseModel):
     """v1.5.1 V-204 (#145): strict schema for consumer_groups.subscription.
 

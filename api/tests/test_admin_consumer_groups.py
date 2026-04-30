@@ -59,6 +59,137 @@ class TestConnectorRegistry:
         assert resp.status_code == 401
 
 
+class TestConnectorRegistryUpdate:
+    def test_update_display_name_round_trips(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "fabric", "display_name": "Fabric Prod"},
+            headers=auth_headers,
+        )
+        resp = client.patch(
+            "/api/admin/connector-registry/fabric",
+            json={"display_name": "Fabric Production"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["connector_id"] == "fabric"
+        assert body["display_name"] == "Fabric Production"
+
+    def test_unknown_connector_returns_404(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        resp = client.patch(
+            "/api/admin/connector-registry/missing",
+            json={"display_name": "ghost"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "connector_not_found"
+
+    def test_extra_keys_rejected(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "fabric", "display_name": "Fabric Prod"},
+            headers=auth_headers,
+        )
+        resp = client.patch(
+            "/api/admin/connector-registry/fabric",
+            json={"display_name": "Fabric", "connector_id": "fabric-renamed"},
+            headers=auth_headers,
+        )
+        # extra="forbid" rejects connector_id in the PATCH body.
+        assert resp.status_code == 400
+
+
+class TestConnectorRegistryDelete:
+    def test_delete_unused_connector(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "drop-me", "display_name": "Drop Me"},
+            headers=auth_headers,
+        )
+        resp = client.delete(
+            "/api/admin/connector-registry/drop-me", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["connector_id"] == "drop-me"
+        assert body["deleted"] is True
+
+        listing = client.get(
+            "/api/admin/connector-registry", headers=auth_headers,
+        )
+        names = {c["connector_id"] for c in listing.get_json()["connectors"]}
+        assert "drop-me" not in names
+
+    def test_delete_with_consumer_group_returns_409(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "in-use", "display_name": "In Use"},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/consumer-groups",
+            json={
+                "consumer_group_id": "in-use-main",
+                "connector_id": "in-use",
+                "subscription": {},
+            },
+            headers=auth_headers,
+        )
+        resp = client.delete(
+            "/api/admin/connector-registry/in-use", headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["error"] == "connector_in_use"
+        assert body["consumer_groups"] == 1
+        assert body["webhook_subscriptions"] == 0
+
+    def test_delete_with_webhook_subscription_returns_409(
+        self, client, auth_headers,
+    ):
+        _delete_all_cg_and_connectors()
+        client.post(
+            "/api/admin/connector-registry",
+            json={"connector_id": "wh-in-use", "display_name": "Webhooked"},
+            headers=auth_headers,
+        )
+        # Seed a webhook_subscriptions row directly to avoid the
+        # admin endpoint's full validation surface.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO webhook_subscriptions
+                (connector_id, display_name, delivery_url,
+                 subscription_filter)
+            VALUES (%s, %s, %s, '{}'::jsonb)
+            """,
+            ("wh-in-use", "test sub", "https://example.test/hook"),
+        )
+        cur.close()
+
+        resp = client.delete(
+            "/api/admin/connector-registry/wh-in-use", headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["error"] == "connector_in_use"
+        assert body["webhook_subscriptions"] == 1
+
+    def test_delete_unknown_returns_404(self, client, auth_headers):
+        _delete_all_cg_and_connectors()
+        resp = client.delete(
+            "/api/admin/connector-registry/missing", headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+
 class TestConsumerGroupCreate:
     def _seed_connector(self, client, auth_headers, connector_id="fabric"):
         client.post(
