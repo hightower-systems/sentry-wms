@@ -474,6 +474,163 @@ class TestDetail:
         assert resp.status_code == 401
 
 
+class TestRotateSecret:
+    def _secrets_for(self, subscription_id: str):
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT generation, secret_ciphertext, expires_at "
+            "FROM webhook_secrets WHERE subscription_id = %s "
+            "ORDER BY generation",
+            (subscription_id,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+
+    def test_rotate_returns_new_plaintext_and_demotes_prior_primary(
+        self, client, auth_headers
+    ):
+        from services.webhook_dispatcher import signing as dispatcher_signing
+
+        dispatcher_signing._fernet_cache = None  # noqa: SLF001
+        created = _create_one(client, auth_headers, display_name="rotate-target")
+        sub_id = created["subscription_id"]
+        original_plaintext = created["secret"].encode("utf-8")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/rotate-secret",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["subscription_id"] == sub_id
+        assert body["secret_generation"] == 1
+        assert isinstance(body["secret"], str) and len(body["secret"]) >= 32
+        new_plaintext = body["secret"].encode("utf-8")
+        assert new_plaintext != original_plaintext
+
+        rows = self._secrets_for(sub_id)
+        assert len(rows) == 2
+        gen1, gen2 = rows
+        assert gen1[0] == 1 and gen1[2] is None  # new primary, no expiry
+        assert gen2[0] == 2 and gen2[2] is not None  # demoted, expires_at set
+
+        # The new gen=1 ciphertext decrypts to the plaintext returned
+        # in the response; the demoted gen=2 ciphertext decrypts to
+        # the original plaintext from create.
+        gen1_decrypted = dispatcher_signing._get_fernet().decrypt(  # noqa: SLF001
+            bytes(gen1[1])
+        )
+        gen2_decrypted = dispatcher_signing._get_fernet().decrypt(  # noqa: SLF001
+            bytes(gen2[1])
+        )
+        assert gen1_decrypted == new_plaintext
+        assert gen2_decrypted == original_plaintext
+
+    def test_double_rotate_keeps_only_two_rows(self, client, auth_headers):
+        created = _create_one(client, auth_headers, display_name="double-rotate")
+        sub_id = created["subscription_id"]
+
+        first = client.post(
+            f"/api/admin/webhooks/{sub_id}/rotate-secret",
+            headers=auth_headers,
+        )
+        assert first.status_code == 200
+        first_secret = first.get_json()["secret"].encode("utf-8")
+
+        second = client.post(
+            f"/api/admin/webhooks/{sub_id}/rotate-secret",
+            headers=auth_headers,
+        )
+        assert second.status_code == 200
+        second_secret = second.get_json()["secret"].encode("utf-8")
+
+        rows = self._secrets_for(sub_id)
+        assert len(rows) == 2
+        assert rows[0][0] == 1 and rows[1][0] == 2
+
+        # The very-first plaintext (from create) is gone; gen=2 now
+        # holds the prior rotation's plaintext, gen=1 the latest.
+        from services.webhook_dispatcher import signing as dispatcher_signing
+
+        gen1_decrypted = dispatcher_signing._get_fernet().decrypt(  # noqa: SLF001
+            bytes(rows[0][1])
+        )
+        gen2_decrypted = dispatcher_signing._get_fernet().decrypt(  # noqa: SLF001
+            bytes(rows[1][1])
+        )
+        assert gen1_decrypted == second_secret
+        assert gen2_decrypted == first_secret
+
+    def test_rotate_unknown_uuid_returns_404(self, client, auth_headers):
+        resp = client.post(
+            f"/api/admin/webhooks/{uuid.uuid4()}/rotate-secret",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "subscription_not_found"
+
+    def test_rotate_invalid_uuid_returns_400(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/webhooks/not-a-uuid/rotate-secret",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_rotate_revoked_subscription_returns_400(self, client, auth_headers):
+        created = _create_one(client, auth_headers, display_name="revoked")
+        sub_id = created["subscription_id"]
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions SET status = 'revoked' "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/rotate-secret",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "cannot_rotate_revoked_subscription"
+
+    def test_rotate_unauthenticated_returns_401(self, client):
+        resp = client.post(
+            f"/api/admin/webhooks/{uuid.uuid4()}/rotate-secret"
+        )
+        assert resp.status_code == 401
+
+    def test_rotate_writes_audit_row_without_plaintext(self, client, auth_headers):
+        created = _create_one(client, auth_headers, display_name="audit-rotate")
+        sub_id = created["subscription_id"]
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/rotate-secret",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        plaintext = resp.get_json()["secret"]
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT action_type, entity_type, details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SECRET_ROTATE' "
+            "AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        assert row is not None
+        action_type, entity_type, details = row
+        assert action_type == "WEBHOOK_SECRET_ROTATE"
+        assert entity_type == "WEBHOOK_SUBSCRIPTION"
+        assert details["demoted_prior_primary"] is True
+        assert plaintext not in str(details)
+
+
 class TestAuditLog:
     def test_create_writes_audit_row(self, client, auth_headers):
         resp = client.post(

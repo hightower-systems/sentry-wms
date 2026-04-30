@@ -27,7 +27,10 @@ from urllib.parse import urlparse
 from flask import g, jsonify, request
 from sqlalchemy import text
 
-from constants import ACTION_WEBHOOK_SUBSCRIPTION_CREATE
+from constants import (
+    ACTION_WEBHOOK_SECRET_ROTATE,
+    ACTION_WEBHOOK_SUBSCRIPTION_CREATE,
+)
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
@@ -37,6 +40,7 @@ from services.events_schema_registry import V150_CATALOG
 from services.webhook_dispatcher import env_validator as dispatcher_env
 from services.webhook_dispatcher import signing as dispatcher_signing
 from services.webhook_dispatcher import ssrf_guard
+from services.webhook_dispatcher import wake as dispatcher_wake
 from utils.validation import validate_body
 
 
@@ -417,3 +421,122 @@ def get_webhook(subscription_id):
     if row is None:
         return jsonify({"error": "subscription_not_found"}), 404
     return jsonify(_row_to_listing(row, _stats_for(subscription_id)))
+
+
+@admin_bp.route("/webhooks/<subscription_id>/rotate-secret", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def rotate_webhook_secret(subscription_id):
+    """Rotate the HMAC plaintext for a subscription. The previous
+    primary becomes generation=2 with a 24h expires_at; the new
+    plaintext lands as generation=1 and is returned exactly once.
+    """
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    sub_row = g.db.execute(
+        text(
+            "SELECT subscription_id, status FROM webhook_subscriptions "
+            "WHERE subscription_id = :sid FOR UPDATE"
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if sub_row is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+    if sub_row.status == "revoked":
+        return (
+            jsonify(
+                {
+                    "error": "cannot_rotate_revoked_subscription",
+                    "detail": (
+                        "the subscription is revoked. Resume / un-revoke "
+                        "before rotating; a revoked subscription is not "
+                        "actively dispatching."
+                    ),
+                }
+            ),
+            400,
+        )
+
+    # Step 1: drop the older "old" key. There can be at most one
+    # gen=2 row per subscription (PK constraint); if it exists,
+    # its 24h dual-accept window has already started and a second
+    # rotation supersedes it.
+    g.db.execute(
+        text(
+            "DELETE FROM webhook_secrets WHERE subscription_id = :sid "
+            "AND generation = 2"
+        ),
+        {"sid": subscription_id},
+    )
+
+    # Step 2: demote the current primary (gen=1) to gen=2 with a
+    # 24h dual-accept window. Consumers verify against either
+    # generation until expires_at; the dispatcher signs with
+    # gen=1 from now on.
+    demoted_existed = g.db.execute(
+        text(
+            """
+            UPDATE webhook_secrets
+               SET generation = 2,
+                   expires_at = NOW() + INTERVAL '24 hours'
+             WHERE subscription_id = :sid
+               AND generation = 1
+            """
+        ),
+        {"sid": subscription_id},
+    ).rowcount
+
+    # Step 3: insert the new primary.
+    plaintext = secrets.token_urlsafe(32).encode("utf-8")
+    fernet = dispatcher_signing._get_fernet()  # noqa: SLF001
+    ciphertext = fernet.encrypt(plaintext)
+    g.db.execute(
+        text(
+            """
+            INSERT INTO webhook_secrets
+                (subscription_id, generation, secret_ciphertext, expires_at)
+            VALUES (:sid, 1, :ciphertext, NULL)
+            """
+        ),
+        {"sid": subscription_id, "ciphertext": ciphertext},
+    )
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_WEBHOOK_SECRET_ROTATE,
+        entity_type="WEBHOOK_SUBSCRIPTION",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "subscription_id": subscription_id,
+            "demoted_prior_primary": bool(demoted_existed),
+        },
+    )
+
+    g.db.commit()
+
+    # Notify peer dispatcher workers so they reload secret material
+    # for the next dispatch cycle. Soft-fail if Redis is unavailable;
+    # workers also pick up the change on the 60s subscription
+    # refresh cycle.
+    dispatcher_wake.publish_subscription_event(
+        os.environ.get("REDIS_URL"),
+        subscription_id,
+        "secret_rotated",
+    )
+
+    return (
+        jsonify(
+            {
+                "subscription_id": subscription_id,
+                "secret": plaintext.decode("utf-8"),
+                "secret_generation": 1,
+            }
+        ),
+        200,
+    )
