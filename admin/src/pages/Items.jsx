@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -11,10 +12,11 @@ const FILTER_OPTIONS = [
 ];
 
 export default function Items() {
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('q') || '');
   const [filter, setFilter] = useState('active');
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);

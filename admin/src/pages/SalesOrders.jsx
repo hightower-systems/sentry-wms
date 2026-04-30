@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -8,6 +9,8 @@ import StatusTag from '../components/StatusTag.jsx';
 const STATUS_OPTIONS = ['All', 'OPEN', 'ALLOCATED', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'];
 
 export default function SalesOrders() {
+  const [searchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get('q') || '');
   const [orders, setOrders] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
@@ -19,11 +22,13 @@ export default function SalesOrders() {
   const [editError, setEditError] = useState('');
   const [confirmCancel, setConfirmCancel] = useState(false);
 
-  useEffect(() => { loadOrders(); }, [page, statusFilter]);
+  useEffect(() => { loadOrders(); }, [page, statusFilter, search]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadOrders() {
-    const params = `?page=${page}&per_page=50${statusFilter !== 'All' ? `&status=${statusFilter}` : ''}`;
-    const res = await api.get(`/admin/sales-orders${params}`);
+    const qp = new URLSearchParams({ page: String(page), per_page: '50' });
+    if (statusFilter !== 'All') qp.set('status', statusFilter);
+    if (search) qp.set('q', search);
+    const res = await api.get(`/admin/sales-orders?${qp}`);
     if (res?.ok) {
       const data = await res.json();
       setOrders(data.sales_orders || []);
@@ -110,6 +115,13 @@ export default function SalesOrders() {
         <select className="form-select" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} style={{ width: 160 }}>
           {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        <input
+          className="form-input"
+          style={{ maxWidth: 320 }}
+          placeholder="Search by SO number or customer"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+        />
       </div>
 
       <DataTable
