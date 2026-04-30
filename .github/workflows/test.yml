@@ -46,8 +46,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r api/requirements.txt
 
-      - name: v1.6.0 lint -- single-serialization (no json.dumps in signing.py or dispatch.py)
-        # #174 (D2) + #179 (D7): the dispatcher's envelope
+      - name: v1.6.0 lint -- single-serialization (no json.dumps in signing.py, dispatch.py, http_client.py)
+        # #174 (D2) + #179 (D7) + #196: the dispatcher's envelope
         # sign-and-send path must serialize the envelope to
         # bytes EXACTLY ONCE per delivery and reuse the same
         # bytes for sign + send (plan §3.1 single-serialization
@@ -56,34 +56,35 @@ jobs:
         # bytes sent on the wire (or vice versa), and the
         # consumer's HMAC verification breaks silently.
         #
-        # Scope: signing.py + dispatch.py are the envelope
-        # sign-and-send code path. envelope.py is the canonical
-        # serializer (one json.dumps allowed). wake.py owns
-        # cross-worker pubsub plumbing (publish_subscription_event
-        # uses json.dumps for a small dict that is NOT the
-        # envelope; allowed).
+        # Scope: signing.py + dispatch.py + http_client.py are
+        # the envelope sign-and-send code path. envelope.py is
+        # the canonical serializer (one json.dumps allowed).
+        # wake.py owns cross-worker pubsub plumbing
+        # (publish_subscription_event uses json.dumps for a
+        # small dict that is NOT the envelope; allowed).
         #
-        # The lint forbids json.dumps in signing.py and
-        # dispatch.py specifically. A future contributor who
-        # tries to inline a "quick json.dumps" instead of using
-        # envelope.serialize_envelope hits this gate.
-        # Also catches json.dump (file-handle API) anywhere in
-        # the package, which would bypass the json.dumps
-        # pattern silently.
+        # The lint forbids json.dumps in those three files
+        # specifically. A future contributor who tries to inline
+        # a "quick json.dumps" inside HttpClient.send to log or
+        # transform the payload hits this gate. Also catches
+        # json.dump (file-handle API) anywhere in the package,
+        # which would bypass the json.dumps pattern silently.
         run: |
           forbidden=$(grep -rn --include="*.py" "json\.dumps(" \
             api/services/webhook_dispatcher/signing.py \
             api/services/webhook_dispatcher/dispatch.py \
+            api/services/webhook_dispatcher/http_client.py \
             2>/dev/null | wc -l | tr -d ' ')
           if [ "$forbidden" -gt 0 ]; then
             echo ""
-            echo "ERROR: json.dumps( in signing.py or dispatch.py"
+            echo "ERROR: json.dumps( in signing.py, dispatch.py, or http_client.py"
             echo "These files must consume envelope.serialize_envelope, not"
             echo "call json.dumps directly. The envelope sign-and-send path"
             echo "must produce one bytes object per delivery and reuse it."
             grep -rn --include="*.py" "json\.dumps(" \
               api/services/webhook_dispatcher/signing.py \
-              api/services/webhook_dispatcher/dispatch.py
+              api/services/webhook_dispatcher/dispatch.py \
+              api/services/webhook_dispatcher/http_client.py
             exit 1
           fi
           dump_count=$(grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/ | wc -l | tr -d ' ')
@@ -93,7 +94,35 @@ jobs:
             grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/
             exit 1
           fi
-          echo "OK: 0 json.dumps( in signing.py or dispatch.py; 0 json.dump( in package"
+          echo "OK: 0 json.dumps( in sign-and-send path; 0 json.dump( in package"
+
+      - name: v1.6.0 lint -- runtime invariants present in http_client.py
+        # #196: two runtime invariants in HttpClient.send only
+        # fire under specific conditions: (a) the body / signed
+        # body assertion fires when bytes diverge, and (b) the
+        # SSRF assert_url_safe call fires when DNS resolves to a
+        # private range. A passing test suite cannot prove either
+        # call is still in the source -- removing them produces
+        # the same green surface. These grep-based sentinels fail
+        # CI when the literal call sites are dropped.
+        run: |
+          if ! grep -q "assert body is signed_body_for_assertion" \
+              api/services/webhook_dispatcher/http_client.py; then
+            echo ""
+            echo "ERROR: the body == signed_body_for_assertion line is missing"
+            echo "from api/services/webhook_dispatcher/http_client.py."
+            echo "Plan §3.1 requires the runtime assertion at the HTTP boundary."
+            exit 1
+          fi
+          if ! grep -q "ssrf_guard\.assert_url_safe(url)" \
+              api/services/webhook_dispatcher/http_client.py; then
+            echo ""
+            echo "ERROR: the dispatch-time SSRF check is missing from"
+            echo "api/services/webhook_dispatcher/http_client.py."
+            echo "Plan §2.7 requires assert_url_safe before every send."
+            exit 1
+          fi
+          echo "OK: single-serialization assertion + SSRF check present"
 
       - name: v1.6.0 lint -- no verify=False in webhook_dispatcher
         # #173 (D1): the dispatcher MUST always send with TLS
