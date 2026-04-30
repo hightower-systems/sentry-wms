@@ -39,6 +39,14 @@ celery_app.conf.beat_schedule = {
         "task": "jobs.cleanup_tasks.cleanup_login_attempts",
         "schedule": 15 * 60.0,  # seconds
     },
+    "cleanup-webhook-deliveries-every-6-hours": {
+        "task": "jobs.cleanup_tasks.cleanup_webhook_deliveries",
+        "schedule": 6 * 3600.0,
+    },
+    "cleanup-expired-webhook-secrets-every-hour": {
+        "task": "jobs.cleanup_tasks.cleanup_expired_webhook_secrets",
+        "schedule": 3600.0,
+    },
 }
 
 # Auto-discover task modules in the jobs package
