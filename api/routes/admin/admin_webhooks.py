@@ -30,11 +30,12 @@ from sqlalchemy import text
 from constants import (
     ACTION_WEBHOOK_SECRET_ROTATE,
     ACTION_WEBHOOK_SUBSCRIPTION_CREATE,
+    ACTION_WEBHOOK_SUBSCRIPTION_UPDATE,
 )
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
-from schemas.webhooks import CreateWebhookRequest
+from schemas.webhooks import CreateWebhookRequest, UpdateWebhookRequest
 from services.audit_service import write_audit_log
 from services.events_schema_registry import V150_CATALOG
 from services.webhook_dispatcher import env_validator as dispatcher_env
@@ -421,6 +422,242 @@ def get_webhook(subscription_id):
     if row is None:
         return jsonify({"error": "subscription_not_found"}), 404
     return jsonify(_row_to_listing(row, _stats_for(subscription_id)))
+
+
+@admin_bp.route("/webhooks/<subscription_id>", methods=["PATCH"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(UpdateWebhookRequest)
+@with_db
+def update_webhook(validated, subscription_id):
+    """Partial update for a webhook subscription. Each mutated
+    field that affects dispatch behavior publishes the matching
+    event on the cross-worker pubsub channel after commit."""
+    try:
+        uuid.UUID(subscription_id)
+    except ValueError:
+        return jsonify({"error": "invalid_subscription_id"}), 400
+
+    current = g.db.execute(
+        text(
+            f"""
+            SELECT {_LIST_FIELDS}, pause_reason
+              FROM webhook_subscriptions
+             WHERE subscription_id = :sid
+             FOR UPDATE
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    if current is None:
+        return jsonify({"error": "subscription_not_found"}), 404
+
+    if validated.delivery_url is not None:
+        parsed = urlparse(validated.delivery_url)
+        if parsed.scheme not in ("http", "https"):
+            return jsonify({"error": "delivery_url must be http or https"}), 400
+        if parsed.scheme == "http" and not _http_webhooks_allowed():
+            return jsonify({"error": "https_required"}), 400
+        try:
+            ssrf_guard.assert_url_safe(validated.delivery_url)
+        except ssrf_guard.SsrfRejected as exc:
+            return (
+                jsonify({"error": "private_destination", "detail": str(exc)}),
+                400,
+            )
+
+    if validated.pending_ceiling is not None:
+        cap = dispatcher_env.int_var("DISPATCHER_MAX_PENDING_HARD_CAP")
+        if validated.pending_ceiling > cap:
+            return (
+                jsonify(
+                    {"error": "pending_ceiling_above_hard_cap", "hard_cap": cap}
+                ),
+                400,
+            )
+    if validated.dlq_ceiling is not None:
+        cap = dispatcher_env.int_var("DISPATCHER_MAX_DLQ_HARD_CAP")
+        if validated.dlq_ceiling > cap:
+            return (
+                jsonify(
+                    {"error": "dlq_ceiling_above_hard_cap", "hard_cap": cap}
+                ),
+                400,
+            )
+
+    if validated.subscription_filter is not None:
+        sub_filter = validated.subscription_filter
+        if sub_filter.event_types:
+            unknown = sorted(set(sub_filter.event_types) - _KNOWN_EVENT_TYPES)
+            if unknown:
+                return (
+                    jsonify(
+                        {
+                            "error": "unknown_event_types",
+                            "unknown": unknown,
+                            "valid": sorted(_KNOWN_EVENT_TYPES),
+                        }
+                    ),
+                    400,
+                )
+        if sub_filter.warehouse_ids:
+            rows = g.db.execute(
+                text(
+                    "SELECT warehouse_id FROM warehouses "
+                    " WHERE warehouse_id = ANY(:ids)"
+                ),
+                {"ids": list(sub_filter.warehouse_ids)},
+            ).fetchall()
+            found = {r.warehouse_id for r in rows}
+            missing = sorted(set(sub_filter.warehouse_ids) - found)
+            if missing:
+                return (
+                    jsonify({"error": "unknown_warehouse_ids", "missing": missing}),
+                    400,
+                )
+
+    # Build the SET clause + params + diff for the audit log only
+    # for fields the request actually included. Fields that are
+    # absent from the body do not appear in the diff.
+    set_clauses: list[str] = []
+    params: dict = {"sid": subscription_id}
+    diff: dict = {}
+    pubsub_events: list[str] = []
+
+    def _record(column: str, before, after):
+        diff[column] = {"before": before, "after": after}
+
+    if validated.display_name is not None and validated.display_name != current.display_name:
+        set_clauses.append("display_name = :display_name")
+        params["display_name"] = validated.display_name
+        _record("display_name", current.display_name, validated.display_name)
+
+    if validated.delivery_url is not None and validated.delivery_url != current.delivery_url:
+        set_clauses.append("delivery_url = :delivery_url")
+        params["delivery_url"] = validated.delivery_url
+        _record("delivery_url", current.delivery_url, validated.delivery_url)
+        pubsub_events.append("delivery_url_changed")
+
+    if validated.subscription_filter is not None:
+        new_filter_dump = validated.subscription_filter.model_dump(
+            mode="json", exclude_none=True
+        )
+        old_filter = current.subscription_filter or {}
+        if new_filter_dump != old_filter:
+            set_clauses.append(
+                "subscription_filter = CAST(:subscription_filter AS jsonb)"
+            )
+            params["subscription_filter"] = (
+                validated.subscription_filter.model_dump_json(exclude_none=True)
+            )
+            _record("subscription_filter", old_filter, new_filter_dump)
+
+    if (
+        validated.rate_limit_per_second is not None
+        and validated.rate_limit_per_second != current.rate_limit_per_second
+    ):
+        set_clauses.append("rate_limit_per_second = :rate")
+        params["rate"] = validated.rate_limit_per_second
+        _record(
+            "rate_limit_per_second",
+            current.rate_limit_per_second,
+            validated.rate_limit_per_second,
+        )
+        pubsub_events.append("rate_limit_changed")
+
+    if (
+        validated.pending_ceiling is not None
+        and validated.pending_ceiling != current.pending_ceiling
+    ):
+        set_clauses.append("pending_ceiling = :pending_ceiling")
+        params["pending_ceiling"] = validated.pending_ceiling
+        _record(
+            "pending_ceiling",
+            current.pending_ceiling,
+            validated.pending_ceiling,
+        )
+
+    if (
+        validated.dlq_ceiling is not None
+        and validated.dlq_ceiling != current.dlq_ceiling
+    ):
+        set_clauses.append("dlq_ceiling = :dlq_ceiling")
+        params["dlq_ceiling"] = validated.dlq_ceiling
+        _record("dlq_ceiling", current.dlq_ceiling, validated.dlq_ceiling)
+
+    if validated.status is not None and validated.status != current.status:
+        if current.status == "revoked":
+            return (
+                jsonify(
+                    {
+                        "error": "cannot_modify_revoked_subscription",
+                        "detail": (
+                            "this subscription is revoked. Status changes "
+                            "out of revoked are not supported via PATCH; "
+                            "create a new subscription instead."
+                        ),
+                    }
+                ),
+                400,
+            )
+        set_clauses.append("status = :status")
+        params["status"] = validated.status
+        _record("status", current.status, validated.status)
+        if validated.status == "paused":
+            set_clauses.append("pause_reason = 'manual'")
+            _record("pause_reason", current.pause_reason, "manual")
+            pubsub_events.append("paused")
+        else:  # 'active'
+            set_clauses.append("pause_reason = NULL")
+            _record("pause_reason", current.pause_reason, None)
+            pubsub_events.append("resumed")
+
+    if not set_clauses:
+        # Empty body, or every supplied field already matched the
+        # persisted value. No mutation, no audit row, no publish.
+        return jsonify(_row_to_listing(current, _stats_for(subscription_id)))
+
+    set_clauses.append("updated_at = NOW()")
+    g.db.execute(
+        text(
+            f"""
+            UPDATE webhook_subscriptions
+               SET {", ".join(set_clauses)}
+             WHERE subscription_id = :sid
+            """
+        ),
+        params,
+    )
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_WEBHOOK_SUBSCRIPTION_UPDATE,
+        entity_type="WEBHOOK_SUBSCRIPTION",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={"subscription_id": subscription_id, "diff": diff},
+    )
+
+    g.db.commit()
+
+    redis_url = os.environ.get("REDIS_URL")
+    for event in pubsub_events:
+        dispatcher_wake.publish_subscription_event(
+            redis_url, subscription_id, event
+        )
+
+    refreshed = g.db.execute(
+        text(
+            f"""
+            SELECT {_LIST_FIELDS}
+              FROM webhook_subscriptions
+             WHERE subscription_id = :sid
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    return jsonify(_row_to_listing(refreshed, _stats_for(subscription_id)))
 
 
 @admin_bp.route("/webhooks/<subscription_id>/rotate-secret", methods=["POST"])

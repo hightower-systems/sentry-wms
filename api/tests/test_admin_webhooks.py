@@ -474,6 +474,303 @@ class TestDetail:
         assert resp.status_code == 401
 
 
+class TestPatchUpdate:
+    def _publishes(self, monkeypatch):
+        """Replace the dispatcher's pubsub publisher with a recorder
+        so the test can assert exactly which events fire on each
+        PATCH. Avoids relying on a live Redis to verify the routing
+        decisions, which is what the endpoint owns."""
+        from services.webhook_dispatcher import wake as wake_module
+
+        captured = []
+
+        def fake_publish(redis_url, subscription_id, event):
+            captured.append({"subscription_id": subscription_id, "event": event})
+
+        monkeypatch.setattr(
+            wake_module, "publish_subscription_event", fake_publish
+        )
+        # Re-import the alias used by the route module so the patch
+        # routes through the recorder instead of the real publisher.
+        from routes.admin import admin_webhooks as route_module
+
+        monkeypatch.setattr(
+            route_module, "dispatcher_wake", wake_module
+        )
+        return captured
+
+    def test_empty_body_is_no_op(self, client, auth_headers, monkeypatch):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers, display_name="empty-patch")
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}", json={}, headers=auth_headers
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["display_name"] == "empty-patch"
+        assert captured == []
+
+    def test_display_name_updates_without_pubsub(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers, display_name="old")
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"display_name": "new"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["display_name"] == "new"
+        assert captured == []
+
+    def test_delivery_url_change_publishes_delivery_url_changed(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        new_url = f"https://example.com/changed-{uuid.uuid4()}"
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": new_url},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["delivery_url"] == new_url
+        assert any(
+            c["event"] == "delivery_url_changed" for c in captured
+        )
+
+    def test_rate_limit_change_publishes_rate_limit_changed(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"rate_limit_per_second": 25},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["rate_limit_per_second"] == 25
+        assert any(c["event"] == "rate_limit_changed" for c in captured)
+
+    def test_pause_then_resume_emits_paused_then_resumed(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"status": "paused"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["status"] == "paused"
+        assert body["pause_reason"] == "manual"
+        assert captured[-1]["event"] == "paused"
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"status": "active"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["status"] == "active"
+        assert body["pause_reason"] is None
+        assert captured[-1]["event"] == "resumed"
+
+    def test_multi_field_patch_publishes_each_event_kind(
+        self, client, auth_headers, monkeypatch
+    ):
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        new_url = f"https://example.com/multi-{uuid.uuid4()}"
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "delivery_url": new_url,
+                "rate_limit_per_second": 7,
+                "status": "paused",
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        events = {c["event"] for c in captured}
+        assert "delivery_url_changed" in events
+        assert "rate_limit_changed" in events
+        assert "paused" in events
+
+    def test_status_revoked_rejected(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"status": "revoked"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_revoked_subscription_cannot_be_modified(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions SET status = 'revoked' "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"status": "active"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "cannot_modify_revoked_subscription"
+
+    def test_unknown_field_rejected(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"bogus": 1},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_https_required_on_url_change(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        monkeypatch.delenv("SENTRY_ALLOW_HTTP_WEBHOOKS", raising=False)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": "http://example.com/x"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "https_required"
+
+    def test_private_url_rejected_on_url_change(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        monkeypatch.delenv("SENTRY_ALLOW_INTERNAL_WEBHOOKS", raising=False)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": "https://127.0.0.1/x"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "private_destination"
+
+    def test_unknown_event_types_rejected(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"subscription_filter": {"event_types": ["does.not.exist"]}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "unknown_event_types"
+
+    def test_ceiling_above_hard_cap_rejected(
+        self, client, auth_headers, monkeypatch
+    ):
+        self._publishes(monkeypatch)
+        # Create first under the default hard cap; lower the cap
+        # only for the PATCH so the create-time validation is not
+        # tripped by the same setting.
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        monkeypatch.setenv("DISPATCHER_MAX_PENDING_HARD_CAP", "1000")
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 99999},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_uuid_returns_404(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        resp = client.patch(
+            f"/api/admin/webhooks/{uuid.uuid4()}",
+            json={"display_name": "x"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_invalid_uuid_returns_400(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        resp = client.patch(
+            "/api/admin/webhooks/not-a-uuid",
+            json={"display_name": "x"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_unauthenticated_returns_401(self, client):
+        resp = client.patch(
+            f"/api/admin/webhooks/{uuid.uuid4()}", json={"display_name": "x"}
+        )
+        assert resp.status_code == 401
+
+    def test_audit_row_records_diff(self, client, auth_headers, monkeypatch):
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers, display_name="audit-old")
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"display_name": "audit-new", "rate_limit_per_second": 9},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_UPDATE' "
+            "AND details->>'subscription_id' = %s "
+            "ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        details = cur.fetchone()[0]
+        cur.close()
+        diff = details["diff"]
+        assert "display_name" in diff
+        assert diff["display_name"]["before"] == "audit-old"
+        assert diff["display_name"]["after"] == "audit-new"
+        assert "rate_limit_per_second" in diff
+        # Fields not mutated do not appear in the diff.
+        assert "delivery_url" not in diff
+        assert "pending_ceiling" not in diff
+
+
 class TestRotateSecret:
     def _secrets_for(self, subscription_id: str):
         conn = get_raw_connection()
