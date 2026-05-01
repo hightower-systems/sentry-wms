@@ -75,6 +75,33 @@ _VALID_SUBSCRIPTION_EVENT_KINDS = frozenset({
 })
 
 
+_publish_failure_count = 0
+_publish_failure_count_lock = threading.Lock()
+
+
+def _record_publish_failure() -> None:
+    global _publish_failure_count
+    with _publish_failure_count_lock:
+        _publish_failure_count += 1
+
+
+def get_publish_failure_count() -> int:
+    """Module-level counter accessor. Mirrors the per-orchestrator
+    counter pattern from #208 but lives at module scope because
+    publish_subscription_event is called from admin handlers
+    that don't hold an orchestrator reference."""
+    with _publish_failure_count_lock:
+        return _publish_failure_count
+
+
+def reset_publish_failure_count() -> None:
+    """Test helper. Production code never calls this; the counter
+    monotonically increases for the life of the process."""
+    global _publish_failure_count
+    with _publish_failure_count_lock:
+        _publish_failure_count = 0
+
+
 def publish_subscription_event(
     redis_url: Optional[str], subscription_id: str, event: str
 ) -> None:
@@ -96,8 +123,29 @@ def publish_subscription_event(
     the D2 single-serialization lint from catching a second
     json.dumps in dispatch.py: that lint protects the envelope
     sign-and-send path; the pubsub payload is unrelated.
+
+    #212: every failure path (unset / malformed URL, import
+    error, connection failure, publish exception) increments the
+    module-level _publish_failure_count counter and emits a
+    WARNING log naming the URL host and error kind. Pre-#212 the
+    "redis_url unset or malformed" branch silently returned with
+    no log; the api container shipped without REDIS_URL and admin
+    PATCH handlers reported success while peer workers observed
+    stale subscription state for up to the 60s refresh cycle. The
+    counter surfaces via WakeOrchestrator.health_snapshot() so an
+    operator can grep whether the publish path is alive at a
+    glance.
     """
     if not redis_url or not redis_url.startswith(("redis://", "rediss://")):
+        _record_publish_failure()
+        LOGGER.warning(
+            "wake: publish_subscription_event no-op for %s on subscription "
+            "%s; REDIS_URL is unset or malformed. Peer dispatcher workers "
+            "will see the change on their next 60s refresh cycle. Set "
+            "REDIS_URL in the api container env to close the gap.",
+            event,
+            subscription_id,
+        )
         return
     try:
         import redis  # noqa: WPS433
@@ -106,13 +154,25 @@ def publish_subscription_event(
             SUBSCRIPTION_EVENTS_CHANNEL,
             json.dumps({"subscription_id": subscription_id, "event": event}),
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _record_publish_failure()
+        # Strip credentials from the URL before logging the host;
+        # the URL contains the Redis password and must not land in
+        # logs verbatim.
+        try:
+            from urllib.parse import urlparse  # noqa: WPS433
+            host = urlparse(redis_url).hostname or "<unknown>"
+        except Exception:  # noqa: BLE001
+            host = "<unknown>"
         LOGGER.warning(
-            "failed to publish %s event for subscription %s on Redis; "
-            "peer workers will observe the change on the next 60s "
-            "refresh cycle",
+            "wake: failed to publish %s event for subscription %s on "
+            "Redis at %s (%s: %s); peer workers will observe the change "
+            "on the next 60s refresh cycle",
             event,
             subscription_id,
+            host,
+            type(exc).__name__,
+            exc,
         )
 
 
@@ -218,14 +278,19 @@ class WakeOrchestrator:
 
     def health_snapshot(self) -> dict:
         """Counter snapshot for operator-visible metrics. Returns
-        the running NOTIFY-arrival, fallback-poll, and LISTEN-
-        reconnect totals since process start."""
+        the running NOTIFY-arrival, fallback-poll, LISTEN-reconnect,
+        and pubsub-publish-failure totals since process start."""
         with self._counters_lock:
-            return {
+            snap = {
                 "notify_count": self._notify_count,
                 "poll_count": self._poll_count,
                 "listen_reconnect_count": self._listen_reconnect_count,
             }
+        # #212: pubsub publish failure counter lives at module scope
+        # because publish_subscription_event is called from admin
+        # handlers that do not hold an orchestrator reference.
+        snap["pubsub_publish_failure_count"] = get_publish_failure_count()
+        return snap
 
     def shutdown(self) -> None:
         """Request shutdown. Idempotent. Closes the blocking I/O

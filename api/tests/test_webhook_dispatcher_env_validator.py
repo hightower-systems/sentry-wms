@@ -36,12 +36,17 @@ _RANGE_CASES = [
 
 def _clean_env(monkeypatch):
     """Wipe every env var the validator looks at so a host-shell
-    leak does not interfere with the test."""
+    leak does not interfere with the test. REDIS_URL is set to a
+    valid placeholder because #212 added it as a required env;
+    tests that target the REDIS_URL guard specifically delete it
+    after this helper runs."""
     for name, _lo, _hi in _RANGE_CASES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("SENTRY_ALLOW_HTTP_WEBHOOKS", raising=False)
     monkeypatch.delenv("SENTRY_ALLOW_INTERNAL_WEBHOOKS", raising=False)
     monkeypatch.delenv("FLASK_ENV", raising=False)
+    monkeypatch.delenv("DISPATCHER_ENABLED", raising=False)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
 
 
 class TestRangeValidators:
@@ -192,3 +197,103 @@ class TestEnvVarHelpers:
         _clean_env(monkeypatch)
         with pytest.raises(env_validator.DispatcherEnvError):
             env_validator.int_var("DISPATCHER_NONSENSE")
+
+
+class TestRequiredEnvVars:
+    """#212: REDIS_URL is required when the dispatcher is enabled.
+    Pre-fix the dispatcher booted cleanly without REDIS_URL and
+    cross-worker invalidation publishes silently no-op'd."""
+
+    def test_unset_redis_url_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.delenv("REDIS_URL", raising=False)
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "REDIS_URL" in str(excinfo.value)
+
+    def test_empty_redis_url_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("REDIS_URL", "")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "REDIS_URL" in str(excinfo.value)
+
+    def test_kill_switch_skips_required_check(self, monkeypatch):
+        """DISPATCHER_ENABLED=false bypasses the required-env guard
+        so an operator can run the kill switch even without Redis."""
+        _clean_env(monkeypatch)
+        monkeypatch.delenv("REDIS_URL", raising=False)
+        monkeypatch.setenv("DISPATCHER_ENABLED", "false")
+        env_validator.validate_or_die()  # no raise
+
+    def test_set_redis_url_accepted(self, monkeypatch):
+        _clean_env(monkeypatch)
+        # _clean_env sets REDIS_URL; validate succeeds.
+        env_validator.validate_or_die()  # no raise
+
+
+class TestPubsubPublishCounter:
+    """#212: pubsub publish failures increment a module-level
+    counter and emit a WARNING log on every failure path. The
+    counter surfaces via WakeOrchestrator.health_snapshot() so
+    operators can grep whether the publish path is alive."""
+
+    def test_unset_url_increments_counter_and_logs(self, monkeypatch, caplog):
+        import logging
+        from services.webhook_dispatcher import wake as wake_module
+
+        wake_module.reset_publish_failure_count()
+        before = wake_module.get_publish_failure_count()
+        with caplog.at_level(logging.WARNING, logger="webhook_dispatcher.wake"):
+            wake_module.publish_subscription_event(None, "sub-id", "paused")
+        assert wake_module.get_publish_failure_count() == before + 1
+        assert any(
+            "REDIS_URL is unset" in r.getMessage() for r in caplog.records
+        )
+
+    def test_empty_url_increments_counter(self, monkeypatch):
+        from services.webhook_dispatcher import wake as wake_module
+        wake_module.reset_publish_failure_count()
+        wake_module.publish_subscription_event("", "sub-id", "paused")
+        assert wake_module.get_publish_failure_count() == 1
+
+    def test_unreachable_redis_increments_counter_and_logs_host(
+        self, monkeypatch, caplog
+    ):
+        """An unreachable Redis URL hits the exception path; the
+        counter increments and the WARNING log includes the host
+        but NOT the password."""
+        import logging
+        from services.webhook_dispatcher import wake as wake_module
+
+        wake_module.reset_publish_failure_count()
+        before = wake_module.get_publish_failure_count()
+        with caplog.at_level(logging.WARNING, logger="webhook_dispatcher.wake"):
+            wake_module.publish_subscription_event(
+                "redis://:secretpw@127.0.0.1:1/0",
+                "sub-id",
+                "paused",
+            )
+        assert wake_module.get_publish_failure_count() >= before + 1
+        msg = " ".join(r.getMessage() for r in caplog.records)
+        # Host shows up; password must not.
+        assert "127.0.0.1" in msg
+        assert "secretpw" not in msg
+
+    def test_health_snapshot_includes_publish_counter(self, monkeypatch):
+        from queue import Queue
+        from services.webhook_dispatcher import wake as wake_module
+
+        wake_module.reset_publish_failure_count()
+        wake_module.publish_subscription_event(None, "sub-id", "paused")
+
+        # Build an orchestrator without starting threads. health_snapshot
+        # only reads counters; no DB / Redis required.
+        orch = wake_module.WakeOrchestrator(
+            database_url="postgresql://unused/db",
+            redis_url=None,
+            fallback_poll_ms=2000,
+        )
+        snap = orch.health_snapshot()
+        assert "pubsub_publish_failure_count" in snap
+        assert snap["pubsub_publish_failure_count"] >= 1

@@ -36,6 +36,26 @@ _RANGE_VARS = [
 ]
 
 
+# #212: env vars that MUST be set when the dispatcher is enabled.
+# Pre-212 the dispatcher booted cleanly without REDIS_URL and the
+# cross-worker invalidation publisher silently no-op'd; peer
+# workers then ran on stale subscription state until their next
+# 60s refresh. Required-env validation closes the gap at boot.
+# DISPATCHER_ENABLED=false skips this guard so the kill switch
+# stays usable even without a Redis instance.
+_REQUIRED_VARS_WHEN_ENABLED = [
+    (
+        "REDIS_URL",
+        "REDIS_URL is required when the dispatcher is enabled. The "
+        "admin handlers publish cross-worker invalidation messages on "
+        "this URL; an unset value silently no-ops every publish and "
+        "leaves peer workers on stale subscription state. Set REDIS_URL "
+        "in .env (or set DISPATCHER_ENABLED=false to use the kill "
+        "switch). Same authenticated URL shape as CELERY_BROKER_URL.",
+    ),
+]
+
+
 class DispatcherEnvError(RuntimeError):
     """Raised when env validation refuses to boot. Caller (the
     daemon entry point) catches this, logs the message, and
@@ -156,12 +176,35 @@ def _validate_combinations() -> None:
         )
 
 
+def _dispatcher_enabled() -> bool:
+    """Mirrors WebhookDispatcher.enabled. Default true; only the
+    literal case-insensitive ``false`` disables. Looser values
+    ("0", "no", "off", "") do NOT disable so an accidental config
+    from another project cannot silently engage the kill switch."""
+    return os.environ.get("DISPATCHER_ENABLED", "true").lower() != "false"
+
+
+def _validate_required() -> None:
+    """#212: refuse boot when env vars required for cross-worker
+    correctness are unset. Skipped when DISPATCHER_ENABLED=false
+    so the kill switch stays usable."""
+    if not _dispatcher_enabled():
+        return
+    for name, message in _REQUIRED_VARS_WHEN_ENABLED:
+        raw = _read_str(name)
+        if raw is None or raw == "":
+            raise DispatcherEnvError(
+                f"refusing to boot: {name} is unset. {message}"
+            )
+
+
 def validate_or_die() -> None:
-    """Boot guard. Raises DispatcherEnvError on any range or
-    combination violation; the daemon entry catches that and
-    exits non-zero. Logs CRITICAL warnings for soft cases (e.g.
-    http opt-out in production) but does not refuse boot for
-    those."""
+    """Boot guard. Raises DispatcherEnvError on any range,
+    required-env, or combination violation; the daemon entry
+    catches that and exits non-zero. Logs CRITICAL warnings for
+    soft cases (e.g. http opt-out in production) but does not
+    refuse boot for those."""
     for name, lo, hi, _default in _RANGE_VARS:
         _validate_range(name, lo, hi)
+    _validate_required()
     _validate_combinations()
