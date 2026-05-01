@@ -4,7 +4,7 @@
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
   ![Version](https://img.shields.io/badge/version-1.6.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-1500%20passing-34a853)
+  ![Tests](https://img.shields.io/badge/tests-1528%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.6.0 - Outbound Push release. New `sentry-dispatcher` daemon POSTs every visible event to admin-registered consumer URLs over HMAC-signed HTTPS with a 24-hour dual-accept rotation window, exponential-backoff retries, a 1,000-row dead-letter lane, and dispatch-time SSRF guard with DNS-rebinding mitigation. Admin panel gains a Webhooks page (CRUD, secret rotation, DLQ viewer with replay-one + replay-batch, per-subscription stats, cross-subscription error log) and a wired global search bar covering items / bins / POs / SOs / customers (#163). Five migrations (029-033). New `DISPATCHER_DATABASE_URL` least-privilege role and the dispatcher Compose service. 1500 backend tests passing.**
+**v1.6.0 - Outbound Push release. New `sentry-dispatcher` daemon POSTs every visible event to admin-registered consumer URLs over HMAC-signed HTTPS with a 24-hour dual-accept rotation window, exponential-backoff retries, a 1,000-row dead-letter lane, and dispatch-time SSRF guard with DNS-rebinding mitigation. Admin panel gains a Webhooks page (CRUD, secret rotation, DLQ viewer with replay-one + replay-batch, per-subscription stats, cross-subscription error log) and a wired global search bar covering items / bins / POs / SOs / customers (#163). Five migrations (029-033). New `DISPATCHER_DATABASE_URL` least-privilege role and the dispatcher Compose service. 1528 backend tests passing.**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
