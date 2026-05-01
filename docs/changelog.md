@@ -6,6 +6,271 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.6.0 -- Outbound Push (Pipe A Write)
+
+*2026-04-30.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.6.0).
+
+Push-delivery counterpart to v1.5.0's polling read. External systems
+no longer have to long-poll `integration_events`: a new
+`sentry-dispatcher` daemon reads each visible event and POSTs it to
+admin-registered consumer URLs over HMAC-signed HTTPS, with
+exponential-backoff retries, a 1,000-row dead-letter lane, and
+admin-panel CRUD + DLQ triage + replay. Builds on the v1.5.0 outbox
+and the v1.5.1 hardening pattern: every architectural choice that
+drove a v1.5.1 audit finding is pre-empted here at the top of the
+branch (strict-typed Pydantic filters, env-var combination guards,
+Redis-pubsub cross-worker invalidation, dedicated least-privilege DB
+role, `audit_log` writes at every admin mutation, DELETE / TRUNCATE
+statement-level forensic triggers, BEGIN/COMMIT-wrapped migrations).
+
+Mobile is unchanged; no new APK ships. Admin panel gains a Webhooks
+page and a wired global search bar (the placeholder TopBar input that
+has been a non-functional stub since v1.4 #163).
+
+Subscription data model + forensic triggers:
+
+- **`webhook_subscriptions` + `webhook_secrets`** (migration 029).
+  UUID PK on subscriptions so admin URLs are not enumerable;
+  per-subscription `rate_limit_per_second` + `pending_ceiling` +
+  `dlq_ceiling` columns with CHECK bounds; secrets are
+  Fernet-encrypted with `SENTRY_ENCRYPTION_KEY` and live at
+  `(subscription_id, generation)` PK with `generation IN (1, 2)` for
+  the dual-accept rotation pattern.
+- **`webhook_deliveries`** (migration 030). Append-only per attempt
+  with one exception: the terminal `dlq` transition flips the same
+  row that was last `in_flight`. `ON DELETE RESTRICT` from
+  `subscription_id` so a hard delete with live deliveries fails;
+  soft-delete (`status='revoked'`) is the supported path. Four
+  partial indexes cover the dispatcher and admin hot paths.
+- **`integration_events` NOTIFY trigger** (migration 031). The v1.5
+  deferred-constraint trigger UPDATEs `visible_at` at COMMIT; this
+  migration adds an AFTER UPDATE trigger that fires
+  `pg_notify('integration_events_visible', event_id)` so the
+  dispatcher's LISTEN thread wakes within ~10ms of commit. 2-second
+  fallback poll runs always so a missed NOTIFY costs at most one poll
+  cycle.
+- **`webhook_subscriptions_audit` + `webhook_secrets_audit`**
+  (migration 032). Inherits the V-157 wms_tokens forensic-trail
+  pattern from day one: every DELETE / TRUNCATE on either table
+  appends a row capturing `event_type`, `rows_affected`, `sess_user`,
+  `curr_user`, `backend_pid`, `application_name`, `event_at`.
+- **`webhook_subscriptions_tombstones`** (migration 033). Hard-delete
+  writes a tombstone capturing `delivery_url_at_delete`; a subsequent
+  CREATE under the same URL returns 409 `url_reuse_tombstone` until
+  the admin acknowledges with `acknowledge_url_reuse: true`. Mirrors
+  v1.5.1 V-207 for consumer-groups.
+
+Dispatcher daemon:
+
+- **New `sentry-dispatcher` Compose service.** Synchronous psycopg2
+  + ThreadPoolExecutor + `requests`; mirrors the v1.5 snapshot-keeper
+  shape. One worker thread per active subscription, refreshed every
+  60s, with `verify=True` always and `allow_redirects=False` so a
+  malicious consumer cannot bounce traffic to an internal target via
+  3xx.
+- **LISTEN/NOTIFY wake + 2s fallback poll + Redis pubsub subscriber.**
+  Three sources merge into one in-process queue. Cross-worker
+  invalidation events (`paused`, `resumed`, `deleted`,
+  `delivery_url_changed`, `rate_limit_changed`, `secret_rotated`)
+  flow on the `webhook_subscription_events` channel; the §2.9 action
+  table documents which combination of subscription-list eviction,
+  session teardown, DB refresh, and rate-limit-bucket re-init each
+  event triggers.
+- **Per-subscription delivery loop.** Cursor-based; advances strictly
+  on terminal state (`succeeded` or `dlq`). Head-of-line blocking is
+  intentional per plan §2.5 (silent skip-ahead is worse than visible
+  growing lag). Hard-coded retry schedule
+  `[1s, 4s, 15s, 60s, 5m, 30m, 2h, 12h]` -- eight attempts, DLQ on
+  the eighth, ~15h cumulative window.
+- **Per-subscription pending and DLQ ceilings auto-pause** the
+  subscription atomically with the ceiling-th write; per-subscription
+  override is constrained to the deployment-wide hard cap
+  (`DISPATCHER_MAX_PENDING_HARD_CAP`,
+  `DISPATCHER_MAX_DLQ_HARD_CAP`), which is env-var-only so an admin
+  who can pause cannot also disable the safety ceiling.
+- **Dispatch-time SSRF guard with DNS-rebinding mitigation
+  invariant.** Every POST resolves `delivery_url` via
+  `socket.getaddrinfo` and rejects RFC1918, loopback, link-local,
+  IMDS, IPv6 ULA + AWS IMDSv2. Subscription mutations that change
+  the resolved network destination force fresh DNS resolution on the
+  next dispatch via session teardown.
+  `SENTRY_ALLOW_INTERNAL_WEBHOOKS=true` bypasses the check in dev /
+  CI; production refuses to boot. The combination
+  `SENTRY_ALLOW_HTTP_WEBHOOKS=true + SENTRY_ALLOW_INTERNAL_WEBHOOKS=true`
+  refuses to boot regardless of `FLASK_ENV`.
+- **Dedicated least-privilege Postgres role** via
+  `db/role-dispatcher.sql`. Operators set `DISPATCHER_DATABASE_URL`
+  to point at the role; dev / single-role deployments leave it unset
+  and the dispatcher falls back to `DATABASE_URL`. A compromise of
+  the dispatcher cannot read `users`, `wms_tokens`, or any table
+  outside the narrow grant set.
+
+HMAC signing + 24-hour dual-accept rotation:
+
+- **HMAC-SHA256 over the canonical signing input
+  `f"{X-Sentry-Timestamp}.{body}"`** where `body` is the exact
+  request bytes the dispatcher serialized once. Three layers of
+  enforcement on the single-serialization invariant: a CI lint that
+  forbids more than one `json.dumps` call on the envelope under
+  `webhook_dispatcher/`, a runtime assertion at the HTTP-client
+  boundary that fails loudly if any code path introduces a
+  transformation between sign and send, and an integration test that
+  fires the assertion when a transformation is introduced.
+  Constant-time signature comparison everywhere
+  (`hmac.compare_digest`); CI lint forbids `==` on signature bytes.
+- **24-hour dual-accept rotation.** Each subscription has two secret
+  slots: `generation=1` (primary, what the dispatcher signs with),
+  `generation=2` (previous, valid for 24 hours after rotation).
+  Plaintext returned exactly once at issuance / rotation; never
+  echoed in `repr()`; never written to `audit_log.details`.
+- **5-minute replay-protection window** documented as the consumer
+  contract: the verifier rejects any request whose
+  `X-Sentry-Timestamp` is more than 5 minutes from the consumer's
+  wall clock (bidirectional). Bounds the value of a captured request
+  to a 5-minute replay window even with a valid signature.
+
+Admin webhooks surface:
+
+- **`/api/admin/webhooks` CRUD** with one-shot plaintext secret on
+  create, server-side validation that `connector_id`, every
+  `event_types` entry, and every `warehouse_ids` entry exists,
+  HTTPS-only `delivery_url` policy with a documented opt-out, ceiling
+  enforcement against the deployment hard caps, URL-reuse tombstone
+  gate, and `audit_log` writes at every mutation site.
+- **PATCH publishes the matching cross-worker pubsub event** after
+  commit (`paused`, `resumed`, `delivery_url_changed`,
+  `rate_limit_changed`); status transitions out of `revoked` are
+  refused. DELETE soft-deletes by default; `?purge=true` hard-deletes
+  with tombstone (cascades through terminal `webhook_deliveries`;
+  refused while live deliveries reference the subscription).
+- **DLQ viewer** paginated and joined to `integration_events` so the
+  operator reads what payload failed without a second round-trip.
+  **Replay-one** inserts a fresh `pending` row pointing at the
+  original `event_id` (URL-tampering check rejects mismatched
+  `delivery_id`). **Replay-batch** with filter, server-computed
+  impact estimate, 10,000-row hard cap (override
+  `DISPATCHER_REPLAY_BATCH_HARD_CAP`) requiring
+  `acknowledge_large_replay: true`, and a 60-second per-subscription
+  throttle tracked through `audit_log` so a missed-trigger restart
+  cannot reset the timer.
+- **Per-subscription stats endpoint** (`?window=1h|6h|24h|7d`) with
+  attempts / succeeded / failed / dlq / in_flight / pending counters,
+  p50/p95/p99 response_time_ms, top 5 error_kinds, and current cursor
+  lag. 30-second in-process cache.
+- **Cross-subscription error log.** `GET /api/admin/webhook-errors`
+  joins delivery failures (status in `failed` / `dlq`) to the
+  server-owned error catalog at response time; the consumer's
+  response body is intentionally NOT stored.
+  `webhook_deliveries.error_detail` carries only categorical short
+  messages from
+  `api/services/webhook_dispatcher/error_catalog.py`. Pre-design the
+  dispatcher captured `response.text[:512]` directly into the column;
+  a misconfigured consumer endpoint can echo upstream credentials
+  (database connection strings, API tokens, session cookies) into a
+  5xx page, and persisting that body would make the DLQ admin viewer
+  a credential-exfiltration channel for the consumer's secrets. The
+  catalog covers `timeout`, `connection`, `tls`, `redirected`, `4xx`,
+  `5xx`, `ssrf_rejected`, `unknown`.
+- **React admin Webhooks page** with subscription list (status badge,
+  last-24h success rate, current pending count), create wizard
+  (connector picker, HTTPS-validated URL, scope-catalog checkbox
+  filter builder, rate-limit + ceiling sliders, one-shot secret
+  reveal modal with saved-secret acknowledgement, URL-reuse warning
+  modal), per-row actions (edit / pause-resume / rotate / DLQ /
+  stats / revoke / purge), DLQ panel with replay-one + replay-batch
+  (server-computed impact estimate inline; 429 throttle response
+  surfaces the countdown), stats panel, and a cross-subscription
+  "View errors" panel with row expansion showing the catalog
+  description and triage hint.
+
+Admin global search bar (#163, carry-forward from v1.4):
+
+- **`GET /api/admin/search?q=&warehouse_id=`.** Single endpoint
+  fanning out across items, bins, purchase_orders, sales_orders, and
+  the denormalized customer columns on sales_orders. Per-type cap of
+  10 rows, total cap of 50, minimum query length 2 to avoid
+  worst-case wildcard scans. Items are global; bins / POs / SOs /
+  customers are filtered to the supplied warehouse_id.
+- **TopBar dropdown wiring + list-page `?q=` prefill.** The TopBar
+  input that has been a non-functional placeholder since v1.4 now
+  drives the new endpoint with a 250ms debounce and a dropdown that
+  follows the existing warehouse-picker shape (click-outside
+  dismisses, Arrow keys + Enter + Esc). Selection routes to the
+  matching list page; the four list endpoints (items, bins, POs,
+  SOs) gained `?q=` ILIKE support.
+
+Hygiene + CI guardrails:
+
+- **Celery beat cleanup.** `cleanup_webhook_deliveries` enforces
+  90-day retention on terminal `webhook_deliveries` rows (every 6h);
+  `cleanup_expired_webhook_secrets` drops gen=2 rows past their 24h
+  `expires_at` (hourly).
+- **CI guardrails consolidation.** Single workflow gate covers no
+  `verify=False` anywhere under `webhook_dispatcher/` (extended in
+  this release to include `http_client.py`); no double `json.dumps`
+  on the envelope; sentinel grep that the `body == signed_body`
+  runtime assertion stays present at the HTTP-client boundary;
+  audit_log coverage check asserting every webhook admin mutation
+  writes a `WEBHOOK_*` row.
+- **Integration test matrix.** `test_v160_integration_matrix.py` maps
+  each of the 26 verification-plan points to a real test function or
+  to an operator-manual gate logged via `caplog`. The Chainway C6000
+  smoke test is the one operator-manual gate; everything else is
+  automated. **1528 backend tests passing** (up from 910 at v1.5.0,
+  1002 at v1.5.1).
+
+Migrations:
+
+- **029** -- `webhook_subscriptions` + `webhook_secrets`. UUID PK,
+  JSONB filter, ceiling columns with CHECK bounds, partial index on
+  active status. BEGIN/COMMIT-wrapped per v1.5.1 V-213 discipline.
+- **030** -- `webhook_deliveries`. BIGSERIAL PK, RESTRICT FK on
+  subscription_id, four partial indexes covering dispatcher and admin
+  hot paths.
+- **031** -- AFTER UPDATE trigger on `integration_events.visible_at`
+  that fires `pg_notify('integration_events_visible', event_id)`.
+  Self-test asserts the deferred-trigger -> UPDATE -> AFTER-UPDATE-trigger
+  -> NOTIFY chain holds under a single outer commit.
+- **032** -- `webhook_subscriptions_audit` +
+  `webhook_secrets_audit` tables with statement-level DELETE /
+  TRUNCATE triggers on both parent tables.
+- **033** -- `webhook_subscriptions_tombstones` table for the
+  URL-reuse acknowledgement gate.
+
+Notes for operators:
+
+- **Existing v1.5.x deployments must apply migrations 029-033 in
+  numeric order** before bringing the new compose stack up; the
+  dispatcher container's startup queries against the new tables fail
+  until they exist. Fresh installs run them automatically. CI
+  verification of the upgrade path lands in v1.7 (#217); until then
+  the operator runs the migration sequence manually as part of the
+  upgrade.
+- **`SENTRY_ENCRYPTION_KEY` now protects two ciphertext stores**:
+  `connector_credentials` (v1.3 inbound vault) and `webhook_secrets`
+  (v1.6 outbound HMAC). Fernet rotation must re-encrypt both in the
+  same transaction; missing one leaves a half-rotated deployment
+  where the affected service cannot decrypt its own secrets after
+  restart. See the updated rotation section in
+  [`docs/connectors.md`](connectors.md).
+- **`DISPATCHER_DATABASE_URL` is optional.** Dev and single-role
+  deployments leave it unset. Production should set up a dedicated
+  least-privilege role via `db/role-dispatcher.sql` and point
+  `DISPATCHER_DATABASE_URL` at it.
+- **`DISPATCHER_ENABLED=false` is the kill switch.** Container boots,
+  logs CRITICAL, sleeps with the heartbeat file still touched. Use
+  it to stop dispatch globally without a code rollback.
+- **No mobile APK ships with v1.6.0.** v1.6.0 has no mobile code
+  changes beyond the version-string bumps for BUILD_VERSION-guard
+  consistency. Operators already on the v1.5.1 APK
+  (`sentry-wms-v1.5.1.apk`) should stay on it -- it carries the
+  dep-tree security overrides from #158 and #61. Operators still on
+  older v1.4.1 / v1.4.3 APKs continue to authenticate and dispatch
+  but lack those security fixes; install v1.5.1 if you have not
+  already.
+
+---
+
 ## v1.5.1 -- Security Audit Patch
 
 *2026-04-27.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.1).
