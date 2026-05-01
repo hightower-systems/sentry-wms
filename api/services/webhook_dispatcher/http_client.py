@@ -33,6 +33,17 @@ LOGGER = logging.getLogger("webhook_dispatcher.http_client")
 
 _DEFAULT_HTTP_TIMEOUT_S = 10.0
 
+# #226: maximum response-body bytes the dispatcher will read.
+# The dispatcher never inspects the body (error_detail comes from
+# the server-owned catalog; consumer bodies are intentionally
+# discarded to avoid credential-exfiltration via the DLQ viewer).
+# A malicious or misconfigured consumer can stream an unbounded
+# 5xx body that the default `requests` path buffers entirely
+# before the call returns; under sustained abuse the dispatcher
+# worker's RSS spikes. Cap at 64 KB (orders of magnitude above
+# any reasonable ACK) and close the connection past that point.
+_MAX_RESPONSE_BODY_BYTES = 64 * 1024
+
 
 class SingleSerializationViolation(RuntimeError):
     """Raised when the bytes about to be POSTed do not match the
@@ -219,6 +230,13 @@ class HttpClient:
 
         session = self._get_session()
         try:
+            # #226: stream=True so the body is NOT buffered into
+            # memory by `requests` before this method returns.
+            # We never inspect the body anyway -- error_detail
+            # comes from the server-owned catalog -- so reading
+            # only status_code + headers and immediately closing
+            # the connection bounds the worker's RSS regardless
+            # of how large a body the consumer tries to ship.
             response = session.post(
                 url,
                 data=body,
@@ -226,6 +244,7 @@ class HttpClient:
                 timeout=self.timeout_s,
                 verify=True,
                 allow_redirects=False,
+                stream=True,
             )
         except Exception as exc:  # noqa: BLE001
             kind, detail = classify_exception(exc)
@@ -235,24 +254,54 @@ class HttpClient:
                 error_detail=detail,
             )
 
-        if 200 <= response.status_code < 300:
+        # #226: regardless of the status_code branches below, the
+        # response is closed via try/finally so a 2xx with a huge
+        # body (e.g. a chatty consumer ACK) cannot leak buffered
+        # bytes either. The error_detail is sourced from the
+        # server-owned catalog, never from response.text or
+        # response.content -- a misconfigured consumer endpoint
+        # can echo upstream credentials (DB connection strings,
+        # API tokens, session cookies) into a 5xx page; persisting
+        # that body would make the DLQ admin viewer a credential-
+        # exfiltration channel for the consumer's secrets.
+        try:
+            # #226: refuse oversized advertised bodies up front.
+            # A consumer that advertises Content-Length above the
+            # cap is reclassified as a 5xx-class failure so the
+            # dispatcher never even drains the bytes.
+            try:
+                advertised = int(response.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                advertised = 0
+            if advertised > _MAX_RESPONSE_BODY_BYTES:
+                kind = classify_status_code(response.status_code)
+                if kind not in ("4xx", "5xx", "redirected"):
+                    kind = "5xx"
+                return HttpResponse(
+                    status_code=response.status_code,
+                    error_kind=kind,
+                    error_detail=error_catalog.get_short_message(kind),
+                )
+
+            if 200 <= response.status_code < 300:
+                return HttpResponse(
+                    status_code=response.status_code,
+                    error_kind=None,
+                    error_detail=None,
+                )
+            kind = classify_status_code(response.status_code)
             return HttpResponse(
                 status_code=response.status_code,
-                error_kind=None,
-                error_detail=None,
+                error_kind=kind,
+                error_detail=error_catalog.get_short_message(kind),
             )
-
-        kind = classify_status_code(response.status_code)
-        # error_detail is sourced from the server-owned catalog. The
-        # consumer's response body is intentionally NOT stored: a
-        # misconfigured consumer endpoint can echo upstream
-        # credentials (DB connection strings, API tokens, session
-        # cookies) into a 5xx page. Persisting that body would make
-        # the DLQ admin viewer a credential-exfiltration channel for
-        # the consumer's secrets. Operators read the catalog
-        # description and triage hint via /admin/webhook-errors.
-        return HttpResponse(
-            status_code=response.status_code,
-            error_kind=kind,
-            error_detail=error_catalog.get_short_message(kind),
-        )
+        finally:
+            # close() returns the underlying connection to the
+            # urllib3 pool without reading the body. Any bytes
+            # urllib3 has already prefetched are bounded by its
+            # internal buffer (a few KB at most); never the full
+            # body the consumer is trying to ship.
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001
+                pass

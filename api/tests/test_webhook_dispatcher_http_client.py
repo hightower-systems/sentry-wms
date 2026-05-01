@@ -345,6 +345,144 @@ class TestSendStatusClassification:
         assert response.error_detail == error_catalog.get_short_message("redirected")
 
 
+class TestResponseSizeCap:
+    """#226: the dispatcher caps response-body buffering so a
+    consumer that ships a multi-MB 5xx body cannot blow up the
+    worker's RSS. The cap reclassifies oversized advertised
+    Content-Length as a 5xx-class failure without draining the
+    bytes."""
+
+    def test_oversized_advertised_content_length_reclassifies_to_5xx(self):
+        """A 200 response that advertises Content-Length above the
+        cap is reclassified as 5xx. Pre-#226 the dispatcher would
+        return 200 + buffer the advertised body."""
+        from services.webhook_dispatcher import error_catalog
+
+        cap = http_client_module._MAX_RESPONSE_BODY_BYTES
+        oversize = cap + 1024
+
+        class OversizeHandler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Length", str(oversize))
+                self.end_headers()
+                # Do NOT actually write the body; the client's
+                # cap fires off the header alone, so the test does
+                # not need to ship MBs of bytes.
+
+            def log_message(self, *a, **kw):
+                return
+
+        server, port = _start_http_server(OversizeHandler)
+        try:
+            client = http_client_module.HttpClient()
+            response = _send(client, url=f"http://127.0.0.1:{port}/")
+            assert response.status_code == 200
+            assert response.error_kind == "5xx", (
+                "oversized Content-Length must reclassify as 5xx-class "
+                "failure so the dispatcher does not return success on a "
+                "consumer that violates the response-size contract"
+            )
+            assert response.error_detail == error_catalog.get_short_message(
+                "5xx"
+            )
+        finally:
+            server.shutdown()
+
+    def test_normal_response_size_unchanged(self):
+        """Regression: a small ACK still classifies as 200 success.
+        Catches an over-eager cap that would reject every consumer
+        that returns any body at all."""
+
+        class TinyHandler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                ack = b'{"ok":true}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(ack)))
+                self.end_headers()
+                self.wfile.write(ack)
+
+            def log_message(self, *a, **kw):
+                return
+
+        server, port = _start_http_server(TinyHandler)
+        try:
+            client = http_client_module.HttpClient()
+            response = _send(client, url=f"http://127.0.0.1:{port}/")
+            assert response.status_code == 200
+            assert response.error_kind is None
+        finally:
+            server.shutdown()
+
+    def test_chunked_unbounded_body_does_not_hang_dispatcher(self):
+        """A consumer that streams a chunked body without
+        Content-Length must not hang the dispatcher: stream=True
+        + close() releases the connection without reading past
+        whatever urllib3 prefetched into its buffer."""
+        import threading
+
+        class ChunkedHandler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                self.send_response(503)
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                # Chunked encoding: write a few hundred KB of data in
+                # several chunks. The dispatcher's close() should
+                # break the loop after it returns from send().
+                try:
+                    for _ in range(20):
+                        chunk = b"x" * 16384
+                        self.wfile.write(
+                            f"{len(chunk):x}\r\n".encode("ascii")
+                            + chunk
+                            + b"\r\n"
+                        )
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
+                except Exception:  # noqa: BLE001
+                    pass
+
+            def log_message(self, *a, **kw):
+                return
+
+        server, port = _start_http_server(ChunkedHandler)
+        try:
+            client = http_client_module.HttpClient(timeout_s=5.0)
+            done = threading.Event()
+            container = {}
+
+            def _go():
+                try:
+                    container["resp"] = _send(
+                        client, url=f"http://127.0.0.1:{port}/"
+                    )
+                finally:
+                    done.set()
+
+            t = threading.Thread(target=_go)
+            t.start()
+            # The cap path should return well before the timeout;
+            # 5s is generous for a localhost RTT plus a few KB.
+            assert done.wait(timeout=8.0), (
+                "dispatcher hung draining a chunked body; the cap + close "
+                "path must release the connection without buffering"
+            )
+            t.join(timeout=2.0)
+            response = container.get("resp")
+            assert response is not None
+            assert response.status_code == 503
+        finally:
+            server.shutdown()
+
+
 class TestSendNetworkFailures:
     def test_connection_refused_classifies_as_connection(self):
         # Port 1 is reserved; nothing listens there.

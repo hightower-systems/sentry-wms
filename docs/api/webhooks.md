@@ -243,6 +243,10 @@ If your endpoint returns a 4xx or 5xx, or fails the network call, the dispatcher
 
 If the Sentry admin needs to debug a delivery failure, they will see the categorical short message and triage hint from the server-owned error catalog. Specifics about why your endpoint failed live in your endpoint's logs.
 
+## Response body size
+
+The dispatcher caps the response body it will read at 64 KB and closes the connection past that point. A consumer that advertises `Content-Length` above the cap is reclassified as a 5xx-class failure without the bytes ever being drained. Ship a small JSON ACK or a bare 200; do NOT return a stack trace, an HTML error page, or any large payload. The dispatcher does not inspect the body anyway -- only the status code drives delivery state.
+
 ## Replay timestamps
 
 When the admin replays a delivery, the new request carries:
