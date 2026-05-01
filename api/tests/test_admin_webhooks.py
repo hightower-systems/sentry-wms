@@ -770,6 +770,94 @@ class TestPatchUpdate:
         assert "delivery_url" not in diff
         assert "pending_ceiling" not in diff
 
+    def _latest_audit_events(self, sub_id: str) -> list:
+        """Helper for the #216 events-field tests. Pulls the most
+        recent WEBHOOK_SUBSCRIPTION_UPDATE row's events list."""
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details->'events' FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_UPDATE' "
+            "AND details->>'subscription_id' = %s "
+            "ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+
+    def test_audit_row_events_field_status_paused(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """#216: PATCH that flips status to paused records the
+        published kind in details.events so audit triage can name
+        what changed without re-deriving from the diff."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"status": "paused"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == ["paused"]
+
+    def test_audit_row_events_field_rate_limit_change(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """#216: rate_limit_per_second change records
+        rate_limit_changed."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"rate_limit_per_second": 7},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == ["rate_limit_changed"]
+
+    def test_audit_row_events_field_multi_kind(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """#216: a PATCH that flips status AND rate limit in one
+        body records both kinds in the order the publisher walks
+        them."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"status": "paused", "rate_limit_per_second": 7},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        events = self._latest_audit_events(sub_id)
+        # Walk order in the handler: rate_limit_per_second is checked
+        # before status; both kinds present, both consistent with the
+        # pubsub publish call sites.
+        assert set(events) == {"paused", "rate_limit_changed"}
+
+    def test_audit_row_events_field_empty_when_diff_unpublished(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """#216: a real diff that does not publish a pubsub event
+        (pending_ceiling change only) still gets an audit row;
+        details.events is an empty list. Distinct from the no-diff
+        case which short-circuits before any audit row is written."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 7777},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == []
+
 
 class TestStats:
     def _seed_event(self, event_type="test.stats", warehouse_id=1):

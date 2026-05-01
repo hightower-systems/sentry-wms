@@ -652,7 +652,19 @@ def update_webhook(validated, subscription_id):
         entity_id=0,
         user_id=g.current_user["username"],
         warehouse_id=None,
-        details={"subscription_id": subscription_id, "diff": diff},
+        # #216: include the same kind list pubsub publishes so audit
+        # triage can name what changed without re-deriving it from the
+        # diff. Sourced from the local pubsub_events variable so the
+        # vocabulary stays in sync at the call site (no separate
+        # mapping to drift). Diffs that don't publish a pubsub event
+        # (pending_ceiling / dlq_ceiling / display_name only)
+        # produce an empty events list; a multi-kind PATCH carries
+        # both kinds in order.
+        details={
+            "subscription_id": subscription_id,
+            "diff": diff,
+            "events": list(pubsub_events),
+        },
     )
 
     g.db.commit()
