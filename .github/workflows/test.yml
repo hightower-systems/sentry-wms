@@ -186,4 +186,9 @@ jobs:
           # Passwordless URL because the CI Redis service does not
           # set requirepass (matches the redis:7-alpine default).
           REDIS_URL: redis://localhost:6379/0
+          # #227: HMAC key for the pubsub envelope. Tests that drive
+          # the dispatcher's publish / subscribe path need a valid
+          # key; tests that exercise weak-key rejection clear or
+          # mutate the env at the test level.
+          SENTRY_PUBSUB_HMAC_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         run: cd api && python -m pytest tests/ -v

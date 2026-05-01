@@ -5,6 +5,10 @@ os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432
 os.environ.setdefault("JWT_SECRET", "NEVER_USE_THIS_IN_PRODUCTION_32!")
 os.environ.setdefault("SENTRY_ENCRYPTION_KEY", "t5hPIEVn_O41qfiMqAiPEnwzQh68o3Es46YfSOBvEK8=")
 os.environ.setdefault("SENTRY_TOKEN_PEPPER", "NEVER_USE_THIS_PEPPER_IN_PRODUCTION")
+os.environ.setdefault(
+    "SENTRY_PUBSUB_HMAC_KEY",
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+)
 
 _tests_dir = os.path.dirname(os.path.abspath(__file__))
 _api_dir = os.path.join(_tests_dir, "..")

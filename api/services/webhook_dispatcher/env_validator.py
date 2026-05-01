@@ -53,6 +53,21 @@ _REQUIRED_VARS_WHEN_ENABLED = [
         "in .env (or set DISPATCHER_ENABLED=false to use the kill "
         "switch). Same authenticated URL shape as CELERY_BROKER_URL.",
     ),
+    # #227: HMAC key for the cross-worker pubsub envelope. An unset
+    # or trivial value lets a Redis-side attacker forge subscription_event
+    # messages (eviction storms, spammed secret_rotated). The full weak-
+    # key validation (placeholder shape, length floor) lives in
+    # pubsub_signing.load_key; this guard fires fast at boot so the
+    # daemon refuses to come up unconfigured.
+    (
+        "SENTRY_PUBSUB_HMAC_KEY",
+        "SENTRY_PUBSUB_HMAC_KEY is required when the dispatcher is "
+        "enabled. The webhook_subscription_events Redis channel is "
+        "HMAC-signed (#227); an unset key would let a Redis-side "
+        "attacker forge eviction or secret_rotated messages. "
+        "Generate with: python -c \"import secrets; "
+        "print(secrets.token_hex(32))\"",
+    ),
 ]
 
 
@@ -196,6 +211,16 @@ def _validate_required() -> None:
             raise DispatcherEnvError(
                 f"refusing to boot: {name} is unset. {message}"
             )
+    # #227: pubsub HMAC key has additional shape requirements
+    # (placeholder rejection, byte-length floor) that pubsub_signing
+    # owns. Surface its weak-key error here as a DispatcherEnvError
+    # so the daemon entry's catch-and-exit path is uniform.
+    from . import pubsub_signing  # noqa: WPS433 -- localised import
+
+    try:
+        pubsub_signing.load_key()
+    except pubsub_signing.PubsubKeyConfigError as exc:
+        raise DispatcherEnvError(f"refusing to boot: {exc}")
 
 
 def validate_or_die() -> None:

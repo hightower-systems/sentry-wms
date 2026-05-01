@@ -38,8 +38,9 @@ def _clean_env(monkeypatch):
     """Wipe every env var the validator looks at so a host-shell
     leak does not interfere with the test. REDIS_URL is set to a
     valid placeholder because #212 added it as a required env;
-    tests that target the REDIS_URL guard specifically delete it
-    after this helper runs."""
+    SENTRY_PUBSUB_HMAC_KEY is set to a valid 32-byte placeholder
+    because #227 added it as a required env. Tests that target
+    those guards specifically delete the var after this helper runs."""
     for name, _lo, _hi in _RANGE_CASES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("SENTRY_ALLOW_HTTP_WEBHOOKS", raising=False)
@@ -47,6 +48,10 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv("FLASK_ENV", raising=False)
     monkeypatch.delenv("DISPATCHER_ENABLED", raising=False)
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv(
+        "SENTRY_PUBSUB_HMAC_KEY",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
 
 
 class TestRangeValidators:
@@ -229,6 +234,53 @@ class TestRequiredEnvVars:
     def test_set_redis_url_accepted(self, monkeypatch):
         _clean_env(monkeypatch)
         # _clean_env sets REDIS_URL; validate succeeds.
+        env_validator.validate_or_die()  # no raise
+
+
+class TestPubsubHmacKeyBootGuard:
+    """#227: SENTRY_PUBSUB_HMAC_KEY is required when the dispatcher
+    is enabled. The wake module's pubsub envelope is HMAC-signed
+    with this key; an unset / placeholder / short key would let a
+    Redis-side attacker forge subscription_event messages."""
+
+    def test_unset_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.delenv("SENTRY_PUBSUB_HMAC_KEY", raising=False)
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "SENTRY_PUBSUB_HMAC_KEY" in str(excinfo.value)
+
+    def test_empty_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("SENTRY_PUBSUB_HMAC_KEY", "")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "SENTRY_PUBSUB_HMAC_KEY" in str(excinfo.value)
+
+    def test_placeholder_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv(
+            "SENTRY_PUBSUB_HMAC_KEY",
+            "replace-me-with-secrets-token-hex-32",
+        )
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "placeholder" in str(excinfo.value)
+
+    def test_short_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("SENTRY_PUBSUB_HMAC_KEY", "short")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "32 bytes" in str(excinfo.value)
+
+    def test_kill_switch_skips_pubsub_key_check(self, monkeypatch):
+        """DISPATCHER_ENABLED=false bypasses the pubsub-key guard
+        too, so an operator can run the kill switch without having
+        configured the key."""
+        _clean_env(monkeypatch)
+        monkeypatch.delenv("SENTRY_PUBSUB_HMAC_KEY", raising=False)
+        monkeypatch.setenv("DISPATCHER_ENABLED", "false")
         env_validator.validate_or_die()  # no raise
 
 
