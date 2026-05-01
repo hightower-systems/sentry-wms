@@ -1756,6 +1756,86 @@ class TestDelete:
 
         assert any(c["event"] == "deleted" for c in captured)
 
+    def test_hard_delete_cascades_terminal_deliveries(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#211: terminal deliveries (succeeded / failed / dlq) must
+        not block ?purge=true. Pre-fix the FK ON DELETE RESTRICT
+        on webhook_deliveries.subscription_id leaked an unhandled
+        IntegrityError as a generic 500 once the subscription had
+        any terminal history. Post-fix the purge cascades through
+        webhook_deliveries before deleting the subscription row."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        # Seed an integration_events row + three terminal delivery
+        # rows on the subscription so the cascade has work to do.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO integration_events "
+            "(event_type, event_version, aggregate_type, aggregate_id, "
+            " aggregate_external_id, warehouse_id, source_txn_id, payload) "
+            "VALUES ('test.terminal', 1, 'agg', %s, %s, 1, %s, '{}'::jsonb) "
+            "RETURNING event_id",
+            (
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+            ),
+        )
+        event_id = cur.fetchone()[0]
+        for status in ("succeeded", "failed", "dlq"):
+            cur.execute(
+                "INSERT INTO webhook_deliveries "
+                "(subscription_id, event_id, attempt_number, status, "
+                " scheduled_at, completed_at, secret_generation) "
+                "VALUES (%s, %s, 1, %s, NOW(), NOW(), 1)",
+                (sub_id, event_id, status),
+            )
+        cur.close()
+
+        resp = client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["purged"] is True
+
+        # Subscription gone; deliveries cascaded; tombstone present.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM webhook_subscriptions WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        assert cur.fetchone() is None
+        cur.execute(
+            "SELECT COUNT(*) FROM webhook_deliveries WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        assert cur.fetchone()[0] == 0
+        cur.close()
+
+        # Audit row records how many delivery rows were cascaded so
+        # the trail captures the destructive blast radius.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details->>'cascaded_deliveries' "
+            "  FROM audit_log "
+            " WHERE action_type = 'WEBHOOK_SUBSCRIPTION_DELETE_HARD' "
+            "   AND details->>'subscription_id' = %s "
+            " ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        cascaded = cur.fetchone()[0]
+        assert cascaded == "3"
+        cur.close()
+
+        assert any(c["event"] == "deleted" for c in captured)
+
     def test_hard_delete_blocked_by_live_deliveries(
         self, client, auth_headers, monkeypatch
     ):
@@ -2055,3 +2135,78 @@ class TestAuditLog:
         assert details["display_name"] == "audit-probe"
         assert "secret" not in details
         assert "secret_ciphertext" not in details
+
+
+class TestAdminIntegrityErrorHandler:
+    """#211 defense-in-depth: any IntegrityError that escapes a
+    handler's local try/except surfaces as a structured 409 from
+    the blueprint-level errorhandler, not as a generic 500. The
+    purge cascade fix above closes the documented case; this test
+    exercises the global handler directly so a future endpoint
+    that forgets local handling cannot regress to 500."""
+
+    def test_handler_returns_409_with_constraint_name(self):
+        from flask import Flask
+        from sqlalchemy.exc import IntegrityError
+
+        from routes.admin import admin_bp, _admin_integrity_error
+
+        app = Flask(__name__)
+        app.register_blueprint(admin_bp, url_prefix="/api/admin")
+
+        # Synthesize a psycopg2-shaped IntegrityError carrying the
+        # constraint_name diag attribute the handler reads. Using
+        # SimpleNamespace keeps the test independent of psycopg2
+        # internals; the handler only inspects exc.orig.diag.
+        from types import SimpleNamespace
+
+        diag = SimpleNamespace(
+            constraint_name="webhook_deliveries_subscription_id_fkey",
+            message_detail="Key is still referenced.",
+        )
+        orig = SimpleNamespace(diag=diag)
+        exc = IntegrityError("statement", {}, orig)
+
+        with app.test_request_context("/api/admin/probe"):
+            from flask import g as flask_g
+
+            class _NoopDb:
+                def rollback(self):
+                    return None
+
+            flask_g.db = _NoopDb()
+            resp, status = _admin_integrity_error(exc)
+
+        assert status == 409
+        body = resp.get_json()
+        assert body["error"] == "integrity_constraint_violation"
+        assert body["constraint"] == "webhook_deliveries_subscription_id_fkey"
+
+    def test_handler_omits_constraint_when_diag_unavailable(self):
+        from flask import Flask
+        from sqlalchemy.exc import IntegrityError
+
+        from routes.admin import admin_bp, _admin_integrity_error
+
+        app = Flask(__name__)
+        app.register_blueprint(admin_bp, url_prefix="/api/admin")
+
+        # No diag attribute at all (older psycopg2 wrappers, custom
+        # mocks). Handler must still return 409 with no constraint
+        # field, not raise.
+        exc = IntegrityError("statement", {}, Exception("opaque"))
+
+        with app.test_request_context("/api/admin/probe"):
+            from flask import g as flask_g
+
+            class _NoopDb:
+                def rollback(self):
+                    return None
+
+            flask_g.db = _NoopDb()
+            resp, status = _admin_integrity_error(exc)
+
+        assert status == 409
+        body = resp.get_json()
+        assert body["error"] == "integrity_constraint_violation"
+        assert "constraint" not in body

@@ -878,6 +878,24 @@ def delete_webhook(subscription_id):
         ).fetchone()
         tombstone_id = int(tombstone_row.tombstone_id)
 
+        # #211: webhook_deliveries.subscription_id is ON DELETE
+        # RESTRICT (migration 030), so terminal deliveries (succeeded
+        # / failed / dlq) block the subscription delete unless we
+        # cascade through them first. The live-rows check above
+        # already refused the purge if any pending / in_flight rows
+        # exist, so this DELETE only catches terminal history. The
+        # whole point of ?purge=true (vs the soft-delete default) is
+        # "really delete this"; operators who want to preserve
+        # delivery history use the soft-delete path. webhook_secrets
+        # cascades automatically via its ON DELETE CASCADE FK
+        # (migration 029).
+        deleted_deliveries = g.db.execute(
+            text(
+                "DELETE FROM webhook_deliveries WHERE subscription_id = :sid"
+            ),
+            {"sid": subscription_id},
+        ).rowcount
+
         g.db.execute(
             text(
                 "DELETE FROM webhook_subscriptions WHERE subscription_id = :sid"
@@ -898,6 +916,7 @@ def delete_webhook(subscription_id):
                 "connector_id": current.connector_id,
                 "status_before": current.status,
                 "tombstone_id": tombstone_id,
+                "cascaded_deliveries": int(deleted_deliveries or 0),
             },
         )
 
