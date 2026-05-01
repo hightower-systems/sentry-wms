@@ -1331,6 +1331,42 @@ def replay_single(subscription_id, delivery_id):
 _REPLAY_BATCH_HARD_CAP_DEFAULT = 10_000
 _REPLAY_BATCH_THROTTLE_S = 60
 
+# #224: aggregate (cross-subscription) throttle bucket. The per-
+# subscription 60s timer above is sized for the operator double-
+# click case; a compromised admin who fans replay-batch across N
+# subscriptions all pointing at the same consumer URL bypasses it
+# by a factor of N. The aggregate bucket caps ALL admin replay-
+# batches across the deployment to N within a rolling window so
+# fan-out abuse cannot exceed the documented operational rate.
+# Both numbers tunable via env so an operator who needs a higher
+# floor for incident-recovery work can lift them; the env vars
+# are operator-only (#212 pattern: a compromised admin cannot
+# raise the safety rail).
+_REPLAY_BATCH_GLOBAL_WINDOW_S_DEFAULT = 300
+_REPLAY_BATCH_GLOBAL_BUDGET_DEFAULT = 5
+
+
+def _replay_batch_global_window_s() -> int:
+    raw = os.environ.get("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S")
+    if not raw:
+        return _REPLAY_BATCH_GLOBAL_WINDOW_S_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _REPLAY_BATCH_GLOBAL_WINDOW_S_DEFAULT
+    return max(1, value)
+
+
+def _replay_batch_global_budget() -> int:
+    raw = os.environ.get("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET")
+    if not raw:
+        return _REPLAY_BATCH_GLOBAL_BUDGET_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _REPLAY_BATCH_GLOBAL_BUDGET_DEFAULT
+    return max(1, value)
+
 
 def _replay_batch_hard_cap() -> int:
     raw = os.environ.get("DISPATCHER_REPLAY_BATCH_HARD_CAP")
@@ -1432,6 +1468,48 @@ def replay_batch(validated, subscription_id):
                     "error": "replay_batch_throttled",
                     "seconds_until_retry": (
                         _REPLAY_BATCH_THROTTLE_S - int(throttle_row.age_s)
+                    ),
+                }
+            ),
+            429,
+        )
+
+    # #224: aggregate (cross-subscription) throttle. Counts every
+    # WEBHOOK_DELIVERY_REPLAY_BATCH audit_log row across the
+    # deployment in the rolling window; refuses 429 once the
+    # budget is full. Closes the fan-out path where a compromised
+    # admin distributes replay-batches across N subscriptions to
+    # bypass the per-subscription timer. Same audit_log source-of-
+    # truth as the per-subscription throttle so a missed-trigger
+    # restart cannot reset either timer.
+    global_window_s = _replay_batch_global_window_s()
+    global_budget = _replay_batch_global_budget()
+    global_count_row = g.db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+              FROM audit_log
+             WHERE action_type = '{ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH}'
+               AND created_at > NOW() - make_interval(secs => :win)
+            """
+        ),
+        {"win": global_window_s},
+    ).fetchone()
+    global_count = int(global_count_row.n or 0) if global_count_row else 0
+    if global_count >= global_budget:
+        return (
+            jsonify(
+                {
+                    "error": "replay_batch_global_throttled",
+                    "global_count": global_count,
+                    "global_budget": global_budget,
+                    "global_window_s": global_window_s,
+                    "detail": (
+                        "the aggregate replay-batch budget for the "
+                        "deployment is full; wait for the rolling "
+                        "window to clear before retrying. The per-"
+                        "subscription 60s timer is the operator-error "
+                        "bucket; this is the abuse / fan-out bucket."
                     ),
                 }
             ),

@@ -1684,6 +1684,136 @@ class TestReplayBatch:
             "subscription row to close the throttle TOCTOU race"
         )
 
+    def _seed_global_throttle_audit_rows(self, count: int):
+        """Insert N WEBHOOK_DELIVERY_REPLAY_BATCH audit_log rows
+        across distinct fake subscription_ids so the global
+        throttle bucket counts them but the per-subscription
+        throttle does not match any real subscription. Inserts
+        through the test transaction's raw connection so the rows
+        are visible to the handler under test and roll back at
+        teardown (no cross-test pollution)."""
+        import json as _json
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        for _ in range(count):
+            cur.execute(
+                "INSERT INTO audit_log "
+                "(action_type, entity_type, entity_id, user_id, "
+                " warehouse_id, details) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb)",
+                (
+                    "WEBHOOK_DELIVERY_REPLAY_BATCH",
+                    "WEBHOOK_SUBSCRIPTION",
+                    0,
+                    "seed",
+                    None,
+                    _json.dumps({"subscription_id": str(uuid.uuid4())}),
+                ),
+            )
+        cur.close()
+
+    def test_global_throttle_refuses_after_budget_consumed(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#224: once the rolling global budget of N
+        WEBHOOK_DELIVERY_REPLAY_BATCH rows lands, a fresh request
+        from any subscription is refused 429
+        replay_batch_global_throttled. Closes the fan-out path
+        where a compromised admin distributes batches across many
+        subscriptions to bypass the per-subscription 60s bucket."""
+        # Tighten the global budget for a fast test; 2 rows in
+        # any subscription saturates the bucket.
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET", "2")
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S", "300")
+
+        # Pre-fill the bucket with 2 audit rows attributed to other
+        # subscriptions so the per-subscription throttle on this
+        # subscription is clear.
+        self._seed_global_throttle_audit_rows(2)
+
+        created = _create_one(client, auth_headers, display_name="global-throttle")
+        sub_id = created["subscription_id"]
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "replay_batch_global_throttled"
+        assert body["global_count"] >= 2
+        assert body["global_budget"] == 2
+
+    def test_global_throttle_lets_through_when_under_budget(
+        self, client, auth_headers, monkeypatch
+    ):
+        """The global bucket only refuses once it is FULL; an
+        empty / under-budget bucket still accepts."""
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET", "5")
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S", "300")
+
+        created = _create_one(client, auth_headers, display_name="global-fits")
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+    def test_global_throttle_counts_only_recent_window(
+        self, client, auth_headers, monkeypatch
+    ):
+        """The bucket is rolling: a row outside the window does
+        not count. Insert one audit row with a backdated
+        created_at older than the configured window and confirm
+        the new request is admitted (audit_log is append-only;
+        UPDATE is forbidden by V-025, so we INSERT with the
+        timestamp pre-set)."""
+        import json as _json
+
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET", "1")
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S", "5")
+
+        # Insert one audit row dated 60s ago. audit_log_chain_hash
+        # honors NEW.created_at, so an explicit backdated value
+        # survives the trigger.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO audit_log "
+            "(action_type, entity_type, entity_id, user_id, "
+            " warehouse_id, details, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s::jsonb, "
+            "        NOW() - INTERVAL '60 seconds')",
+            (
+                "WEBHOOK_DELIVERY_REPLAY_BATCH",
+                "WEBHOOK_SUBSCRIPTION",
+                0,
+                "seed",
+                None,
+                _json.dumps({"subscription_id": str(uuid.uuid4())}),
+            ),
+        )
+        cur.close()
+
+        created = _create_one(client, auth_headers, display_name="rolling")
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
     def test_cursor_unchanged_after_batch(self, client, auth_headers):
         created = _create_one(client, auth_headers)
         sub_id = created["subscription_id"]
