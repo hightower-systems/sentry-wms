@@ -529,11 +529,29 @@ def deliver_one(
             terminal=False,
         )
 
+    # #225: load_secret_for_signing acquires FOR SHARE on the
+    # webhook_secrets row. We must commit BEFORE the HTTP send so
+    # the rotation wait is bounded by sign duration (microseconds)
+    # rather than the HTTP round-trip (up to 10s). Stamp
+    # secret_generation on the delivery row from the row actually
+    # read (not the hardcoded placeholder at INSERT time) so the
+    # wire header and the audit row both reflect the truth -- a
+    # strict-generation consumer that survived rotation cannot
+    # get out of sync.
     secret = signing.load_secret_for_signing(cur, subscription_id)
     signed = signing.sign_request(
         envelope_module.build_envelope(_row_to_event_envelope(event_row)),
         secret,
     )
+    cur.execute(
+        """
+        UPDATE webhook_deliveries
+           SET secret_generation = %s
+         WHERE delivery_id = %s
+        """,
+        (signed.secret_generation, pending["delivery_id"]),
+    )
+    conn.commit()
 
     started = time.monotonic()
     http_status: Optional[int] = None

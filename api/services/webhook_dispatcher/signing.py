@@ -192,10 +192,27 @@ def load_secret_for_signing(cur, subscription_id: str) -> SecretMaterial:
     The cursor is the caller's responsibility (transaction scope,
     connection pooling, etc.); this function does not commit or
     rollback. Works with both default cursors and RealDictCursor.
+
+    #225: the SELECT uses ``FOR SHARE`` to lock the secret row for
+    the duration of the dispatcher's open transaction. The admin's
+    rotate_webhook_secret takes ``FOR UPDATE`` on webhook_secrets
+    rows in its own transaction; ``FOR SHARE`` here makes those
+    UPDATE/DELETE/INSERT statements wait until the dispatcher
+    commits, eliminating the window where T1 reads gen=1, T2
+    rotates, and T1 then signs with what is now stored as gen=2.
+    The dispatcher's caller must commit before the HTTP send so
+    the rotation wait is bounded by the sign duration (microseconds)
+    rather than the HTTP round-trip (up to 10s).
+
+    The returned SecretMaterial's ``generation`` reflects the row
+    actually read; the dispatcher stamps that value on the wire
+    header and on webhook_deliveries.secret_generation so a strict-
+    generation consumer cannot get out of sync with rotation.
     """
     cur.execute(
-        "SELECT secret_ciphertext FROM webhook_secrets "
-        "WHERE subscription_id = %s AND generation = 1",
+        "SELECT generation, secret_ciphertext FROM webhook_secrets "
+        "WHERE subscription_id = %s AND generation = 1 "
+        "FOR SHARE",
         (str(subscription_id),),
     )
     row = cur.fetchone()
@@ -204,9 +221,10 @@ def load_secret_for_signing(cur, subscription_id: str) -> SecretMaterial:
             f"no primary (generation=1) secret found for subscription "
             f"{subscription_id}; the dispatcher cannot sign without one"
         )
-    ciphertext = bytes(_row_value(row, 0, "secret_ciphertext"))
+    generation = int(_row_value(row, 0, "generation"))
+    ciphertext = bytes(_row_value(row, 1, "secret_ciphertext"))
     plaintext = _decrypt(ciphertext)
-    return SecretMaterial(plaintext, generation=1)
+    return SecretMaterial(plaintext, generation=generation)
 
 
 def load_all_active_secrets(cur, subscription_id: str) -> List[SecretMaterial]:

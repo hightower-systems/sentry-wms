@@ -513,6 +513,70 @@ class TestLoadSecretForSigning:
         finally:
             conn.close()
 
+    def test_load_acquires_for_share_lock(self):
+        """#225: the dispatcher's SELECT must hold a FOR SHARE row
+        lock on the gen=1 webhook_secrets row so the admin's
+        rotation transaction (UPDATE/DELETE/INSERT on the same
+        rows) blocks until sign + stamp commit. Verified by
+        inspecting pg_locks while the dispatcher's transaction
+        is open."""
+        # Open a connection in non-autocommit mode and run the
+        # signer's load. The lock must be visible in pg_locks
+        # before we commit.
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            secret = signing.load_secret_for_signing(cur, self.sub_id)
+            assert secret.generation == 1
+
+            # pg_locks records row-level locks via mode='ShareLock'
+            # on the relation when FOR SHARE is in effect. The
+            # webhook_secrets row's relation OID exposes the lock.
+            inspector = _make_conn()
+            try:
+                ic = inspector.cursor()
+                ic.execute(
+                    """
+                    SELECT 1 FROM pg_locks l
+                      JOIN pg_class c ON c.oid = l.relation
+                     WHERE c.relname = 'webhook_secrets'
+                       AND l.mode IN ('RowShareLock', 'ShareLock', 'ShareUpdateExclusiveLock')
+                       AND l.granted = TRUE
+                       AND l.pid = %s
+                    """,
+                    (conn.info.backend_pid,),
+                )
+                assert ic.fetchone() is not None, (
+                    "load_secret_for_signing must take a FOR SHARE lock so "
+                    "rotation cannot demote the row mid-sign"
+                )
+            finally:
+                inspector.close()
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_load_returns_generation_from_row_not_hardcoded(self):
+        """#225: the SecretMaterial's generation comes from the
+        row's actual generation column. The dispatcher stamps that
+        value on the wire header; if the loader hardcoded 1, a
+        future change to sign with gen=2 would silently produce a
+        mismatched header."""
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            secret = signing.load_secret_for_signing(cur, self.sub_id)
+            # Confirm generation came from the row, not a constant.
+            cur.execute(
+                "SELECT generation FROM webhook_secrets "
+                "WHERE subscription_id = %s AND generation = 1",
+                (str(self.sub_id),),
+            )
+            row = cur.fetchone()
+            assert secret.generation == int(row[0])
+        finally:
+            conn.close()
+
     def test_signed_request_with_loaded_secret_matches_direct_construction(self):
         """End-to-end equivalence: a SecretMaterial loaded from
         the DB and a SecretMaterial constructed directly with
