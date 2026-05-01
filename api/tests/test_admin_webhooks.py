@@ -1647,6 +1647,89 @@ class TestReplayBatch:
         assert resp.status_code == 409
         assert resp.get_json()["error"] == "replay_would_exceed_pending_ceiling"
 
+    def test_replay_batch_handler_holds_for_update_on_subscription_row(self):
+        """#223: the replay-batch handler must hold SELECT FOR
+        UPDATE on the subscription row through the throttle SELECT
+        and the pre-INSERT pending_ceiling check. Source-level
+        sentinel: a refactor that drops the lock surfaces here.
+
+        Reading the file rather than driving real concurrency
+        because the test client routes every request through the
+        same SQLAlchemy connection (conftest wraps the suite in a
+        single transaction), so two threaded requests serialize at
+        the connection level and never expose the row-lock
+        behavior. The lock-acquisition shape itself is exercised
+        by test_replay_batch_for_update_blocks_concurrent_session
+        below."""
+        handler_path = os.path.join(
+            os.path.dirname(__file__), "..", "routes", "admin",
+            "admin_webhooks.py",
+        )
+        with open(handler_path) as f:
+            source = f.read()
+        # Locate the replay_batch function and check that its body
+        # contains a SELECT against webhook_subscriptions with FOR
+        # UPDATE. A refactor that drops the lock would surface
+        # here.
+        anchor = "def replay_batch("
+        start = source.index(anchor)
+        # End at the next top-level def or admin_bp.route to
+        # bound the function body inspection.
+        end = source.find("\n@admin_bp.route", start + len(anchor))
+        assert end > start, "could not bound replay_batch source"
+        body = source[start:end]
+        assert "FROM webhook_subscriptions" in body
+        assert "FOR UPDATE" in body, (
+            "replay_batch must hold SELECT FOR UPDATE on the "
+            "subscription row to close the throttle TOCTOU race"
+        )
+
+    def test_replay_batch_for_update_blocks_concurrent_session(
+        self, client, auth_headers
+    ):
+        """#223: a parallel raw-connection transaction that takes
+        SELECT FOR UPDATE NOWAIT on the same subscription row
+        errors with LockNotAvailable while another transaction
+        already holds the lock. This is the lock-acquisition shape
+        the replay-batch handler relies on."""
+        import psycopg2
+        from psycopg2 import errors as psycopg2_errors
+
+        created = _create_one(client, auth_headers, display_name="lock-shape")
+        sub_id = created["subscription_id"]
+
+        holder = psycopg2.connect(os.environ["DATABASE_URL"])
+        holder.autocommit = False
+        try:
+            cur = holder.cursor()
+            cur.execute(
+                "SELECT subscription_id FROM webhook_subscriptions "
+                "WHERE subscription_id = %s FOR UPDATE",
+                (sub_id,),
+            )
+            assert cur.fetchone() is not None
+
+            # Second connection: NOWAIT must surface
+            # LockNotAvailable (psycopg2.errors.LockNotAvailable),
+            # proving the holder's FOR UPDATE actually grants an
+            # exclusive row lock the way the handler relies on.
+            challenger = psycopg2.connect(os.environ["DATABASE_URL"])
+            challenger.autocommit = False
+            try:
+                cc = challenger.cursor()
+                with pytest.raises(psycopg2_errors.LockNotAvailable):
+                    cc.execute(
+                        "SELECT subscription_id FROM webhook_subscriptions "
+                        "WHERE subscription_id = %s FOR UPDATE NOWAIT",
+                        (sub_id,),
+                    )
+                challenger.rollback()
+            finally:
+                challenger.close()
+        finally:
+            holder.rollback()
+            holder.close()
+
     def test_cursor_unchanged_after_batch(self, client, auth_headers):
         created = _create_one(client, auth_headers)
         sub_id = created["subscription_id"]

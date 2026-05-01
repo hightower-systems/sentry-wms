@@ -1376,10 +1376,20 @@ def replay_batch(validated, subscription_id):
     except ValueError:
         return jsonify({"error": "invalid_subscription_id"}), 400
 
+    # #223: SELECT FOR UPDATE on the subscription row at the top of
+    # the handler. Without the lock, two concurrent replay-batch
+    # requests both pass the throttle audit_log SELECT before
+    # either commits its WEBHOOK_DELIVERY_REPLAY_BATCH row, so
+    # both batches land within the same 60s window. The lock
+    # serializes concurrent replay-batches on the same subscription
+    # so the throttle SELECT becomes consistent within the locked
+    # window. PATCH and rotate-secret already hold this row lock
+    # for the same TOCTOU reason.
     sub_row = g.db.execute(
         text(
             "SELECT subscription_id, status, pending_ceiling "
-            "FROM webhook_subscriptions WHERE subscription_id = :sid"
+            "FROM webhook_subscriptions WHERE subscription_id = :sid "
+            "FOR UPDATE"
         ),
         {"sid": subscription_id},
     ).fetchone()
