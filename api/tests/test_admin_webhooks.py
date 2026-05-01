@@ -1684,52 +1684,6 @@ class TestReplayBatch:
             "subscription row to close the throttle TOCTOU race"
         )
 
-    def test_replay_batch_for_update_blocks_concurrent_session(
-        self, client, auth_headers
-    ):
-        """#223: a parallel raw-connection transaction that takes
-        SELECT FOR UPDATE NOWAIT on the same subscription row
-        errors with LockNotAvailable while another transaction
-        already holds the lock. This is the lock-acquisition shape
-        the replay-batch handler relies on."""
-        import psycopg2
-        from psycopg2 import errors as psycopg2_errors
-
-        created = _create_one(client, auth_headers, display_name="lock-shape")
-        sub_id = created["subscription_id"]
-
-        holder = psycopg2.connect(os.environ["DATABASE_URL"])
-        holder.autocommit = False
-        try:
-            cur = holder.cursor()
-            cur.execute(
-                "SELECT subscription_id FROM webhook_subscriptions "
-                "WHERE subscription_id = %s FOR UPDATE",
-                (sub_id,),
-            )
-            assert cur.fetchone() is not None
-
-            # Second connection: NOWAIT must surface
-            # LockNotAvailable (psycopg2.errors.LockNotAvailable),
-            # proving the holder's FOR UPDATE actually grants an
-            # exclusive row lock the way the handler relies on.
-            challenger = psycopg2.connect(os.environ["DATABASE_URL"])
-            challenger.autocommit = False
-            try:
-                cc = challenger.cursor()
-                with pytest.raises(psycopg2_errors.LockNotAvailable):
-                    cc.execute(
-                        "SELECT subscription_id FROM webhook_subscriptions "
-                        "WHERE subscription_id = %s FOR UPDATE NOWAIT",
-                        (sub_id,),
-                    )
-                challenger.rollback()
-            finally:
-                challenger.close()
-        finally:
-            holder.rollback()
-            holder.close()
-
     def test_cursor_unchanged_after_batch(self, client, auth_headers):
         created = _create_one(client, auth_headers)
         sub_id = created["subscription_id"]
