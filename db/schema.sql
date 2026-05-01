@@ -1137,11 +1137,15 @@ CREATE TRIGGER tr_webhook_secrets_audit_truncate
 -- NOT NULL because the admin endpoint always runs under cookie
 -- auth; acknowledged_by is nullable until the gate is cleared.
 --
--- The identical DDL lives in db/migrations/033_webhook_subscriptions_tombstones.sql.
+-- The identical DDL lives in db/migrations/033_webhook_subscriptions_tombstones.sql
+-- plus db/migrations/034_webhook_tombstones_canonical.sql (#218: the gate
+-- compares delivery_url_canonical so a case / port / fragment / trailing-
+-- slash mutation cannot bypass URL-reuse acknowledgement).
 CREATE TABLE webhook_subscriptions_tombstones (
     tombstone_id            BIGSERIAL    PRIMARY KEY,
     subscription_id         UUID         NOT NULL,
     delivery_url_at_delete  TEXT         NOT NULL,
+    delivery_url_canonical  TEXT         NOT NULL,
     connector_id            VARCHAR(64)  NOT NULL,
     deleted_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     deleted_by              INTEGER      NOT NULL REFERENCES users(user_id),
@@ -1149,6 +1153,6 @@ CREATE TABLE webhook_subscriptions_tombstones (
     acknowledged_by         INTEGER      REFERENCES users(user_id)
 );
 
-CREATE INDEX webhook_subscriptions_tombstones_url_unack
-    ON webhook_subscriptions_tombstones (delivery_url_at_delete)
+CREATE INDEX webhook_subscriptions_tombstones_canonical_unack
+    ON webhook_subscriptions_tombstones (delivery_url_canonical)
     WHERE acknowledged_at IS NULL;

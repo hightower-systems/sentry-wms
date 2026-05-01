@@ -291,13 +291,24 @@ class TestAuthorization:
 
 class TestUrlReuseTombstone:
     def _seed_tombstone(self, delivery_url: str) -> int:
+        from services.webhook_dispatcher.url_normalize import (
+            canonicalize_delivery_url,
+        )
+
         conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO webhook_subscriptions_tombstones "
-            "(subscription_id, delivery_url_at_delete, connector_id, deleted_by) "
-            "VALUES (%s, %s, %s, %s) RETURNING tombstone_id",
-            (str(uuid.uuid4()), delivery_url, "test-conn-webhook", 1),
+            "(subscription_id, delivery_url_at_delete, "
+            "delivery_url_canonical, connector_id, deleted_by) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING tombstone_id",
+            (
+                str(uuid.uuid4()),
+                delivery_url,
+                canonicalize_delivery_url(delivery_url),
+                "test-conn-webhook",
+                1,
+            ),
         )
         tombstone_id = cur.fetchone()[0]
         cur.close()
@@ -351,6 +362,81 @@ class TestUrlReuseTombstone:
         cur.close()
         assert ack_at is not None
         assert ack_by == 1
+
+    @pytest.mark.parametrize(
+        "variant_suffix",
+        [
+            # Casing on host segment.
+            ("CASE", lambda raw: raw.replace("example.com", "EXAMPLE.com")),
+            # Mixed scheme casing.
+            ("SCHEME", lambda raw: raw.replace("https://", "HTTPS://")),
+            # Default port noise.
+            ("PORT", lambda raw: raw.replace("example.com", "example.com:443")),
+            # Trailing slash on a non-root path.
+            ("SLASH", lambda raw: raw + "/"),
+            # Fragment that should be stripped.
+            ("FRAGMENT", lambda raw: raw + "#fragment"),
+        ],
+    )
+    def test_canonicalization_variants_still_trip_gate(
+        self, client, auth_headers, variant_suffix
+    ):
+        """#218: a one-character casing / port / fragment / trailing-slash
+        mutation must not bypass the URL-reuse acknowledgement step."""
+        label, mutator = variant_suffix
+        unique = uuid.uuid4().hex[:8]
+        seeded_url = f"https://example.com/hook-{unique}"
+        self._seed_tombstone(seeded_url)
+
+        mutated = mutator(seeded_url)
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": f"variant-{label}",
+                "delivery_url": mutated,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, (label, mutated, resp.get_json())
+        assert resp.get_json()["error"] == "url_reuse_tombstone"
+
+    def test_canonical_column_populated_on_hard_delete_tombstone(
+        self, client, auth_headers
+    ):
+        """#218: hard-delete writes both raw delivery_url_at_delete and
+        the canonical column so the gate can match variants."""
+        url = f"https://Example.COM:443/hook-{uuid.uuid4().hex[:8]}/"
+        created = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "to-be-purged",
+                "delivery_url": url,
+            },
+            headers=auth_headers,
+        ).get_json()
+
+        sub_id = created["subscription_id"]
+        purge = client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+        assert purge.status_code == 200, purge.get_json()
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT delivery_url_at_delete, delivery_url_canonical "
+            "FROM webhook_subscriptions_tombstones "
+            "WHERE tombstone_id = %s",
+            (purge.get_json()["tombstone_id"],),
+        )
+        raw, canonical = cur.fetchone()
+        cur.close()
+        # Raw is the URL the admin originally typed; canonical is
+        # lowercased / port-stripped / trailing-slash-collapsed.
+        assert raw == url
+        assert canonical == f"https://example.com/hook-{url.split('-')[-1].rstrip('/')}"
 
 
 def _create_one(client, auth_headers, **overrides) -> dict:

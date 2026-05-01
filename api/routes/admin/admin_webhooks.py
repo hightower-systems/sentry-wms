@@ -55,6 +55,7 @@ from services.webhook_dispatcher import env_validator as dispatcher_env
 from services.webhook_dispatcher import error_catalog as dispatcher_error_catalog
 from services.webhook_dispatcher import signing as dispatcher_signing
 from services.webhook_dispatcher import ssrf_guard
+from services.webhook_dispatcher import url_normalize as dispatcher_url_normalize
 from services.webhook_dispatcher import wake as dispatcher_wake
 from utils.validation import validate_body
 
@@ -253,18 +254,21 @@ def create_webhook(validated):
                 400,
             )
 
+    canonical_url = dispatcher_url_normalize.canonicalize_delivery_url(
+        validated.delivery_url
+    )
     tombstone_row = g.db.execute(
         text(
             """
             SELECT tombstone_id
               FROM webhook_subscriptions_tombstones
-             WHERE delivery_url_at_delete = :url
+             WHERE delivery_url_canonical = :canonical
                AND acknowledged_at IS NULL
              ORDER BY tombstone_id DESC
              LIMIT 1
             """
         ),
-        {"url": validated.delivery_url},
+        {"canonical": canonical_url},
     ).fetchone()
     if tombstone_row is not None and not validated.acknowledge_url_reuse:
         response = jsonify(
@@ -876,19 +880,25 @@ def delete_webhook(subscription_id):
                 409,
             )
 
+        canonical_at_delete = (
+            dispatcher_url_normalize.canonicalize_delivery_url(
+                current.delivery_url
+            )
+        )
         tombstone_row = g.db.execute(
             text(
                 """
                 INSERT INTO webhook_subscriptions_tombstones
                     (subscription_id, delivery_url_at_delete,
-                     connector_id, deleted_by)
-                VALUES (:sid, :url, :connector_id, :uid)
+                     delivery_url_canonical, connector_id, deleted_by)
+                VALUES (:sid, :url, :canonical, :connector_id, :uid)
                 RETURNING tombstone_id
                 """
             ),
             {
                 "sid": subscription_id,
                 "url": current.delivery_url,
+                "canonical": canonical_at_delete,
                 "connector_id": current.connector_id,
                 "uid": g.current_user["user_id"],
             },
