@@ -1378,8 +1378,8 @@ def replay_batch(validated, subscription_id):
 
     sub_row = g.db.execute(
         text(
-            "SELECT subscription_id, status FROM webhook_subscriptions "
-            "WHERE subscription_id = :sid"
+            "SELECT subscription_id, status, pending_ceiling "
+            "FROM webhook_subscriptions WHERE subscription_id = :sid"
         ),
         {"sid": subscription_id},
     ).fetchone()
@@ -1456,6 +1456,49 @@ def replay_batch(validated, subscription_id):
                         "the matched batch exceeds the per-call cap. "
                         "Re-submit with acknowledge_large_replay=true to "
                         "confirm intentional replay at this size."
+                    ),
+                }
+            ),
+            409,
+        )
+
+    # #222: pending_ceiling is the safety rail that protects the
+    # dispatcher and the consumer from runaway backlog. The
+    # auto-pause logic (deliver_one) only fires AFTER a delivery
+    # attempt; replay-batch INSERTs N pending rows in one statement
+    # before any attempt happens, sidestepping the rail. Refuse the
+    # batch when it would push current_pending + impact past the
+    # ceiling, mirroring the same _count_pending shape the
+    # dispatcher uses (pending + in_flight). Not waivable: the
+    # acknowledge_large_replay flag covers the per-batch hard cap;
+    # the ceiling is independent.
+    pending_count_row = g.db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n FROM webhook_deliveries
+             WHERE subscription_id = :sid
+               AND status IN ('pending', 'in_flight')
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    current_pending = int(pending_count_row.n or 0) if pending_count_row else 0
+    pending_ceiling = int(sub_row.pending_ceiling)
+    if current_pending + impact > pending_ceiling:
+        return (
+            jsonify(
+                {
+                    "error": "replay_would_exceed_pending_ceiling",
+                    "current_pending": current_pending,
+                    "impact_count": impact,
+                    "pending_ceiling": pending_ceiling,
+                    "gap": (current_pending + impact) - pending_ceiling,
+                    "detail": (
+                        "this replay would push pending+in_flight past "
+                        "the subscription's pending_ceiling. The ceiling "
+                        "is the safety rail; lift pending_ceiling via "
+                        "PATCH or wait for the backlog to drain before "
+                        "retrying."
                     ),
                 }
             ),

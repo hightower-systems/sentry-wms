@@ -1531,6 +1531,107 @@ class TestReplayBatch:
         )
         assert resp.status_code == 401
 
+    def test_replay_refused_when_would_exceed_pending_ceiling(
+        self, client, auth_headers
+    ):
+        """#222: a replay-batch that would push pending+in_flight
+        past the subscription's pending_ceiling is refused with 409
+        BEFORE the INSERT lands. The auto-pause path only fires
+        after a delivery attempt; without a pre-INSERT check the
+        batch could overshoot the ceiling silently."""
+        # Create subscription with a tight pending_ceiling so the
+        # batch can exceed it without seeding thousands of rows.
+        body = {
+            "connector_id": "test-conn-webhook",
+            "display_name": "ceiling-victim",
+            "delivery_url": f"https://example.com/{uuid.uuid4()}",
+            "pending_ceiling": 5,
+            "dlq_ceiling": 100,
+        }
+        sub_id = client.post(
+            "/api/admin/webhooks", json=body, headers=auth_headers
+        ).get_json()["subscription_id"]
+
+        event_id = self._seed_event()
+        # Seed 6 dlq rows so the replay impact equals 6 -- one
+        # above the ceiling of 5.
+        for _ in range(6):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, resp.get_json()
+        body_out = resp.get_json()
+        assert body_out["error"] == "replay_would_exceed_pending_ceiling"
+        assert body_out["current_pending"] == 0
+        assert body_out["impact_count"] == 6
+        assert body_out["pending_ceiling"] == 5
+        assert body_out["gap"] == 1
+
+        # The INSERT did not land.
+        assert self._pending_count(sub_id) == 0
+
+    def test_replay_within_ceiling_proceeds(self, client, auth_headers):
+        """An impact that fits inside the remaining pending budget
+        replays normally."""
+        body = {
+            "connector_id": "test-conn-webhook",
+            "display_name": "ceiling-fits",
+            "delivery_url": f"https://example.com/{uuid.uuid4()}",
+            "pending_ceiling": 100,
+            "dlq_ceiling": 100,
+        }
+        sub_id = client.post(
+            "/api/admin/webhooks", json=body, headers=auth_headers
+        ).get_json()["subscription_id"]
+
+        event_id = self._seed_event()
+        for _ in range(3):
+            self._seed_delivery(sub_id, event_id, "dlq")
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        assert resp.get_json()["replayed_count"] == 3
+
+    def test_replay_acknowledge_large_replay_does_not_waive_ceiling(
+        self, client, auth_headers
+    ):
+        """The acknowledge_large_replay flag covers the per-batch
+        hard cap; the pending_ceiling is independent and not
+        waivable. A request with the flag set must still be 409'd
+        when the ceiling would be crossed."""
+        body = {
+            "connector_id": "test-conn-webhook",
+            "display_name": "ack-no-waive",
+            "delivery_url": f"https://example.com/{uuid.uuid4()}",
+            "pending_ceiling": 2,
+            "dlq_ceiling": 100,
+        }
+        sub_id = client.post(
+            "/api/admin/webhooks", json=body, headers=auth_headers
+        ).get_json()["subscription_id"]
+
+        event_id = self._seed_event()
+        for _ in range(3):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {"status": "dlq"},
+                "acknowledge_large_replay": True,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        assert resp.get_json()["error"] == "replay_would_exceed_pending_ceiling"
+
     def test_cursor_unchanged_after_batch(self, client, auth_headers):
         created = _create_one(client, auth_headers)
         sub_id = created["subscription_id"]
