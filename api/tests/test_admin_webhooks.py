@@ -630,6 +630,120 @@ class TestPatchUpdate:
             c["event"] == "delivery_url_changed" for c in captured
         )
 
+    def test_patch_to_tombstoned_url_returns_409(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#219: a PATCH that switches delivery_url to a previously-
+        tombstoned URL must trip the same gate the POST handler
+        runs. Without this check, create-then-PATCH bypasses the
+        URL-reuse acknowledgement step entirely."""
+        captured = self._publishes(monkeypatch)
+        # Seed a tombstone for the URL we will PATCH to.
+        tombstoned = f"https://example.com/tombstoned-{uuid.uuid4().hex[:8]}"
+        seeder = TestUrlReuseTombstone()
+        tombstone_id = seeder._seed_tombstone(tombstoned)
+
+        created = _create_one(client, auth_headers, display_name="patch-victim")
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": tombstoned},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "url_reuse_tombstone"
+        assert body["tombstone_id"] == tombstone_id
+        # No pubsub fires when the gate refuses; the row was not
+        # mutated, so no peer state needs invalidation.
+        assert captured == []
+
+    def test_patch_with_acknowledge_url_reuse_clears_tombstone(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#219: PATCH accepts the same acknowledge_url_reuse opt-in
+        as the POST handler. The tombstone is acknowledged in the
+        same transaction as the URL change."""
+        captured = self._publishes(monkeypatch)
+        tombstoned = f"https://example.com/ack-{uuid.uuid4().hex[:8]}"
+        seeder = TestUrlReuseTombstone()
+        tombstone_id = seeder._seed_tombstone(tombstoned)
+
+        created = _create_one(client, auth_headers, display_name="patch-ack")
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "delivery_url": tombstoned,
+                "acknowledge_url_reuse": True,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()["delivery_url"] == tombstoned
+        assert any(c["event"] == "delivery_url_changed" for c in captured)
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT acknowledged_at, acknowledged_by "
+            "FROM webhook_subscriptions_tombstones WHERE tombstone_id = %s",
+            (tombstone_id,),
+        )
+        ack_at, ack_by = cur.fetchone()
+        cur.close()
+        assert ack_at is not None
+        assert ack_by == 1
+
+    def test_patch_canonicalization_variant_still_trips_gate(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#218 + #219: a one-character casing / port mutation on the
+        PATCH side must still match the canonical key."""
+        self._publishes(monkeypatch)
+        seeded = f"https://example.com/canon-{uuid.uuid4().hex[:8]}"
+        seeder = TestUrlReuseTombstone()
+        seeder._seed_tombstone(seeded)
+
+        created = _create_one(client, auth_headers, display_name="patch-canon")
+        sub_id = created["subscription_id"]
+
+        # Mutate: uppercase host + add default port.
+        mutated = seeded.replace(
+            "example.com", "EXAMPLE.com:443"
+        )
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": mutated},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, resp.get_json()
+        assert resp.get_json()["error"] == "url_reuse_tombstone"
+
+    def test_patch_to_same_url_does_not_run_gate(
+        self, client, auth_headers, monkeypatch
+    ):
+        """A no-op delivery_url PATCH (passing the current value
+        verbatim) must not consult the tombstone table; the URL
+        is unchanged and an unrelated tombstone for the same URL
+        from a prior subscription would be a false positive."""
+        self._publishes(monkeypatch)
+        url = f"https://example.com/idem-{uuid.uuid4().hex[:8]}"
+        created = _create_one(
+            client, auth_headers, display_name="patch-idem", delivery_url=url
+        )
+        sub_id = created["subscription_id"]
+
+        # No tombstone seeded; PATCH passes the same URL.
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": url},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+
     def test_rate_limit_change_publishes_rate_limit_changed(
         self, client, auth_headers, monkeypatch
     ):

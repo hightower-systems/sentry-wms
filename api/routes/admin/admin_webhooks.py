@@ -145,6 +145,57 @@ def _http_webhooks_allowed() -> bool:
     return os.environ.get("SENTRY_ALLOW_HTTP_WEBHOOKS", "").lower() == "true"
 
 
+def _check_url_tombstone(canonical_url: str, acknowledge_url_reuse: bool):
+    """Run the URL-reuse tombstone gate against the canonical form
+    of the delivery_url. Returns ``(early_response, tombstone_row)``:
+
+    - ``early_response``: a Flask response the caller must return
+      as the handler's reply when the gate refuses, or None on
+      pass.
+    - ``tombstone_row``: the matching tombstone row (or None) so
+      the caller can stamp acknowledged_at + acknowledged_by inside
+      the same transaction as the mutation.
+
+    Both POST (#218) and PATCH on delivery_url change (#219) funnel
+    through this helper so the gate's lookup shape and 409 response
+    body stay identical across surfaces.
+    """
+    tombstone_row = g.db.execute(
+        text(
+            """
+            SELECT tombstone_id
+              FROM webhook_subscriptions_tombstones
+             WHERE delivery_url_canonical = :canonical
+               AND acknowledged_at IS NULL
+             ORDER BY tombstone_id DESC
+             LIMIT 1
+            """
+        ),
+        {"canonical": canonical_url},
+    ).fetchone()
+    if tombstone_row is None:
+        return None, None
+    if acknowledge_url_reuse:
+        return None, tombstone_row
+    response = jsonify(
+        {
+            "error": "url_reuse_tombstone",
+            "tombstone_id": int(tombstone_row.tombstone_id),
+            "detail": (
+                "this delivery_url was associated with a previously-"
+                "deleted subscription. Re-submit with "
+                "acknowledge_url_reuse=true to confirm intentional "
+                "reuse."
+            ),
+        }
+    )
+    response.status_code = 409
+    response.headers["X-Sentry-URL-Reuse-Tombstone"] = str(
+        int(tombstone_row.tombstone_id)
+    )
+    return response, tombstone_row
+
+
 @admin_bp.route("/webhooks", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
@@ -257,37 +308,11 @@ def create_webhook(validated):
     canonical_url = dispatcher_url_normalize.canonicalize_delivery_url(
         validated.delivery_url
     )
-    tombstone_row = g.db.execute(
-        text(
-            """
-            SELECT tombstone_id
-              FROM webhook_subscriptions_tombstones
-             WHERE delivery_url_canonical = :canonical
-               AND acknowledged_at IS NULL
-             ORDER BY tombstone_id DESC
-             LIMIT 1
-            """
-        ),
-        {"canonical": canonical_url},
-    ).fetchone()
-    if tombstone_row is not None and not validated.acknowledge_url_reuse:
-        response = jsonify(
-            {
-                "error": "url_reuse_tombstone",
-                "tombstone_id": int(tombstone_row.tombstone_id),
-                "detail": (
-                    "this delivery_url was associated with a previously-"
-                    "deleted subscription. Re-submit with "
-                    "acknowledge_url_reuse=true to confirm intentional "
-                    "reuse."
-                ),
-            }
-        )
-        response.status_code = 409
-        response.headers["X-Sentry-URL-Reuse-Tombstone"] = str(
-            int(tombstone_row.tombstone_id)
-        )
-        return response
+    early, tombstone_row = _check_url_tombstone(
+        canonical_url, validated.acknowledge_url_reuse
+    )
+    if early is not None:
+        return early
 
     plaintext = secrets.token_urlsafe(32).encode("utf-8")
     fernet = dispatcher_signing._get_fernet()  # noqa: SLF001
@@ -472,6 +497,7 @@ def update_webhook(validated, subscription_id):
     if current is None:
         return jsonify({"error": "subscription_not_found"}), 404
 
+    patch_tombstone_row = None
     if validated.delivery_url is not None:
         parsed = urlparse(validated.delivery_url)
         if parsed.scheme not in ("http", "https"):
@@ -485,6 +511,24 @@ def update_webhook(validated, subscription_id):
                 jsonify({"error": "private_destination", "detail": str(exc)}),
                 400,
             )
+        # #219: a PATCH that switches delivery_url to a previously-
+        # tombstoned URL must trip the same gate the POST handler
+        # runs. The pre-#219 PATCH path skipped the lookup, so a
+        # compromised admin could create-then-PATCH to take over a
+        # deleted URL with no acknowledgement trail. The gate runs
+        # only when the URL actually changes; touching delivery_url
+        # to its current value is a no-op for this check.
+        if validated.delivery_url != current.delivery_url:
+            canonical_new = (
+                dispatcher_url_normalize.canonicalize_delivery_url(
+                    validated.delivery_url
+                )
+            )
+            early, patch_tombstone_row = _check_url_tombstone(
+                canonical_new, validated.acknowledge_url_reuse
+            )
+            if early is not None:
+                return early
 
     if validated.pending_ceiling is not None:
         cap = dispatcher_env.int_var("DISPATCHER_MAX_PENDING_HARD_CAP")
@@ -649,6 +693,26 @@ def update_webhook(validated, subscription_id):
         params,
     )
 
+    if patch_tombstone_row is not None:
+        # #219: stamp the tombstone acknowledgement in the same
+        # transaction as the PATCH UPDATE. Mirrors the POST path's
+        # acknowledgement step so a successful URL switch closes
+        # the matching tombstone in one atomic operation.
+        g.db.execute(
+            text(
+                """
+                UPDATE webhook_subscriptions_tombstones
+                   SET acknowledged_at = NOW(),
+                       acknowledged_by = :uid
+                 WHERE tombstone_id = :tid
+                """
+            ),
+            {
+                "uid": g.current_user["user_id"],
+                "tid": int(patch_tombstone_row.tombstone_id),
+            },
+        )
+
     write_audit_log(
         g.db,
         action_type=ACTION_WEBHOOK_SUBSCRIPTION_UPDATE,
@@ -668,6 +732,11 @@ def update_webhook(validated, subscription_id):
             "subscription_id": subscription_id,
             "diff": diff,
             "events": list(pubsub_events),
+            "acknowledged_url_reuse_tombstone_id": (
+                int(patch_tombstone_row.tombstone_id)
+                if patch_tombstone_row is not None
+                else None
+            ),
         },
     )
 
