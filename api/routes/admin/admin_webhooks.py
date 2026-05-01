@@ -49,6 +49,7 @@ from schemas.webhooks import (
     UpdateWebhookRequest,
 )
 from services.audit_service import write_audit_log
+from services.rate_limit import limiter
 from services.events_schema_registry import V150_CATALOG
 from services.webhook_dispatcher import env_validator as dispatcher_env
 from services.webhook_dispatcher import error_catalog as dispatcher_error_catalog
@@ -146,6 +147,7 @@ def _http_webhooks_allowed() -> bool:
 @admin_bp.route("/webhooks", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("60 per minute")
 @validate_body(CreateWebhookRequest)
 @with_db
 def create_webhook(validated):
@@ -440,6 +442,7 @@ def get_webhook(subscription_id):
 @admin_bp.route("/webhooks/<subscription_id>", methods=["PATCH"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("60 per minute")
 @validate_body(UpdateWebhookRequest)
 @with_db
 def update_webhook(validated, subscription_id):
@@ -676,6 +679,7 @@ def update_webhook(validated, subscription_id):
 @admin_bp.route("/webhooks/<subscription_id>/rotate-secret", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("60 per minute")
 @with_db
 def rotate_webhook_secret(subscription_id):
     """Rotate the HMAC plaintext for a subscription. The previous
@@ -795,6 +799,7 @@ def rotate_webhook_secret(subscription_id):
 @admin_bp.route("/webhooks/<subscription_id>", methods=["DELETE"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("60 per minute")
 @with_db
 def delete_webhook(subscription_id):
     """Soft delete (default) or hard delete (?purge=true).
@@ -1120,6 +1125,7 @@ def list_dlq(subscription_id):
 )
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("60 per minute")
 @with_db
 def replay_single(subscription_id, delivery_id):
     """Replay one delivery by INSERTing a fresh pending row that
@@ -1267,6 +1273,7 @@ def _replay_filter_clauses(f) -> tuple[str, dict]:
 @admin_bp.route("/webhooks/<subscription_id>/replay-batch", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
+@limiter.limit("60 per minute")
 @validate_body(ReplayBatchRequest)
 @with_db
 def replay_batch(validated, subscription_id):

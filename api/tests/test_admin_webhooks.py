@@ -2210,3 +2210,55 @@ class TestAdminIntegrityErrorHandler:
         body = resp.get_json()
         assert body["error"] == "integrity_constraint_violation"
         assert "constraint" not in body
+
+
+class TestAdminWebhooksRateLimit:
+    """#214: per-admin rate limit on webhook CRUD endpoints. 60/min
+    per user_id; the 61st mutating request inside a fresh window
+    returns 429. Read endpoints are not limited."""
+
+    def test_create_burst_returns_429_after_budget(self, client, auth_headers):
+        # 60/minute budget per user_id. 61 sequential creates must
+        # hit the limit on the last call. Clear limiter first so a
+        # leftover bucket from a prior test does not skew the count.
+        from services.rate_limit import limiter
+        limiter._storage.reset()  # noqa: SLF001
+
+        statuses = []
+        for i in range(61):
+            resp = client.post(
+                "/api/admin/webhooks",
+                json={
+                    "connector_id": "test-conn-webhook",
+                    "display_name": f"rate-limit-{i}",
+                    "delivery_url": f"https://example.com/{uuid.uuid4()}",
+                },
+                headers=auth_headers,
+            )
+            statuses.append(resp.status_code)
+
+        # The first 60 are accepted; the 61st is 429.
+        assert statuses[-1] == 429, (
+            f"61st request must be rate-limited; got status {statuses[-1]} "
+            f"with prior counts: 201={statuses.count(201)}, "
+            f"429={statuses.count(429)}"
+        )
+        # Sanity: at least the first call succeeded (proves the route
+        # itself is not generally broken; only the limit is firing).
+        assert statuses[0] == 201, (
+            f"first request must succeed; got {statuses[0]}"
+        )
+
+    def test_get_endpoints_not_rate_limited(self, client, auth_headers):
+        """Read endpoints are not abuse vectors; 100 sequential GETs
+        must not produce a 429."""
+        from services.rate_limit import limiter
+        limiter._storage.reset()  # noqa: SLF001
+
+        statuses = set()
+        for _ in range(100):
+            resp = client.get("/api/admin/webhooks", headers=auth_headers)
+            statuses.add(resp.status_code)
+        assert 429 not in statuses, (
+            f"GET /api/admin/webhooks must not be rate-limited; got {statuses}"
+        )
