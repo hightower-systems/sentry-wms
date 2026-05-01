@@ -97,21 +97,34 @@ jobs:
           echo "OK: 0 json.dumps( in sign-and-send path; 0 json.dump( in package"
 
       - name: v1.6.0 lint -- runtime invariants present in http_client.py
-        # #196: two runtime invariants in HttpClient.send only
-        # fire under specific conditions: (a) the body / signed
-        # body assertion fires when bytes diverge, and (b) the
-        # SSRF assert_url_safe call fires when DNS resolves to a
+        # Two runtime invariants in HttpClient.send only fire under
+        # specific conditions: (a) the body / signed body check
+        # raises when bytes diverge, and (b) the SSRF
+        # assert_url_safe call fires when DNS resolves to a
         # private range. A passing test suite cannot prove either
         # call is still in the source -- removing them produces
         # the same green surface. These grep-based sentinels fail
         # CI when the literal call sites are dropped.
+        #
+        # #221: pin the SingleSerializationViolation raise rather
+        # than the literal `assert` keyword, since `assert` is
+        # stripped under PYTHONOPTIMIZE / python -O and a
+        # downgrade-style reversion would need to surface here.
         run: |
-          if ! grep -q "assert body is signed_body_for_assertion" \
+          if ! grep -q "raise SingleSerializationViolation" \
               api/services/webhook_dispatcher/http_client.py; then
             echo ""
-            echo "ERROR: the body == signed_body_for_assertion line is missing"
+            echo "ERROR: the body == signed_body_for_assertion check is missing"
+            echo "from api/services/webhook_dispatcher/http_client.py. The check"
+            echo "must remain a raise (not assert) so PYTHONOPTIMIZE / -O"
+            echo "cannot strip it (#221)."
+            exit 1
+          fi
+          if ! grep -q "signed_body_for_assertion" \
+              api/services/webhook_dispatcher/http_client.py; then
+            echo ""
+            echo "ERROR: the signed_body_for_assertion comparison is missing"
             echo "from api/services/webhook_dispatcher/http_client.py."
-            echo "Plan §3.1 requires the runtime assertion at the HTTP boundary."
             exit 1
           fi
           if ! grep -q "ssrf_guard\.assert_url_safe(url)" \
@@ -122,7 +135,7 @@ jobs:
             echo "Plan §2.7 requires assert_url_safe before every send."
             exit 1
           fi
-          echo "OK: single-serialization assertion + SSRF check present"
+          echo "OK: single-serialization raise + SSRF check present"
 
       - name: v1.6.0 lint -- no verify=False in webhook_dispatcher
         # #173 (D1): the dispatcher MUST always send with TLS

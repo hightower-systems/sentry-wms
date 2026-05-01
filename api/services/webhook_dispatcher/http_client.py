@@ -34,6 +34,18 @@ LOGGER = logging.getLogger("webhook_dispatcher.http_client")
 _DEFAULT_HTTP_TIMEOUT_S = 10.0
 
 
+class SingleSerializationViolation(RuntimeError):
+    """Raised when the bytes about to be POSTed do not match the
+    bytes that were signed. The dispatcher catches this by name
+    and re-raises so the test suite (and the operator's logs)
+    surface a programmer error rather than reclassifying the
+    breach as a generic delivery failure.
+
+    #221: replaced ``assert`` so the check is part of the emitted
+    bytecode regardless of ``python -O`` / PYTHONOPTIMIZE level.
+    """
+
+
 @dataclass(frozen=True)
 class HttpResponse:
     """Result of an HttpClient.send call. ``status_code`` is set
@@ -160,15 +172,30 @@ class HttpClient:
         status_code (response landed) or an error_kind
         (exception fired before the response).
 
-        Plan §3.1 single-serialization runtime assertion: the
-        bytes the HTTP layer is about to send MUST equal the
-        bytes that were signed. A refactor that introduces a
-        transformation between sign and send surfaces here.
+        Single-serialization runtime check: the bytes the HTTP
+        layer is about to send MUST equal the bytes that were
+        signed. A refactor that introduces a transformation
+        between sign and send surfaces here.
+
+        #221: this used to be ``assert``, which Python ``-O``
+        strips at compile time (the bytecode emitted under
+        PYTHONOPTIMIZE=1 omits the SETUP_ASSERTION block entirely).
+        A production deployment that runs the dispatcher with
+        ``python -O`` or with PYTHONOPTIMIZE in the environment
+        loses this defense silently, and a body mismatch
+        introduced by a logging middleware or instrumentation
+        layer ships unsigned. Replaced with an explicit
+        ``raise RuntimeError`` so the check is part of the
+        emitted bytecode regardless of optimization level.
         """
-        assert body is signed_body_for_assertion or body == signed_body_for_assertion, (
-            "single-serialization invariant violated: the bytes about to be "
-            "POSTed do not match the bytes that were signed."
-        )
+        if not (
+            body is signed_body_for_assertion
+            or body == signed_body_for_assertion
+        ):
+            raise SingleSerializationViolation(
+                "single-serialization invariant violated: the bytes about "
+                "to be POSTed do not match the bytes that were signed."
+            )
 
         try:
             ssrf_guard.assert_url_safe(url)

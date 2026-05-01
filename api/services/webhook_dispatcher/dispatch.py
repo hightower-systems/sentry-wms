@@ -572,11 +572,15 @@ def deliver_one(
         http_status = response.status_code
         error_kind = response.error_kind
         error_detail = response.error_detail
-    except AssertionError:
+    except (AssertionError, http_client_module.SingleSerializationViolation):
         # Single-serialization invariant fired. Re-raise so the
         # test suite surfaces it loudly; production code paths
         # never hit this because the body is constructed exactly
-        # once via sign_request and never transformed.
+        # once via sign_request and never transformed. AssertionError
+        # is retained for forward / backward compat with any test
+        # that drives the old shape; the production raise is
+        # SingleSerializationViolation (#221: assert was strippable
+        # under python -O).
         raise
     except Exception as exc:  # noqa: BLE001
         error_kind, error_detail = _classify_request_exception(exc)
@@ -898,7 +902,10 @@ class SubscriptionWorker(threading.Thread):
                             redis_url=self.redis_url,
                             acquire_rate_token=self._acquire_rate_token,
                         )
-                    except AssertionError:
+                    except (
+                        AssertionError,
+                        http_client_module.SingleSerializationViolation,
+                    ):
                         raise
                     except psycopg2.InterfaceError:
                         # Eviction closed the connection mid-

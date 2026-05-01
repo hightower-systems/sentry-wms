@@ -165,7 +165,13 @@ class TestClassifyStatusCode:
 class TestSingleSerializationAssertion:
     def test_mismatched_bytes_raises(self):
         client = http_client_module.HttpClient()
-        with pytest.raises(AssertionError, match="single-serialization"):
+        # #221: the check raises SingleSerializationViolation
+        # (RuntimeError subclass), not AssertionError; the latter
+        # would be stripped under PYTHONOPTIMIZE / python -O.
+        with pytest.raises(
+            http_client_module.SingleSerializationViolation,
+            match="single-serialization",
+        ):
             client.send(
                 url="https://example.invalid/x",
                 body=b"a",
@@ -176,6 +182,50 @@ class TestSingleSerializationAssertion:
                 event_id=1,
                 signed_body_for_assertion=b"b",  # different bytes
             )
+
+    def test_check_survives_python_optimize_mode(self, tmp_path):
+        """#221: re-running the check from a -O subprocess proves
+        the bytecode does NOT depend on assert. A pre-#221 build
+        (assert-based) silently skipped this check under
+        PYTHONOPTIMIZE=1 and shipped unsigned bodies."""
+        import subprocess
+        import sys
+
+        script = tmp_path / "check.py"
+        script.write_text(
+            "import sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from services.webhook_dispatcher import http_client as hc\n"
+            "client = hc.HttpClient()\n"
+            "try:\n"
+            "    client.send(\n"
+            "        url='https://example.invalid/x',\n"
+            "        body=b'a',\n"
+            "        signature='sha256=deadbeef',\n"
+            "        timestamp=1,\n"
+            "        secret_generation=1,\n"
+            "        event_type='t',\n"
+            "        event_id=1,\n"
+            "        signed_body_for_assertion=b'b',\n"
+            "    )\n"
+            "except hc.SingleSerializationViolation:\n"
+            "    print('RAISED')\n"
+            "    sys.exit(0)\n"
+            "print('LEAKED')\n"
+            "sys.exit(1)\n"
+            % (os.path.join(os.path.dirname(__file__), ".."),)
+        )
+        result = subprocess.run(
+            [sys.executable, "-O", str(script)],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONOPTIMIZE": "1"},
+        )
+        assert result.returncode == 0, (
+            f"check did not raise under -O / PYTHONOPTIMIZE=1: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "RAISED" in result.stdout
 
 
 # ---------------------------------------------------------------------

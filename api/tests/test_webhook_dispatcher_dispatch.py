@@ -233,10 +233,12 @@ class StubHttpClient:
 
 
 class MutatingHttpClient:
-    """Sends a body different from the one that was signed.
-    The runtime assertion in :class:`HttpClient.send` should
-    fire; the matching assertion in the dispatch loop catches it
-    and surfaces AssertionError to the caller."""
+    """Sends a body different from the one that was signed. The
+    runtime check in :class:`HttpClient.send` should fire and
+    surface :class:`SingleSerializationViolation` to the caller;
+    the dispatch loop catches it by name and re-raises so the
+    breach surfaces loudly rather than being reclassified as a
+    delivery failure."""
 
     def send(
         self,
@@ -251,18 +253,21 @@ class MutatingHttpClient:
     ):
         # Pretend a careless refactor introduced a transformation:
         # rebuild the body by re-serializing the input. This
-        # mismatch is precisely what the assertion exists to catch.
+        # mismatch is precisely what the runtime check exists to
+        # catch. #221: surface the same exception class the real
+        # HttpClient.send raises so the dispatch loop's `except`
+        # clause matches uniformly across the test stub and prod.
+        from services.webhook_dispatcher import http_client as hc_module
+
         mutated = body + b"\n"  # one trailing newline
-        # Surface the assertion exactly as the real HttpClient
-        # would: the production class compares ``body`` (the
-        # caller's argument) against ``signed_body_for_assertion``
-        # before actually sending. Here the test stub is the
-        # caller, so simulate the call-site mistake by passing
-        # mutated bytes in place of body.
-        assert mutated is signed_body_for_assertion or mutated == signed_body_for_assertion, (
-            "single-serialization invariant violated: the bytes about to be "
-            "POSTed do not match the bytes that were signed."
-        )
+        if not (
+            mutated is signed_body_for_assertion
+            or mutated == signed_body_for_assertion
+        ):
+            raise hc_module.SingleSerializationViolation(
+                "single-serialization invariant violated: the bytes about "
+                "to be POSTed do not match the bytes that were signed."
+            )
         return dispatch_module.HttpResponse(
             status_code=200, error_kind=None, error_detail=None
         )
@@ -388,7 +393,14 @@ class TestSingleSerializationRuntimeAssertion:
             mutator = MutatingHttpClient()
             conn = _conn()
             try:
-                with pytest.raises(AssertionError, match="single-serialization"):
+                from services.webhook_dispatcher import (
+                    http_client as hc_module,
+                )
+
+                with pytest.raises(
+                    hc_module.SingleSerializationViolation,
+                    match="single-serialization",
+                ):
                     dispatch_module.deliver_one(conn, sub_id, mutator)
             finally:
                 conn.close()
