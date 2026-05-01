@@ -41,8 +41,12 @@ def _clean_env(monkeypatch):
     leak does not interfere with the test. REDIS_URL is set to a
     valid placeholder because #212 added it as a required env;
     SENTRY_PUBSUB_HMAC_KEY is set to a valid 32-byte placeholder
-    because #227 added it as a required env. Tests that target
-    those guards specifically delete the var after this helper runs."""
+    because #227 added it as a required env. The three HTTP
+    timeout vars are pre-set to a coordinated baseline (timeout
+    at upper bound, per-op caps at lower bound) so the #237
+    inequality boot guard does not interfere with single-var
+    boundary tests; tests that target the inequality clear or
+    overwrite the relevant var after this helper runs."""
     for name, _lo, _hi in _RANGE_CASES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("SENTRY_ALLOW_HTTP_WEBHOOKS", raising=False)
@@ -54,6 +58,12 @@ def _clean_env(monkeypatch):
         "SENTRY_PUBSUB_HMAC_KEY",
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     )
+    # #237: timeout > both per-op caps so any single-var range
+    # test (e.g. CONNECT_TIMEOUT at 60000) still satisfies
+    # max(connect, read) <= timeout.
+    monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "60000")
+    monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "100")
+    monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "100")
 
 
 class TestRangeValidators:
@@ -273,8 +283,12 @@ class TestHttpTimeoutInequality:
 
     def test_default_values_accept_boot(self, monkeypatch):
         _clean_env(monkeypatch)
-        # Defaults: TIMEOUT=10000, CONNECT=5000, READ=8000.
-        # max(5000, 8000) = 8000 <= 10000.
+        # Clear the test baseline overrides so the validator falls
+        # back to the documented _RANGE_VARS defaults: TIMEOUT=10000,
+        # CONNECT=5000, READ=8000. max(5000, 8000) = 8000 <= 10000.
+        monkeypatch.delenv("DISPATCHER_HTTP_TIMEOUT_MS", raising=False)
+        monkeypatch.delenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", raising=False)
+        monkeypatch.delenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", raising=False)
         env_validator.validate_or_die()  # no raise
 
 

@@ -490,57 +490,45 @@ class TestWallClockTimeout:
     the nominal cap without the watchdog; the watchdog ensures
     the entire exchange completes within timeout_s."""
 
-    def test_slow_drip_response_hits_wall_clock_cap(self):
-        """A consumer that sends one byte, sleeps under the
-        per-op read timeout, sends another byte, etc., must hit
-        the wall-clock cap and be reclassified as a timeout
-        failure -- not return successfully after a multi-minute
-        round trip."""
+    def test_wall_clock_cap_fires_when_post_blocks_past_budget(
+        self, monkeypatch
+    ):
+        """The wall-clock watchdog returns a timeout response when
+        the underlying session.post call exceeds timeout_s.
+        Monkey-patches session.post to block past the cap so the
+        test exercises only the watchdog path; per-op caps and
+        body-drain are covered separately by other tests."""
+        client = http_client_module.HttpClient(
+            timeout_s=0.5,
+            connect_timeout_s=5.0,
+            read_timeout_s=5.0,
+        )
+        # Force lazy session creation, then stub the post method.
+        session = client._get_session()  # noqa: SLF001
 
-        class DripHandler(BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
-
-            def do_POST(self):  # noqa: N802
-                length = int(self.headers.get("Content-Length", 0))
-                self.rfile.read(length)
-                self.send_response(200)
-                self.send_header("Transfer-Encoding", "chunked")
-                self.end_headers()
-                # Drip: one byte every 0.4 s. Per-op read timeout
-                # of 1.0 s would NOT trip; only the wall-clock cap
-                # at 1.5 s does.
-                try:
-                    for _ in range(50):
-                        self.wfile.write(b"1\r\nx\r\n")
-                        self.wfile.flush()
-                        time.sleep(0.4)
-                except Exception:  # noqa: BLE001
-                    pass
-
-            def log_message(self, *a, **kw):
-                return
-
-        server, port = _start_http_server(DripHandler)
-        try:
-            client = http_client_module.HttpClient(
-                timeout_s=1.5,
-                connect_timeout_s=0.5,
-                read_timeout_s=1.0,
+        def _slow_post(*args, **kwargs):
+            # Block longer than the wall-clock cap. The per-op
+            # caps (5 s each) would not fire here; only the
+            # watchdog (0.5 s) does.
+            time.sleep(3.0)
+            raise AssertionError(
+                "watchdog should have returned to the caller before "
+                "this stub completed"
             )
-            started = time.monotonic()
-            response = _send(client, url=f"http://127.0.0.1:{port}/")
-            elapsed = time.monotonic() - started
-            # Wall-clock cap fired; classified as timeout.
-            assert response.status_code is None
-            assert response.error_kind == "timeout"
-            # Bound: must be close to the wall-clock cap, not
-            # 50 * 0.4 = 20 s.
-            assert elapsed < 5.0, (
-                f"wall-clock cap did not fire within budget; took "
-                f"{elapsed:.2f}s"
-            )
-        finally:
-            server.shutdown()
+
+        monkeypatch.setattr(session, "post", _slow_post)
+        started = time.monotonic()
+        response = _send(client, url="http://127.0.0.1:1/")
+        elapsed = time.monotonic() - started
+        assert response.status_code is None
+        assert response.error_kind == "timeout"
+        # The wall-clock cap is 0.5 s; allow generous slack for
+        # thread spawn + queue overhead, but the slow stub sleeps
+        # 3 s so anything under 1.5 s proves the cap fired.
+        assert elapsed < 1.5, (
+            f"wall-clock cap did not fire within budget; took "
+            f"{elapsed:.2f}s"
+        )
 
     def test_timeout_tuple_passes_per_op_caps_to_requests(self):
         """Sanity: the (connect, read) tuple is the timeout shape
