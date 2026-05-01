@@ -1531,6 +1531,24 @@ class TestReplayBatch:
         )
         assert resp.status_code == 401
 
+    def _bulk_seed_deliveries(self, sub_id: str, event_id: int, count: int):
+        """Bulk INSERT helper for ceiling tests. Single statement is
+        much faster than per-row INSERTs when the row count is in
+        the low hundreds; the schema CHECK on pending_ceiling
+        (BETWEEN 100 AND 100000) forces us to seed at least 101
+        rows for any test that wants to overshoot the ceiling."""
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, attempted_at, completed_at, secret_generation) "
+            "SELECT %s, %s, 8, 'dlq', NOW(), NOW(), NOW(), 1 "
+            "FROM generate_series(1, %s)",
+            (sub_id, event_id, count),
+        )
+        cur.close()
+
     def test_replay_refused_when_would_exceed_pending_ceiling(
         self, client, auth_headers
     ):
@@ -1539,24 +1557,22 @@ class TestReplayBatch:
         BEFORE the INSERT lands. The auto-pause path only fires
         after a delivery attempt; without a pre-INSERT check the
         batch could overshoot the ceiling silently."""
-        # Create subscription with a tight pending_ceiling so the
-        # batch can exceed it without seeding thousands of rows.
+        # Schema CHECK enforces pending_ceiling BETWEEN 100 AND
+        # 100000, so seed 101 dlq rows against a ceiling of 100 to
+        # trip the gate by exactly one.
         body = {
             "connector_id": "test-conn-webhook",
             "display_name": "ceiling-victim",
             "delivery_url": f"https://example.com/{uuid.uuid4()}",
-            "pending_ceiling": 5,
-            "dlq_ceiling": 100,
+            "pending_ceiling": 100,
+            "dlq_ceiling": 200,
         }
         sub_id = client.post(
             "/api/admin/webhooks", json=body, headers=auth_headers
         ).get_json()["subscription_id"]
 
         event_id = self._seed_event()
-        # Seed 6 dlq rows so the replay impact equals 6 -- one
-        # above the ceiling of 5.
-        for _ in range(6):
-            self._seed_delivery(sub_id, event_id, "dlq")
+        self._bulk_seed_deliveries(sub_id, event_id, 101)
 
         resp = client.post(
             f"/api/admin/webhooks/{sub_id}/replay-batch",
@@ -1567,8 +1583,8 @@ class TestReplayBatch:
         body_out = resp.get_json()
         assert body_out["error"] == "replay_would_exceed_pending_ceiling"
         assert body_out["current_pending"] == 0
-        assert body_out["impact_count"] == 6
-        assert body_out["pending_ceiling"] == 5
+        assert body_out["impact_count"] == 101
+        assert body_out["pending_ceiling"] == 100
         assert body_out["gap"] == 1
 
         # The INSERT did not land.
@@ -1581,8 +1597,8 @@ class TestReplayBatch:
             "connector_id": "test-conn-webhook",
             "display_name": "ceiling-fits",
             "delivery_url": f"https://example.com/{uuid.uuid4()}",
-            "pending_ceiling": 100,
-            "dlq_ceiling": 100,
+            "pending_ceiling": 200,
+            "dlq_ceiling": 200,
         }
         sub_id = client.post(
             "/api/admin/webhooks", json=body, headers=auth_headers
@@ -1610,16 +1626,15 @@ class TestReplayBatch:
             "connector_id": "test-conn-webhook",
             "display_name": "ack-no-waive",
             "delivery_url": f"https://example.com/{uuid.uuid4()}",
-            "pending_ceiling": 2,
-            "dlq_ceiling": 100,
+            "pending_ceiling": 100,
+            "dlq_ceiling": 200,
         }
         sub_id = client.post(
             "/api/admin/webhooks", json=body, headers=auth_headers
         ).get_json()["subscription_id"]
 
         event_id = self._seed_event()
-        for _ in range(3):
-            self._seed_delivery(sub_id, event_id, "dlq")
+        self._bulk_seed_deliveries(sub_id, event_id, 101)
 
         resp = client.post(
             f"/api/admin/webhooks/{sub_id}/replay-batch",
