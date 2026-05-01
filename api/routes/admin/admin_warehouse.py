@@ -303,6 +303,7 @@ def list_bins():
     warehouse_id = request.args.get("warehouse_id", type=int)
     zone_id = request.args.get("zone_id", type=int)
     bin_type = request.args.get("bin_type")
+    search = (request.args.get("q") or "").strip()
     if warehouse_id:
         where_clauses.append("b.warehouse_id = :wid")
         params["wid"] = warehouse_id
@@ -312,6 +313,9 @@ def list_bins():
     if bin_type:
         where_clauses.append("b.bin_type = :bin_type")
         params["bin_type"] = bin_type
+    if search:
+        where_clauses.append("(b.bin_code ILIKE :q OR b.bin_barcode ILIKE :q)")
+        params["q"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Sentry WMS",
     "slug": "sentry-wms",
-    "version": "1.5.1",
+    "version": "1.6.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,7 @@
         "backgroundColor": "#000000"
       },
       "package": "com.hightowersystems.sentrywms",
-      "versionCode": 2,
+      "versionCode": 3,
       "usesCleartextTraffic": true,
       "permissions": [
         "INTERNET",

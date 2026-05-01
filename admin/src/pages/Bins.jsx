@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
@@ -9,6 +10,8 @@ const BIN_TYPES = ['Staging', 'PickableStaging', 'Pickable'];
 
 export default function Bins() {
   const { warehouseId } = useWarehouse();
+  const [searchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get('q') || '');
   const [bins, setBins] = useState([]);
   const [zones, setZones] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -19,10 +22,12 @@ export default function Bins() {
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId]);
+  useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId, search]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadBins() {
-    const res = await api.get(`/admin/bins?warehouse_id=${warehouseId}`);
+    const params = new URLSearchParams({ warehouse_id: String(warehouseId) });
+    if (search) params.set('q', search);
+    const res = await api.get(`/admin/bins?${params}`);
     if (res?.ok) {
       const data = await res.json();
       setBins(data.bins || []);
@@ -163,6 +168,13 @@ export default function Bins() {
   return (
     <div>
       <PageHeader title="Bins">
+        <input
+          className="form-input"
+          style={{ maxWidth: 320, marginRight: 8 }}
+          placeholder="Search by bin code or barcode"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <button className="btn btn-primary" onClick={() => { setForm({ is_active: true }); setShowCreate(true); setError(''); }}>New Bin</button>
       </PageHeader>
       <DataTable columns={columns} data={bins} onRowClick={viewBin} />

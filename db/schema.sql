@@ -837,3 +837,318 @@ CREATE CONSTRAINT TRIGGER tr_integration_events_visible_at
     AFTER INSERT ON integration_events
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION set_integration_event_visible_at();
+
+-- v1.6.0 #164 / migration 031: visibility NOTIFY trigger. Webhook
+-- dispatcher LISTENs on 'integration_events_visible'; the deferred
+-- visible_at trigger above UPDATEs visible_at at COMMIT, this
+-- AFTER-UPDATE trigger then pg_notify's the new event_id. The
+-- function gates on NULL -> NOT NULL so an idempotent re-stamp
+-- does not emit a duplicate NOTIFY. Correctness lives on the
+-- per-subscription cursor; NOTIFY is latency reduction only.
+-- The identical DDL lives in db/migrations/031_integration_events_notify.sql.
+CREATE OR REPLACE FUNCTION notify_integration_event_visible()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.visible_at IS NOT NULL AND OLD.visible_at IS NULL THEN
+        PERFORM pg_notify('integration_events_visible', NEW.event_id::text);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER tr_integration_events_notify
+    AFTER UPDATE OF visible_at ON integration_events
+    FOR EACH ROW
+    EXECUTE FUNCTION notify_integration_event_visible();
+
+-- ============================================================
+-- WEBHOOK SUBSCRIPTIONS + SECRETS (v1.6.0 outbound push)
+-- ============================================================
+-- Subscription state for the v1.6.0 webhook dispatcher.
+-- subscription_id is UUID for opaque admin URLs; status is one
+-- of 'active' | 'paused' | 'revoked' (auto-pause writes 'paused'
+-- with pause_reason populated; soft delete writes 'revoked').
+-- Rate-limit and ceiling CHECK ranges are the bottom rung that
+-- catches bypass paths around the admin layer (which separately
+-- enforces upper bounds against env-var hard caps).
+--
+-- delivery_url CHECK is permissive ('^https?://') so dev/CI can
+-- use http; production HTTPS-only enforcement lives in the admin
+-- endpoint behind SENTRY_ALLOW_HTTP_WEBHOOKS opt-out.
+--
+-- webhook_secrets stores Fernet-encrypted HMAC signing material
+-- in two slots: generation=1 primary, generation=2 previous.
+-- The dispatcher signs with generation=1 only; consumers accept
+-- either until expires_at (24h dual-accept rotation window).
+-- ON DELETE CASCADE on subscription_id keeps secret rows from
+-- outliving their subscription.
+--
+-- The identical DDL lives in db/migrations/029_webhook_subscriptions_and_secrets.sql.
+CREATE TABLE webhook_subscriptions (
+    subscription_id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    connector_id             VARCHAR(64)  NOT NULL REFERENCES connectors(connector_id),
+    display_name             VARCHAR(128) NOT NULL,
+    delivery_url             TEXT         NOT NULL,
+    subscription_filter      JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    last_delivered_event_id  BIGINT       NOT NULL DEFAULT 0,
+    status                   VARCHAR(16)  NOT NULL DEFAULT 'active',
+    pause_reason             VARCHAR(32),
+    rate_limit_per_second    INTEGER      NOT NULL DEFAULT 50,
+    pending_ceiling          INTEGER      NOT NULL DEFAULT 10000,
+    dlq_ceiling              INTEGER      NOT NULL DEFAULT 1000,
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT webhook_subscriptions_delivery_url_scheme
+        CHECK (delivery_url ~ '^https?://'),
+    CONSTRAINT webhook_subscriptions_rate_limit_range
+        CHECK (rate_limit_per_second BETWEEN 1 AND 100),
+    CONSTRAINT webhook_subscriptions_pending_ceiling_range
+        CHECK (pending_ceiling BETWEEN 100 AND 100000),
+    CONSTRAINT webhook_subscriptions_dlq_ceiling_range
+        CHECK (dlq_ceiling BETWEEN 10 AND 10000)
+);
+
+CREATE INDEX webhook_subscriptions_status
+    ON webhook_subscriptions (status)
+    WHERE status = 'active';
+
+CREATE TABLE webhook_secrets (
+    subscription_id     UUID         NOT NULL REFERENCES webhook_subscriptions(subscription_id) ON DELETE CASCADE,
+    generation          SMALLINT     NOT NULL,
+    secret_ciphertext   BYTEA        NOT NULL,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMPTZ,
+    PRIMARY KEY (subscription_id, generation),
+    CONSTRAINT webhook_secrets_generation_range
+        CHECK (generation IN (1, 2))
+);
+
+-- ============================================================
+-- WEBHOOK DELIVERIES (v1.6.0 outbound push, per-attempt log)
+-- ============================================================
+-- Append-only with one exception: the terminal `dlq` transition
+-- flips the row that was last `in_flight` rather than inserting
+-- a fresh row, so an event that retried N times before
+-- terminating leaves N+1 rows. Cursor advances strictly on
+-- terminal state (`succeeded` or `dlq`), never on in-progress.
+--
+-- subscription_id FK is ON DELETE RESTRICT (not CASCADE) so
+-- delivery history outlives soft-delete and is retained for
+-- forensics; hard delete requires `?purge=true` plus no
+-- pending/in_flight rows. event_id has no FK because
+-- integration_events partitions in v2.1 and logical integrity
+-- is sufficient given the cursor-based contract.
+--
+-- attempt_number BETWEEN 1 AND 8 matches the hard-coded retry
+-- schedule [1s, 4s, 15s, 60s, 5m, 30m, 2h, 12h]. status enum
+-- is CHECKed; error_kind is not (enum grows with consumer
+-- feedback in v1.6.x).
+--
+-- Four indexes are each pinned to a specific dispatcher or
+-- admin query path; storing response_body_hash (sha256 hex)
+-- instead of full bodies keeps the table small under fan-out.
+--
+-- The identical DDL lives in db/migrations/030_webhook_deliveries.sql.
+CREATE TABLE webhook_deliveries (
+    delivery_id          BIGSERIAL    PRIMARY KEY,
+    subscription_id      UUID         NOT NULL REFERENCES webhook_subscriptions(subscription_id) ON DELETE RESTRICT,
+    event_id             BIGINT       NOT NULL,
+    attempt_number       SMALLINT     NOT NULL,
+    status               VARCHAR(16)  NOT NULL,
+    scheduled_at         TIMESTAMPTZ  NOT NULL,
+    attempted_at         TIMESTAMPTZ,
+    completed_at         TIMESTAMPTZ,
+    http_status          SMALLINT,
+    response_body_hash   CHAR(64),
+    response_time_ms     INTEGER,
+    error_kind           VARCHAR(32),
+    error_detail         VARCHAR(512),
+    secret_generation    SMALLINT     NOT NULL,
+    CONSTRAINT webhook_deliveries_attempt_number_range
+        CHECK (attempt_number BETWEEN 1 AND 8),
+    CONSTRAINT webhook_deliveries_status_enum
+        CHECK (status IN ('pending', 'in_flight', 'succeeded', 'failed', 'dlq'))
+);
+
+CREATE INDEX webhook_deliveries_dispatch
+    ON webhook_deliveries (subscription_id, scheduled_at)
+    WHERE status = 'pending';
+
+CREATE INDEX webhook_deliveries_latest
+    ON webhook_deliveries (subscription_id, event_id, delivery_id DESC);
+
+CREATE INDEX webhook_deliveries_dlq
+    ON webhook_deliveries (subscription_id, completed_at)
+    WHERE status = 'dlq';
+
+CREATE INDEX webhook_deliveries_pending_count
+    ON webhook_deliveries (subscription_id)
+    WHERE status IN ('pending', 'in_flight');
+
+-- ============================================================
+-- WEBHOOK AUDIT TRIGGERS (v1.6.0 forensic instrumentation;
+-- mirrors V-157 wms_tokens_audit shape)
+-- ============================================================
+-- DELETE / TRUNCATE forensic shadows for webhook_subscriptions
+-- and webhook_secrets, landing at the same time as the source
+-- tables (not after an incident, as wms_tokens_audit did).
+--
+-- Triggers are statement-level so a wipe-the-world DELETE
+-- produces exactly one audit row. The transition-tables feature
+-- (REFERENCING OLD TABLE AS deleted_rows) lets the DELETE
+-- trigger COUNT affected rows. TRUNCATE does not expose a
+-- transition table, so rows_affected is NULL on TRUNCATE events.
+-- Each row captures session_user / current_user / backend_pid /
+-- application_name / clock_timestamp so an incident is bindable
+-- to a specific role + backend.
+--
+-- The two source tables get separate audit tables (not one
+-- shared table) so a future column addition on either does not
+-- couple the schemas.
+--
+-- The identical DDL lives in db/migrations/032_webhook_audit_triggers.sql.
+
+CREATE TABLE webhook_subscriptions_audit (
+    audit_id          BIGSERIAL    PRIMARY KEY,
+    event_type        VARCHAR(16)  NOT NULL,
+    rows_affected     INTEGER,
+    sess_user         TEXT         NOT NULL,
+    curr_user         TEXT         NOT NULL,
+    backend_pid       INTEGER      NOT NULL,
+    application_name  TEXT,
+    event_at          TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX webhook_subscriptions_audit_event_at
+    ON webhook_subscriptions_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION webhook_subscriptions_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO webhook_subscriptions_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_subscriptions_audit_delete
+    AFTER DELETE ON webhook_subscriptions
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_subscriptions_audit_delete();
+
+CREATE OR REPLACE FUNCTION webhook_subscriptions_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO webhook_subscriptions_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_subscriptions_audit_truncate
+    AFTER TRUNCATE ON webhook_subscriptions
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_subscriptions_audit_truncate();
+
+CREATE TABLE webhook_secrets_audit (
+    audit_id          BIGSERIAL    PRIMARY KEY,
+    event_type        VARCHAR(16)  NOT NULL,
+    rows_affected     INTEGER,
+    sess_user         TEXT         NOT NULL,
+    curr_user         TEXT         NOT NULL,
+    backend_pid       INTEGER      NOT NULL,
+    application_name  TEXT,
+    event_at          TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX webhook_secrets_audit_event_at
+    ON webhook_secrets_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION webhook_secrets_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO webhook_secrets_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_secrets_audit_delete
+    AFTER DELETE ON webhook_secrets
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_delete();
+
+CREATE OR REPLACE FUNCTION webhook_secrets_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO webhook_secrets_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_secrets_audit_truncate
+    AFTER TRUNCATE ON webhook_secrets
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_truncate();
+
+-- ============================================================
+-- WEBHOOK SUBSCRIPTIONS TOMBSTONES (v1.6.0 URL-reuse gate)
+-- ============================================================
+-- Per-deletion history that backs the URL-reuse acknowledgement
+-- gate on the admin webhook create endpoint. Hard-delete writes
+-- a tombstone; a subsequent CREATE under the same delivery_url
+-- with an unacknowledged tombstone is refused 409
+-- url_reuse_unacknowledged unless the request body carries
+-- acknowledge_url_reuse: true (which stamps acknowledged_at +
+-- acknowledged_by on every matching tombstone).
+--
+-- Tombstones are forensic history and are never deleted. The
+-- partial index covers only unacknowledged tombstones so the
+-- URL-reuse query stays fast as the table accumulates
+-- acknowledged rows.
+--
+-- subscription_id has no FK because the source row no longer
+-- exists by the time the tombstone is written. deleted_by is
+-- NOT NULL because the admin endpoint always runs under cookie
+-- auth; acknowledged_by is nullable until the gate is cleared.
+--
+-- The identical DDL lives in db/migrations/033_webhook_subscriptions_tombstones.sql.
+CREATE TABLE webhook_subscriptions_tombstones (
+    tombstone_id            BIGSERIAL    PRIMARY KEY,
+    subscription_id         UUID         NOT NULL,
+    delivery_url_at_delete  TEXT         NOT NULL,
+    connector_id            VARCHAR(64)  NOT NULL,
+    deleted_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_by              INTEGER      NOT NULL REFERENCES users(user_id),
+    acknowledged_at         TIMESTAMPTZ,
+    acknowledged_by         INTEGER      REFERENCES users(user_id)
+);
+
+CREATE INDEX webhook_subscriptions_tombstones_url_unack
+    ON webhook_subscriptions_tombstones (delivery_url_at_delete)
+    WHERE acknowledged_at IS NULL;

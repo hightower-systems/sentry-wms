@@ -32,12 +32,16 @@ def list_purchase_orders():
     where_clauses, params = [], {}
     status = request.args.get("status")
     warehouse_id = request.args.get("warehouse_id", type=int)
+    search = (request.args.get("q") or "").strip()
     if status:
         where_clauses.append("status = :status")
         params["status"] = status
     if warehouse_id:
         where_clauses.append("warehouse_id = :wid")
         params["wid"] = warehouse_id
+    if search:
+        where_clauses.append("(po_number ILIKE :q OR vendor_name ILIKE :q)")
+        params["q"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     total = g.db.execute(text(f"SELECT COUNT(*) FROM purchase_orders {where_sql}"), params).scalar()
@@ -259,12 +263,16 @@ def list_sales_orders():
     where_clauses, params = [], {}
     status = request.args.get("status")
     warehouse_id = request.args.get("warehouse_id", type=int)
+    search = (request.args.get("q") or "").strip()
     if status:
         where_clauses.append("status = :status")
         params["status"] = status
     if warehouse_id:
         where_clauses.append("warehouse_id = :wid")
         params["wid"] = warehouse_id
+    if search:
+        where_clauses.append("(so_number ILIKE :q OR customer_name ILIKE :q)")
+        params["q"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     total = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders {where_sql}"), params).scalar()

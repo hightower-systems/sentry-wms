@@ -53,6 +53,15 @@ services:
       # push) so it needs the authenticated broker URL too.
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
+      # #212: the admin webhook PATCH/DELETE/rotate handlers publish
+      # cross-worker invalidation messages on the
+      # webhook_subscription_events Redis channel (plan §2.9). Without
+      # REDIS_URL the publisher silently no-ops, peer dispatcher
+      # workers see stale subscription state for up to 60s, and an
+      # operator-initiated pause looks effective in the admin UI but
+      # actually keeps dispatching from peer workers. Same authenticated
+      # URL shape as CELERY_BROKER_URL above.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
     ports:
       # V-040: bind to loopback by default so a misconfigured public-cloud
       # host does not expose the API to the internet. Deployments that
@@ -118,6 +127,68 @@ services:
       # the file is older than 30s so a hung loop restarts the container.
       test: ["CMD-SHELL", "find /tmp/snapshot-keeper-heartbeat -newermt '-30 seconds' -print -quit | grep -q ."]
       interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  webhook-dispatcher:
+    # v1.6.0 #173 (D1): outbound webhook dispatcher daemon. Mirrors the
+    # snapshot-keeper shape (single Python process, heartbeat file,
+    # SIGTERM-aware loop). D1 boots the skeleton with kill switch and
+    # env validation; D2-D11 fill in HMAC signing, LISTEN/NOTIFY wake,
+    # per-subscription delivery loop, retry schedule, SSRF guard, and
+    # the rest of the dispatcher logic. DISPATCHER_ENABLED=false stops
+    # dispatch traffic without removing the container.
+    build: ./api
+    container_name: sentry-webhook-dispatcher
+    command: python -m services.webhook_dispatcher
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      PYTHONPATH: /app
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry}@db:5432/${POSTGRES_DB:-sentry}
+      # v1.6.0 #169 (F6): operators who run db/role-dispatcher.sql set
+      # DISPATCHER_DATABASE_URL in .env to point the dispatcher at the
+      # dedicated sentry_dispatcher role (SELECT on integration_events,
+      # SELECT/UPDATE on webhook_subscriptions, INSERT/SELECT/UPDATE on
+      # webhook_deliveries + sequence USAGE, SELECT on webhook_secrets).
+      # Defaults to DATABASE_URL above when unset so dev keeps working.
+      DISPATCHER_DATABASE_URL: ${DISPATCHER_DATABASE_URL:-}
+      # SENTRY_ENCRYPTION_KEY decrypts webhook_secrets.secret_ciphertext
+      # for HMAC signing (plan §3.2). Required.
+      SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
+      # SENTRY_TOKEN_PEPPER is intentionally NOT forwarded -- it is
+      # inbound-auth only (wms_tokens hashing) and the dispatcher has
+      # no use for it. Forwarding would expand the daemon's secret
+      # surface unnecessarily.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
+      DISPATCHER_HEARTBEAT_FILE: /tmp/webhook-dispatcher-heartbeat
+      DISPATCHER_ENABLED: ${DISPATCHER_ENABLED:-true}
+      # Dispatcher tunables (env_validator enforces bounds at boot;
+      # see plan §2.10). Values shown are the documented defaults.
+      DISPATCHER_HTTP_TIMEOUT_MS: ${DISPATCHER_HTTP_TIMEOUT_MS:-10000}
+      DISPATCHER_FALLBACK_POLL_MS: ${DISPATCHER_FALLBACK_POLL_MS:-2000}
+      DISPATCHER_SHUTDOWN_DRAIN_S: ${DISPATCHER_SHUTDOWN_DRAIN_S:-30}
+      DISPATCHER_MAX_CONCURRENT_POSTS: ${DISPATCHER_MAX_CONCURRENT_POSTS:-16}
+      DISPATCHER_MAX_PENDING_HARD_CAP: ${DISPATCHER_MAX_PENDING_HARD_CAP:-50000}
+      DISPATCHER_MAX_DLQ_HARD_CAP: ${DISPATCHER_MAX_DLQ_HARD_CAP:-5000}
+      # Dangerous opt-outs. The env_validator combination guard refuses
+      # to boot when both are true, AND when SENTRY_ALLOW_INTERNAL_WEBHOOKS
+      # is true with FLASK_ENV=production. Safe defaults (false) keep
+      # the policy in effect.
+      SENTRY_ALLOW_HTTP_WEBHOOKS: ${SENTRY_ALLOW_HTTP_WEBHOOKS:-false}
+      SENTRY_ALLOW_INTERNAL_WEBHOOKS: ${SENTRY_ALLOW_INTERNAL_WEBHOOKS:-false}
+      FLASK_ENV: ${FLASK_ENV:-development}
+    volumes:
+      - ./api:/app
+      - ./db:/db
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.webhook_dispatcher.healthcheck"]
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s

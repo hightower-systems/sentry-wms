@@ -36,6 +36,13 @@ export default function ConsumerGroups() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
 
+  const [showConnectors, setShowConnectors] = useState(false);
+  const [editConnector, setEditConnector] = useState(null);
+  const [editConnectorName, setEditConnectorName] = useState('');
+  const [editConnectorError, setEditConnectorError] = useState('');
+  const [confirmDeleteConnector, setConfirmDeleteConnector] = useState(null);
+  const [deleteConnectorError, setDeleteConnectorError] = useState(null);
+
   useEffect(() => { loadAll(); }, []);
 
   async function loadAll() {
@@ -71,6 +78,59 @@ export default function ConsumerGroups() {
     setConnectorForm({ connector_id: '', display_name: '' });
     setConnectorError('');
     setShowCreateConnector(true);
+  }
+
+  function openEditConnector(c) {
+    setEditConnector(c);
+    setEditConnectorName(c.display_name);
+    setEditConnectorError('');
+  }
+
+  async function submitEditConnector() {
+    if (!editConnector) return;
+    setEditConnectorError('');
+    if (!editConnectorName.trim()) {
+      setEditConnectorError('Display name is required');
+      return;
+    }
+    if (editConnectorName.trim() === editConnector.display_name) {
+      setEditConnector(null);
+      return;
+    }
+    const res = await api.patch(
+      `/admin/connector-registry/${encodeURIComponent(editConnector.connector_id)}`,
+      { display_name: editConnectorName.trim() },
+    );
+    const body = await res?.json();
+    if (res?.ok) {
+      setEditConnector(null);
+      loadAll();
+    } else {
+      setEditConnectorError(body?.error || 'Failed to update connector');
+    }
+  }
+
+  async function deleteConnector(c) {
+    setDeleteConnectorError(null);
+    const res = await api.delete(
+      `/admin/connector-registry/${encodeURIComponent(c.connector_id)}`,
+    );
+    const body = await res?.json();
+    if (res?.ok) {
+      setConfirmDeleteConnector(null);
+      loadAll();
+      return;
+    }
+    if (res?.status === 409 && body?.error === 'connector_in_use') {
+      setDeleteConnectorError({
+        consumer_groups: body.consumer_groups,
+        webhook_subscriptions: body.webhook_subscriptions,
+        detail: body.detail,
+      });
+      return;
+    }
+    setConfirmDeleteConnector(null);
+    setPageError(body?.error || 'Failed to delete connector');
   }
 
   function openEditGroup(g) {
@@ -196,6 +256,7 @@ export default function ConsumerGroups() {
     <div>
       <PageHeader title="Consumer groups">
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => setShowConnectors(true)}>View connectors</button>
           <button className="btn" onClick={openCreateConnector}>New connector</button>
           <button className="btn btn-primary" onClick={openCreateGroup} disabled={connectors.length === 0}>
             New group
@@ -343,6 +404,117 @@ export default function ConsumerGroups() {
             this group for cursor state will start a fresh scan from event_id=0
             on their next poll.
           </p>
+        </Modal>
+      )}
+
+      {showConnectors && (
+        <Modal
+          title="Registered connectors"
+          onClose={() => setShowConnectors(false)}
+          footer={<button className="btn" onClick={() => setShowConnectors(false)}>Close</button>}
+        >
+          {connectors.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              No connectors registered yet.
+            </div>
+          ) : (
+            <DataTable
+              columns={[
+                { key: 'connector_id', label: 'Connector ID', render: (r) => <span className="mono">{r.connector_id}</span> },
+                { key: 'display_name', label: 'Display name' },
+                { key: 'created_at', label: 'Created', render: (r) => formatDate(r.created_at) },
+                {
+                  key: 'actions',
+                  label: '',
+                  render: (r) => (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button
+                        className="btn btn-sm"
+                        onClick={(e) => { e.stopPropagation(); openEditConnector(r); }}
+                        aria-label="Edit"
+                        title="Edit"
+                      >
+                        &#9998;
+                      </button>
+                      <button
+                        className="btn btn-sm btn-danger"
+                        onClick={(e) => { e.stopPropagation(); setDeleteConnectorError(null); setConfirmDeleteConnector(r); }}
+                        aria-label="Delete"
+                        title="Delete"
+                      >
+                        &#128465;
+                      </button>
+                    </div>
+                  ),
+                },
+              ]}
+              data={connectors}
+            />
+          )}
+        </Modal>
+      )}
+
+      {editConnector && (
+        <Modal
+          title={`Edit connector ${editConnector.connector_id}`}
+          onClose={() => setEditConnector(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setEditConnector(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={submitEditConnector}>Save</button>
+            </>
+          }
+        >
+          {editConnectorError && <div className="form-error" style={{ marginBottom: 12 }}>{editConnectorError}</div>}
+          <div className="form-group">
+            <label>Connector ID</label>
+            <input className="form-input mono" value={editConnector.connector_id} readOnly disabled />
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Connector ID is the FK target for consumer groups and webhook subscriptions; it cannot be renamed.
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Display name</label>
+            <input
+              className="form-input"
+              value={editConnectorName}
+              onChange={(e) => setEditConnectorName(e.target.value)}
+            />
+          </div>
+        </Modal>
+      )}
+
+      {confirmDeleteConnector && (
+        <Modal
+          title="Delete connector"
+          onClose={() => setConfirmDeleteConnector(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmDeleteConnector(null)}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                style={{ background: 'var(--danger)' }}
+                onClick={() => deleteConnector(confirmDeleteConnector)}
+              >
+                Delete
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--danger)' }}>
+            Permanently delete connector {confirmDeleteConnector.connector_id}?
+          </p>
+          <p style={{ fontSize: 13 }}>
+            Refused while any consumer group or webhook subscription references this connector. Migrate or delete dependents first.
+          </p>
+          {deleteConnectorError && (
+            <div className="form-error" style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 600 }}>
+                Connector is in use: {deleteConnectorError.consumer_groups} consumer group{deleteConnectorError.consumer_groups === 1 ? '' : 's'}, {deleteConnectorError.webhook_subscriptions} webhook subscription{deleteConnectorError.webhook_subscriptions === 1 ? '' : 's'}.
+              </div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>{deleteConnectorError.detail}</div>
+            </div>
+          )}
         </Modal>
       )}
     </div>

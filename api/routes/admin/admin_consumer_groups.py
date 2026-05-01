@@ -26,6 +26,8 @@ from sqlalchemy.exc import IntegrityError
 
 from constants import (
     ACTION_CONNECTOR_REGISTRY_CREATE,
+    ACTION_CONNECTOR_REGISTRY_DELETE,
+    ACTION_CONNECTOR_REGISTRY_UPDATE,
     ACTION_CONSUMER_GROUP_CREATE,
     ACTION_CONSUMER_GROUP_UPDATE,
     ACTION_CONSUMER_GROUP_DELETE,
@@ -35,6 +37,7 @@ from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.consumer_groups import (
     ConnectorCreateRequest,
+    ConnectorUpdateRequest,
     ConsumerGroupCreateRequest,
     ConsumerGroupUpdateRequest,
 )
@@ -118,6 +121,144 @@ def list_registered_connectors():
         )
     ).fetchall()
     return jsonify({"connectors": [_row_to_connector(r) for r in rows]})
+
+
+@admin_bp.route("/connector-registry/<connector_id>", methods=["PATCH"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(ConnectorUpdateRequest)
+@with_db
+def update_registered_connector(validated, connector_id):
+    """Update a connector's display_name. connector_id itself is the
+    FK target from consumer_groups + webhook_subscriptions; renaming
+    would orphan rows so the schema does not accept it."""
+    current = g.db.execute(
+        text(
+            "SELECT connector_id, display_name, created_at, updated_at "
+            "  FROM connectors WHERE connector_id = :cid"
+        ),
+        {"cid": connector_id},
+    ).fetchone()
+    if current is None:
+        return jsonify({"error": "connector_not_found"}), 404
+
+    if validated.display_name == current.display_name:
+        # No-op: do not write an audit row for an empty diff.
+        return jsonify(_row_to_connector(current))
+
+    g.db.execute(
+        text(
+            "UPDATE connectors SET display_name = :dn, updated_at = NOW() "
+            " WHERE connector_id = :cid"
+        ),
+        {"dn": validated.display_name, "cid": connector_id},
+    )
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_CONNECTOR_REGISTRY_UPDATE,
+        entity_type="CONNECTOR",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "connector_id": connector_id,
+            "diff": {
+                "display_name": {
+                    "before": current.display_name,
+                    "after": validated.display_name,
+                }
+            },
+        },
+    )
+    g.db.commit()
+
+    refreshed = g.db.execute(
+        text(
+            "SELECT connector_id, display_name, created_at, updated_at "
+            "  FROM connectors WHERE connector_id = :cid"
+        ),
+        {"cid": connector_id},
+    ).fetchone()
+    return jsonify(_row_to_connector(refreshed))
+
+
+@admin_bp.route("/connector-registry/<connector_id>", methods=["DELETE"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def delete_registered_connector(connector_id):
+    """Delete a connector when no consumer_groups or
+    webhook_subscriptions reference it. The FK targets are
+    distinct (one ON DELETE CASCADE'd consumer_groups path would
+    silently drop cursor state; we refuse instead so the operator
+    explicitly migrates dependents off first)."""
+    current = g.db.execute(
+        text(
+            "SELECT connector_id, display_name FROM connectors "
+            " WHERE connector_id = :cid"
+        ),
+        {"cid": connector_id},
+    ).fetchone()
+    if current is None:
+        return jsonify({"error": "connector_not_found"}), 404
+
+    cg_count = int(
+        g.db.execute(
+            text(
+                "SELECT COUNT(*) AS n FROM consumer_groups "
+                " WHERE connector_id = :cid"
+            ),
+            {"cid": connector_id},
+        ).fetchone().n
+        or 0
+    )
+    ws_count = int(
+        g.db.execute(
+            text(
+                "SELECT COUNT(*) AS n FROM webhook_subscriptions "
+                " WHERE connector_id = :cid"
+            ),
+            {"cid": connector_id},
+        ).fetchone().n
+        or 0
+    )
+    if cg_count > 0 or ws_count > 0:
+        return (
+            jsonify(
+                {
+                    "error": "connector_in_use",
+                    "consumer_groups": cg_count,
+                    "webhook_subscriptions": ws_count,
+                    "detail": (
+                        "the connector still has consumer_groups or "
+                        "webhook_subscriptions referencing it; migrate "
+                        "or delete dependents before retrying."
+                    ),
+                }
+            ),
+            409,
+        )
+
+    g.db.execute(
+        text("DELETE FROM connectors WHERE connector_id = :cid"),
+        {"cid": connector_id},
+    )
+
+    write_audit_log(
+        g.db,
+        action_type=ACTION_CONNECTOR_REGISTRY_DELETE,
+        entity_type="CONNECTOR",
+        entity_id=0,
+        user_id=g.current_user["username"],
+        warehouse_id=None,
+        details={
+            "connector_id": connector_id,
+            "display_name_at_delete": current.display_name,
+        },
+    )
+    g.db.commit()
+    return jsonify({"connector_id": connector_id, "deleted": True})
 
 
 # ── Consumer groups ─────────────────────────────────────────────────────

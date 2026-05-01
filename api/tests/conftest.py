@@ -129,6 +129,21 @@ def _db_transaction(_seed_session_database):
 
 
 @pytest.fixture(autouse=True)
+def _reset_rate_limit_storage():
+    """V-041 / #214: the module-level Flask-Limiter shares storage
+    across tests. Without a reset, tests that hit the same admin
+    endpoint many times bleed into each other and trip 429 in
+    unrelated test methods. Reset before every test so each one
+    starts with a fresh quota."""
+    try:
+        from services.rate_limit import limiter
+        limiter._storage.reset()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_test_cookies(client):
     # V-045: login now sets HttpOnly + CSRF cookies. The session-scoped test
     # client persists cookies across tests, which would cause tests that

@@ -82,9 +82,28 @@ ACTION_TOKEN_DELETE = "TOKEN_DELETE"
 # Writes use entity_id=0 as a sentinel and carry the real string
 # id in details so investigators can still bind actions to rows.
 ACTION_CONNECTOR_REGISTRY_CREATE = "CONNECTOR_REGISTRY_CREATE"
+ACTION_CONNECTOR_REGISTRY_UPDATE = "CONNECTOR_REGISTRY_UPDATE"
+ACTION_CONNECTOR_REGISTRY_DELETE = "CONNECTOR_REGISTRY_DELETE"
 ACTION_CONSUMER_GROUP_CREATE = "CONSUMER_GROUP_CREATE"
 ACTION_CONSUMER_GROUP_UPDATE = "CONSUMER_GROUP_UPDATE"
 ACTION_CONSUMER_GROUP_DELETE = "CONSUMER_GROUP_DELETE"
+
+# v1.6.0 outbound webhook subscription CRUD audit coverage. Same
+# shape as the v1.5 token CRUD writes: one audit row per mutation,
+# scope snapshot in details so post-incident forensics survive a
+# hard delete. Plaintext webhook secrets NEVER appear in details;
+# the row carries display_name + delivery_url + filter + ceilings
+# + rate so an investigator can reconstruct what was created and
+# under what bounds. entity_id holds a stable surrogate (the audit
+# table column is INT; subscription_id is UUID, so writes use a
+# sentinel and carry the UUID under details.subscription_id).
+ACTION_WEBHOOK_SUBSCRIPTION_CREATE = "WEBHOOK_SUBSCRIPTION_CREATE"
+ACTION_WEBHOOK_SUBSCRIPTION_UPDATE = "WEBHOOK_SUBSCRIPTION_UPDATE"
+ACTION_WEBHOOK_SUBSCRIPTION_DELETE_SOFT = "WEBHOOK_SUBSCRIPTION_DELETE_SOFT"
+ACTION_WEBHOOK_SUBSCRIPTION_DELETE_HARD = "WEBHOOK_SUBSCRIPTION_DELETE_HARD"
+ACTION_WEBHOOK_SECRET_ROTATE = "WEBHOOK_SECRET_ROTATE"
+ACTION_WEBHOOK_DELIVERY_REPLAY_SINGLE = "WEBHOOK_DELIVERY_REPLAY_SINGLE"
+ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH = "WEBHOOK_DELIVERY_REPLAY_BATCH"
 
 # Bin types
 BIN_STAGING = "Staging"

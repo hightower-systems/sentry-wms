@@ -21,6 +21,21 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        # v1.6.0 D3 #175: the wake orchestrator's Redis pubsub
+        # subscriber tests need a live broker. CI runs an
+        # ephemeral, passwordless Redis instance; the local dev
+        # stack uses REDIS_PASSWORD via docker-compose.yml. Both
+        # paths exercise the same code; only the URL differs.
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +45,104 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r api/requirements.txt
+
+      - name: v1.6.0 lint -- single-serialization (no json.dumps in signing.py, dispatch.py, http_client.py)
+        # #174 (D2) + #179 (D7) + #196: the dispatcher's envelope
+        # sign-and-send path must serialize the envelope to
+        # bytes EXACTLY ONCE per delivery and reuse the same
+        # bytes for sign + send (plan §3.1 single-serialization
+        # invariant). Two json.dumps calls along that path
+        # would mean the bytes that were signed are not the
+        # bytes sent on the wire (or vice versa), and the
+        # consumer's HMAC verification breaks silently.
+        #
+        # Scope: signing.py + dispatch.py + http_client.py are
+        # the envelope sign-and-send code path. envelope.py is
+        # the canonical serializer (one json.dumps allowed).
+        # wake.py owns cross-worker pubsub plumbing
+        # (publish_subscription_event uses json.dumps for a
+        # small dict that is NOT the envelope; allowed).
+        #
+        # The lint forbids json.dumps in those three files
+        # specifically. A future contributor who tries to inline
+        # a "quick json.dumps" inside HttpClient.send to log or
+        # transform the payload hits this gate. Also catches
+        # json.dump (file-handle API) anywhere in the package,
+        # which would bypass the json.dumps pattern silently.
+        run: |
+          forbidden=$(grep -rn --include="*.py" "json\.dumps(" \
+            api/services/webhook_dispatcher/signing.py \
+            api/services/webhook_dispatcher/dispatch.py \
+            api/services/webhook_dispatcher/http_client.py \
+            2>/dev/null | wc -l | tr -d ' ')
+          if [ "$forbidden" -gt 0 ]; then
+            echo ""
+            echo "ERROR: json.dumps( in signing.py, dispatch.py, or http_client.py"
+            echo "These files must consume envelope.serialize_envelope, not"
+            echo "call json.dumps directly. The envelope sign-and-send path"
+            echo "must produce one bytes object per delivery and reuse it."
+            grep -rn --include="*.py" "json\.dumps(" \
+              api/services/webhook_dispatcher/signing.py \
+              api/services/webhook_dispatcher/dispatch.py \
+              api/services/webhook_dispatcher/http_client.py
+            exit 1
+          fi
+          dump_count=$(grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/ | wc -l | tr -d ' ')
+          if [ "$dump_count" -gt 0 ]; then
+            echo ""
+            echo "ERROR: json.dump( (file-handle API) in api/services/webhook_dispatcher/"
+            grep -rn --include="*.py" "json\.dump(" api/services/webhook_dispatcher/
+            exit 1
+          fi
+          echo "OK: 0 json.dumps( in sign-and-send path; 0 json.dump( in package"
+
+      - name: v1.6.0 lint -- runtime invariants present in http_client.py
+        # #196: two runtime invariants in HttpClient.send only
+        # fire under specific conditions: (a) the body / signed
+        # body assertion fires when bytes diverge, and (b) the
+        # SSRF assert_url_safe call fires when DNS resolves to a
+        # private range. A passing test suite cannot prove either
+        # call is still in the source -- removing them produces
+        # the same green surface. These grep-based sentinels fail
+        # CI when the literal call sites are dropped.
+        run: |
+          if ! grep -q "assert body is signed_body_for_assertion" \
+              api/services/webhook_dispatcher/http_client.py; then
+            echo ""
+            echo "ERROR: the body == signed_body_for_assertion line is missing"
+            echo "from api/services/webhook_dispatcher/http_client.py."
+            echo "Plan §3.1 requires the runtime assertion at the HTTP boundary."
+            exit 1
+          fi
+          if ! grep -q "ssrf_guard\.assert_url_safe(url)" \
+              api/services/webhook_dispatcher/http_client.py; then
+            echo ""
+            echo "ERROR: the dispatch-time SSRF check is missing from"
+            echo "api/services/webhook_dispatcher/http_client.py."
+            echo "Plan §2.7 requires assert_url_safe before every send."
+            exit 1
+          fi
+          echo "OK: single-serialization assertion + SSRF check present"
+
+      - name: v1.6.0 lint -- no verify=False in webhook_dispatcher
+        # #173 (D1): the dispatcher MUST always send with TLS
+        # verification on. A regression that introduced verify=False
+        # would silently disable cert checking on every webhook POST
+        # and the dispatch-time SSRF guard would not catch it
+        # (SSRF guards address private-range targets, not cert
+        # spoofing). The lint scans the whole package; an
+        # intentional verify=False anywhere under
+        # api/services/webhook_dispatcher/ fails CI.
+        run: |
+          if grep -rn "verify\s*=\s*False" api/services/webhook_dispatcher/; then
+            echo ""
+            echo "ERROR: verify=False found in api/services/webhook_dispatcher/"
+            echo "The dispatcher MUST always send with TLS verification on."
+            echo "Plan §2.1 + §4.1: requests.Session.verify stays True"
+            echo "regardless of SENTRY_ALLOW_HTTP_WEBHOOKS."
+            exit 1
+          fi
+          echo "OK: no verify=False in api/services/webhook_dispatcher/"
 
       - name: Validate v1.5.0 event schemas
         # #111: importing the registry forces Draft 2020-12 validation
@@ -55,4 +168,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry
           JWT_SECRET: test-secret
+          # v1.6.0 D3 #175: wake.WakeOrchestrator pubsub tests
+          # need REDIS_URL pointing at the service container above.
+          # Passwordless URL because the CI Redis service does not
+          # set requirepass (matches the redis:7-alpine default).
+          REDIS_URL: redis://localhost:6379/0
         run: cd api && python -m pytest tests/ -v
