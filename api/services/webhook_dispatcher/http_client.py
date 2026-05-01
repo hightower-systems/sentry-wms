@@ -80,19 +80,29 @@ def classify_exception(exc: Exception) -> tuple[str, str]:
 
 def classify_status_code(status_code: int) -> str:
     """Map an HTTP status code to the dispatcher's error_kind
-    enum. Plan §1.3 enumerates: 4xx, 5xx. 3xx is treated as 4xx
-    because allow_redirects=False; the 3xx is the consumer's
-    misconfiguration, not a transport issue."""
+    enum.
+
+    #213: 3xx responses get their own ``redirected`` bucket so
+    operators triaging the stats endpoint's top_error_kinds
+    breakdown can tell consumer-side redirect misconfigurations
+    apart from genuine 4xx rejections. The dispatcher still does
+    not follow redirects (``allow_redirects=False`` is wired and
+    CI-linted to stay that way); the label split is signal-only.
+    Pre-#213 every 3xx silently rolled up under ``4xx``.
+
+    1xx informational responses also go into ``redirected`` since
+    they are unreachable in practice for the dispatcher's POST
+    flow and are operator-debug shape rather than transport
+    failures.
+    """
     if 200 <= status_code < 300:
         # 2xx is success; caller should not invoke
         # classify_status_code on a 2xx.
         return "unknown"
     if 500 <= status_code < 600:
         return "5xx"
-    # Everything else (3xx redirects, 4xx client errors,
-    # 1xx informational) lands in the 4xx bucket. Consumers
-    # that 3xx are misconfigured; treating them as 4xx makes
-    # the auto-pause + retry semantics consistent.
+    if 300 <= status_code < 400:
+        return "redirected"
     return "4xx"
 
 

@@ -84,6 +84,25 @@ _ERROR_CATALOG: dict[str, ErrorEntry] = {
             "the next dispatch via session teardown."
         ),
     },
+    "redirected": {
+        "short_message": "Consumer endpoint returned a 3xx redirect",
+        "description": (
+            "The consumer's endpoint returned a 3xx redirect response. "
+            "The dispatcher does not follow redirects "
+            "(allow_redirects=False is a security invariant; a "
+            "consumer-controlled redirect could bounce traffic to an "
+            "internal target). The delivery is treated as a failure "
+            "and the retry schedule applies."
+        ),
+        "triage_hint": (
+            "Update the consumer's endpoint to accept the POST at the "
+            "registered delivery_url directly instead of redirecting. "
+            "If the consumer intentionally rotated the URL, the admin "
+            "should PATCH the subscription's delivery_url to the new "
+            "target rather than relying on a redirect at the consumer "
+            "side."
+        ),
+    },
     "4xx": {
         "short_message": "Consumer rejected the request (4xx response)",
         "description": (

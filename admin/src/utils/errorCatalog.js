@@ -28,9 +28,13 @@ export const ERROR_CATALOG = {
     short_message: 'Delivery URL resolved to a private or internal IP',
     description: 'The dispatcher\'s SSRF guard rejected the delivery_url because its DNS resolution returned a private (RFC1918), loopback, or cloud-IMDS address. The dispatcher refuses to POST to internal targets to defend against DNS rebinding and split-horizon DNS attacks.',
   },
+  redirected: {
+    short_message: 'Consumer endpoint returned a 3xx redirect',
+    description: 'The consumer\'s endpoint returned a 3xx redirect response. The dispatcher does not follow redirects (allow_redirects=False is a security invariant). The delivery is treated as a failure and the retry schedule applies.',
+  },
   '4xx': {
     short_message: 'Consumer rejected the request (4xx response)',
-    description: 'The consumer\'s endpoint returned a 4xx HTTP response. The consumer rejected the payload, the signature, the headers, or the request shape. The dispatcher does not follow redirects; 3xx responses also classify as 4xx.',
+    description: 'The consumer\'s endpoint returned a 4xx HTTP response. The consumer rejected the payload, the signature, the headers, or the request shape.',
   },
   '5xx': {
     short_message: 'Consumer endpoint returned a server error (5xx)',

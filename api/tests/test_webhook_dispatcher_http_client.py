@@ -138,8 +138,12 @@ class TestClassifyStatusCode:
     @pytest.mark.parametrize(
         "code,expected",
         [
-            (300, "4xx"),  # 3xx redirects classify as 4xx
-            (302, "4xx"),
+            # #213: 3xx redirects classify as 'redirected', not 4xx,
+            # so operators can distinguish redirect misconfiguration
+            # from genuine 4xx rejection in top_error_kinds.
+            (300, "redirected"),
+            (302, "redirected"),
+            (399, "redirected"),
             (400, "4xx"),
             (404, "4xx"),
             (499, "4xx"),
@@ -276,15 +280,19 @@ class TestSendStatusClassification:
         from services.webhook_dispatcher import error_catalog
         assert response.error_detail == error_catalog.get_short_message("5xx")
 
-    def test_redirect_classifies_as_4xx_does_not_follow(self, http_redirect_server):
+    def test_redirect_classifies_as_redirected_does_not_follow(self, http_redirect_server):
         """allow_redirects=False is a security invariant: a
         malicious consumer cannot bounce traffic to an internal
-        target. A 302 lands as a 4xx-bucket failure, not as a
-        successful 200 from the redirect target."""
+        target. A 302 lands in the dedicated 'redirected' bucket
+        per #213 so operators triaging top_error_kinds can
+        distinguish redirect misconfiguration from genuine 4xx
+        rejection. Pre-#213 the kind was '4xx'."""
         client = http_client_module.HttpClient()
         response = _send(client, url=f"http://127.0.0.1:{http_redirect_server}/")
         assert response.status_code == 302
-        assert response.error_kind == "4xx"
+        assert response.error_kind == "redirected"
+        from services.webhook_dispatcher import error_catalog
+        assert response.error_detail == error_catalog.get_short_message("redirected")
 
 
 class TestSendNetworkFailures:
