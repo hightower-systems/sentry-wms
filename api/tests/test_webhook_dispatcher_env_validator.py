@@ -41,12 +41,8 @@ def _clean_env(monkeypatch):
     leak does not interfere with the test. REDIS_URL is set to a
     valid placeholder because #212 added it as a required env;
     SENTRY_PUBSUB_HMAC_KEY is set to a valid 32-byte placeholder
-    because #227 added it as a required env. The three HTTP
-    timeout vars are pre-set to a coordinated baseline (timeout
-    at upper bound, per-op caps at lower bound) so the #237
-    inequality boot guard does not interfere with single-var
-    boundary tests; tests that target the inequality clear or
-    overwrite the relevant var after this helper runs."""
+    because #227 added it as a required env. Tests that target
+    those guards specifically delete the var after this helper runs."""
     for name, _lo, _hi in _RANGE_CASES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("SENTRY_ALLOW_HTTP_WEBHOOKS", raising=False)
@@ -58,9 +54,17 @@ def _clean_env(monkeypatch):
         "SENTRY_PUBSUB_HMAC_KEY",
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     )
-    # #237: timeout > both per-op caps so any single-var range
-    # test (e.g. CONNECT_TIMEOUT at 60000) still satisfies
-    # max(connect, read) <= timeout.
+
+
+def _safe_timeout_baseline(monkeypatch):
+    """#237: validate_or_die enforces max(connect, read) <= timeout.
+    Boundary tests on a SINGLE timeout var leave the others at
+    their documented defaults, which can violate the inequality
+    (e.g. CONNECT at upper bound 60000 vs default TIMEOUT 10000).
+    Call this from any test that runs validate_or_die while
+    pushing one timeout var to its bound; explicitly NOT folded
+    into _clean_env because TestEnvVarHelpers expects the vars
+    unset so int_var returns the documented _RANGE_VARS defaults."""
     monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "60000")
     monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "100")
     monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "100")
@@ -87,6 +91,12 @@ class TestRangeValidators:
     @pytest.mark.parametrize("name,lo,hi", _RANGE_CASES, ids=[c[0] for c in _RANGE_CASES])
     def test_at_boundary_accepts(self, monkeypatch, name, lo, hi):
         _clean_env(monkeypatch)
+        # #237: the three timeout vars share a max(connect, read)
+        # <= timeout inequality. Establish a coordinated baseline
+        # before pushing any single var to its bound; the var
+        # under test gets overwritten right after so its value
+        # still drives the assertion.
+        _safe_timeout_baseline(monkeypatch)
         monkeypatch.setenv(name, str(lo))
         env_validator.validate_or_die()  # no raise
         monkeypatch.setenv(name, str(hi))
