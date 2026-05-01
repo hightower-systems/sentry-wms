@@ -483,6 +483,88 @@ class TestResponseSizeCap:
             server.shutdown()
 
 
+class TestWallClockTimeout:
+    """#237: the wall-clock cap is enforced via a thread watchdog
+    around session.post. A consumer that drip-feeds bytes within
+    the per-op read budget can keep the connection alive past
+    the nominal cap without the watchdog; the watchdog ensures
+    the entire exchange completes within timeout_s."""
+
+    def test_slow_drip_response_hits_wall_clock_cap(self):
+        """A consumer that sends one byte, sleeps under the
+        per-op read timeout, sends another byte, etc., must hit
+        the wall-clock cap and be reclassified as a timeout
+        failure -- not return successfully after a multi-minute
+        round trip."""
+
+        class DripHandler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                # Drip: one byte every 0.4 s. Per-op read timeout
+                # of 1.0 s would NOT trip; only the wall-clock cap
+                # at 1.5 s does.
+                try:
+                    for _ in range(50):
+                        self.wfile.write(b"1\r\nx\r\n")
+                        self.wfile.flush()
+                        time.sleep(0.4)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            def log_message(self, *a, **kw):
+                return
+
+        server, port = _start_http_server(DripHandler)
+        try:
+            client = http_client_module.HttpClient(
+                timeout_s=1.5,
+                connect_timeout_s=0.5,
+                read_timeout_s=1.0,
+            )
+            started = time.monotonic()
+            response = _send(client, url=f"http://127.0.0.1:{port}/")
+            elapsed = time.monotonic() - started
+            # Wall-clock cap fired; classified as timeout.
+            assert response.status_code is None
+            assert response.error_kind == "timeout"
+            # Bound: must be close to the wall-clock cap, not
+            # 50 * 0.4 = 20 s.
+            assert elapsed < 5.0, (
+                f"wall-clock cap did not fire within budget; took "
+                f"{elapsed:.2f}s"
+            )
+        finally:
+            server.shutdown()
+
+    def test_timeout_tuple_passes_per_op_caps_to_requests(self):
+        """Sanity: the (connect, read) tuple is the timeout shape
+        the http_client uses. A direct connect_timeout violation
+        (port 1, no listener) classifies as connection error
+        within the connect cap, not the wall-clock cap."""
+        client = http_client_module.HttpClient(
+            timeout_s=10.0,
+            connect_timeout_s=0.5,
+            read_timeout_s=2.0,
+        )
+        started = time.monotonic()
+        response = _send(client, url="http://127.0.0.1:1/")
+        elapsed = time.monotonic() - started
+        assert response.status_code is None
+        assert response.error_kind in ("connection", "timeout"), (
+            "expected connection-class failure on a closed port"
+        )
+        # Connect failure is fast; the wall-clock cap is 10 s but
+        # the actual elapsed should be well under 5 s on any
+        # reasonable host.
+        assert elapsed < 5.0
+
+
 class TestSendNetworkFailures:
     def test_connection_refused_classifies_as_connection(self):
         # Port 1 is reserved; nothing listens there.

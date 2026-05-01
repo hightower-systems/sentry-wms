@@ -26,6 +26,8 @@ from services.webhook_dispatcher import env_validator
 # refusal, then poke values INSIDE and confirm acceptance.
 _RANGE_CASES = [
     ("DISPATCHER_HTTP_TIMEOUT_MS", 1000, 60000),
+    ("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", 100, 60000),
+    ("DISPATCHER_HTTP_READ_TIMEOUT_MS", 100, 60000),
     ("DISPATCHER_FALLBACK_POLL_MS", 500, 10000),
     ("DISPATCHER_SHUTDOWN_DRAIN_S", 1, 300),
     ("DISPATCHER_MAX_CONCURRENT_POSTS", 1, 100),
@@ -234,6 +236,45 @@ class TestRequiredEnvVars:
     def test_set_redis_url_accepted(self, monkeypatch):
         _clean_env(monkeypatch)
         # _clean_env sets REDIS_URL; validate succeeds.
+        env_validator.validate_or_die()  # no raise
+
+
+class TestHttpTimeoutInequality:
+    """#237: each per-op cap must fit inside the wall-clock cap so
+    the per-op timeouts are not dead defense. A boot guard refuses
+    configurations where CONNECT or READ exceeds TIMEOUT alone."""
+
+    def test_read_above_timeout_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "5000")
+        monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "1000")
+        monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "9000")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        msg = str(excinfo.value)
+        assert "DISPATCHER_HTTP_READ_TIMEOUT_MS" in msg
+        assert "DISPATCHER_HTTP_TIMEOUT_MS" in msg
+
+    def test_connect_above_timeout_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "5000")
+        monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "9000")
+        monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "1000")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "DISPATCHER_HTTP_CONNECT_TIMEOUT_MS" in str(excinfo.value)
+
+    def test_per_op_at_or_below_timeout_accepts_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "10000")
+        monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "5000")
+        monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "8000")
+        env_validator.validate_or_die()  # no raise
+
+    def test_default_values_accept_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        # Defaults: TIMEOUT=10000, CONNECT=5000, READ=8000.
+        # max(5000, 8000) = 8000 <= 10000.
         env_validator.validate_or_die()  # no raise
 
 

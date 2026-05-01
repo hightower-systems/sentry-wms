@@ -28,6 +28,14 @@ LOGGER = logging.getLogger("webhook_dispatcher.env_validator")
 # (var_name, lower_bound, upper_bound, default_value)
 _RANGE_VARS = [
     ("DISPATCHER_HTTP_TIMEOUT_MS", 1000, 60000, 10000),
+    # #237: connect + read are per-operation caps requests passes
+    # through to urllib3. The wall-clock cap above fires first
+    # when a consumer drip-feeds bytes within the per-op budget;
+    # the per-op caps still matter for connect + send phases
+    # before the body read starts. Defaults: 5s connect + 8s read,
+    # both inside the 10s wall-clock cap.
+    ("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", 100, 60000, 5000),
+    ("DISPATCHER_HTTP_READ_TIMEOUT_MS", 100, 60000, 8000),
     ("DISPATCHER_FALLBACK_POLL_MS", 500, 10000, 2000),
     ("DISPATCHER_SHUTDOWN_DRAIN_S", 1, 300, 30),
     ("DISPATCHER_MAX_CONCURRENT_POSTS", 1, 100, 16),
@@ -174,6 +182,26 @@ def _validate_combinations() -> None:
             "private-range reject is the security boundary against "
             "DNS-rebinding and split-horizon DNS attacks; disabling it "
             "in production is operator error."
+        )
+
+    # #237: each per-op cap must fit inside the wall-clock cap so
+    # the per-op timeouts are not dead defense. A configuration
+    # where READ alone exceeds TIMEOUT means the wall-clock fires
+    # first on every legitimate slow consumer and the per-op cap
+    # is unreachable. Refuse boot when CONNECT or READ exceeds
+    # TIMEOUT individually; the SUM constraint is intentionally
+    # weaker because connect and read run in different phases of
+    # the roundtrip and the wall-clock cap dominates anyway.
+    timeout_ms = int_var("DISPATCHER_HTTP_TIMEOUT_MS")
+    connect_ms = int_var("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS")
+    read_ms = int_var("DISPATCHER_HTTP_READ_TIMEOUT_MS")
+    if connect_ms > timeout_ms or read_ms > timeout_ms:
+        raise DispatcherEnvError(
+            "refusing to boot: each of DISPATCHER_HTTP_CONNECT_TIMEOUT_MS "
+            f"({connect_ms}) and DISPATCHER_HTTP_READ_TIMEOUT_MS "
+            f"({read_ms}) must be <= DISPATCHER_HTTP_TIMEOUT_MS "
+            f"({timeout_ms}). The wall-clock cap dominates; a per-op "
+            "cap larger than it is unreachable defense (#237)."
         )
 
     # Soft warning: HTTPS-only is a hard requirement in production but

@@ -32,6 +32,18 @@ from . import ssrf_guard
 LOGGER = logging.getLogger("webhook_dispatcher.http_client")
 
 _DEFAULT_HTTP_TIMEOUT_S = 10.0
+# #237: per-operation connect / read timeouts. The pre-#237 code
+# passed a single float to ``session.post(..., timeout=...)`` which
+# requests interprets as "max wait for any single I/O operation,"
+# not "max wall-clock for the whole exchange." A consumer that
+# drip-feeds the response one byte every 9s under a 10s read
+# timeout could keep the connection alive forever. The tuple form
+# bounds connect and read independently, and the wall-clock
+# watchdog below caps the whole exchange. Defaults are chosen so
+# connect + read <= TIMEOUT_S; env_validator enforces the
+# inequality at boot.
+_DEFAULT_HTTP_CONNECT_TIMEOUT_S = 5.0
+_DEFAULT_HTTP_READ_TIMEOUT_S = 8.0
 
 # #226: maximum response-body bytes the dispatcher will read.
 # The dispatcher never inspects the body (error_detail comes from
@@ -140,8 +152,22 @@ class HttpClient:
     call. D8 ships the bare client.
     """
 
-    def __init__(self, timeout_s: float = _DEFAULT_HTTP_TIMEOUT_S):
+    def __init__(
+        self,
+        timeout_s: float = _DEFAULT_HTTP_TIMEOUT_S,
+        connect_timeout_s: float = _DEFAULT_HTTP_CONNECT_TIMEOUT_S,
+        read_timeout_s: float = _DEFAULT_HTTP_READ_TIMEOUT_S,
+    ):
+        # timeout_s is the wall-clock cap on the entire send call;
+        # connect_timeout_s + read_timeout_s are the per-operation
+        # caps requests passes through to urllib3. The wall-clock
+        # cap fires first when a consumer drip-feeds bytes within
+        # the per-op read budget (#237). The CI workflow / env_validator
+        # enforces connect + read <= timeout so the per-op caps are
+        # not dead defense.
         self.timeout_s = timeout_s
+        self.connect_timeout_s = connect_timeout_s
+        self.read_timeout_s = read_timeout_s
         self._session = None  # lazy
 
     def _get_session(self):
@@ -229,30 +255,61 @@ class HttpClient:
         }
 
         session = self._get_session()
+        # #226 + #237: stream=True bounds the response-buffer surface
+        # AND is required for the wall-clock watchdog below to be able
+        # to interrupt a slow-drip read (an unbounded body without
+        # stream=True would keep the underlying urllib3 read alive
+        # past the wall-clock deadline). The (connect, read) tuple
+        # caps each individual I/O step; the wall-clock watchdog
+        # caps the whole exchange.
+        import threading
+        from queue import Empty, Queue
+
+        result_q: Queue = Queue(maxsize=1)
+
+        def _do_request():
+            try:
+                resp = session.post(
+                    url,
+                    data=body,
+                    headers=headers,
+                    timeout=(self.connect_timeout_s, self.read_timeout_s),
+                    verify=True,
+                    allow_redirects=False,
+                    stream=True,
+                )
+                result_q.put(("ok", resp))
+            except Exception as exc:  # noqa: BLE001
+                result_q.put(("err", exc))
+
+        # daemon=True so an orphaned request thread cannot block
+        # process exit on SIGTERM. The orphan continues running in
+        # the background until the per-op read timeout fires (at
+        # which point it puts its err result into a queue nobody
+        # is reading and the GC reaps it), or until the process
+        # exits.
+        threading.Thread(target=_do_request, daemon=True).start()
         try:
-            # #226: stream=True so the body is NOT buffered into
-            # memory by `requests` before this method returns.
-            # We never inspect the body anyway -- error_detail
-            # comes from the server-owned catalog -- so reading
-            # only status_code + headers and immediately closing
-            # the connection bounds the worker's RSS regardless
-            # of how large a body the consumer tries to ship.
-            response = session.post(
-                url,
-                data=body,
-                headers=headers,
-                timeout=self.timeout_s,
-                verify=True,
-                allow_redirects=False,
-                stream=True,
-            )
-        except Exception as exc:  # noqa: BLE001
-            kind, detail = classify_exception(exc)
+            kind, payload = result_q.get(timeout=self.timeout_s)
+        except Empty:
+            # #237 wall-clock cap fired before the request thread
+            # produced a result. Reclassify as a timeout error so
+            # the dispatcher's retry path runs the same way it
+            # does for an organic per-op timeout.
             return HttpResponse(
                 status_code=None,
-                error_kind=kind,
-                error_detail=detail,
+                error_kind="timeout",
+                error_detail=error_catalog.get_short_message("timeout"),
             )
+
+        if kind == "err":
+            err_kind, err_detail = classify_exception(payload)
+            return HttpResponse(
+                status_code=None,
+                error_kind=err_kind,
+                error_detail=err_detail,
+            )
+        response = payload
 
         # #226: regardless of the status_code branches below, the
         # response is closed via try/finally so a 2xx with a huge

@@ -247,6 +247,16 @@ If the Sentry admin needs to debug a delivery failure, they will see the categor
 
 The dispatcher caps the response body it will read at 64 KB and closes the connection past that point. A consumer that advertises `Content-Length` above the cap is reclassified as a 5xx-class failure without the bytes ever being drained. Ship a small JSON ACK or a bare 200; do NOT return a stack trace, an HTML error page, or any large payload. The dispatcher does not inspect the body anyway -- only the status code drives delivery state.
 
+## Timeout budget
+
+The dispatcher enforces three timeouts on every delivery:
+
+- `DISPATCHER_HTTP_CONNECT_TIMEOUT_MS` (default 5 s) bounds DNS + TCP + TLS handshake.
+- `DISPATCHER_HTTP_READ_TIMEOUT_MS` (default 8 s) bounds each individual socket read.
+- `DISPATCHER_HTTP_TIMEOUT_MS` (default 10 s) is the WALL-CLOCK cap on the entire send. A consumer that drip-feeds bytes within the per-op read budget cannot keep the connection alive past this; the dispatcher's watchdog cancels the request and classifies the delivery as `timeout`.
+
+Your endpoint must return a complete 2xx response inside the wall-clock cap. Streaming a slow chunked body is not supported; ship the ACK and close.
+
 ## Replay timestamps
 
 When the admin replays a delivery, the new request carries:
