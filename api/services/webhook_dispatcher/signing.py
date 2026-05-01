@@ -146,6 +146,33 @@ class SecretMaterial:
     def __bytes__(self) -> bytes:
         return self._plaintext
 
+    # #220: refuse pickle on every protocol path. The default
+    # __slots__ pickle behavior writes _plaintext into the stream
+    # via copyreg.__reduce_ex__, defeating the repr/str refusals.
+    # __reduce_ex__ catches every pickle protocol version (incl. 0
+    # and 5); __getstate__ catches a hand-rolled "save state for
+    # later" caller; __setstate__ catches an attempt to restore an
+    # object from an externally-built state dict. All three raise
+    # the same TypeError so the failure shape is unambiguous and
+    # any future serialization layer (multiprocessing, shelve, APM
+    # local-capture, joblib, etc.) surfaces the breach loudly.
+    _PICKLE_REFUSAL = (
+        "SecretMaterial is not picklable; access plaintext via "
+        "bytes(secret) inside signing.py only"
+    )
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError(self._PICKLE_REFUSAL)
+
+    def __reduce__(self):
+        raise TypeError(self._PICKLE_REFUSAL)
+
+    def __getstate__(self):
+        raise TypeError(self._PICKLE_REFUSAL)
+
+    def __setstate__(self, state):
+        raise TypeError(self._PICKLE_REFUSAL)
+
 
 def _row_value(row, position: int, key: str):
     """Read a column from a row that may be either a tuple (the

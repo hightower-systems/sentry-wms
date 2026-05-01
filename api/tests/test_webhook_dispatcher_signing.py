@@ -345,6 +345,41 @@ class TestSecretMaterialDoesNotLeak:
         with pytest.raises(TypeError):
             signing.SecretMaterial("string-not-bytes", generation=1)  # type: ignore
 
+    def test_pickle_dumps_raises(self):
+        """#220: pickle of a __slots__-only class default-serializes
+        the slot values, leaking _plaintext into the stream. The
+        wrapper refuses pickle on every protocol."""
+        import pickle
+
+        plaintext = b"super-duper-secret-key-bytes-32!"
+        secret = signing.SecretMaterial(plaintext, generation=1)
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            with pytest.raises(TypeError) as exc_info:
+                pickle.dumps(secret, protocol=protocol)
+            assert "not picklable" in str(exc_info.value)
+            assert "bytes(secret)" in str(exc_info.value)
+
+    def test_copy_deepcopy_raises(self):
+        """copy.deepcopy uses the same __reduce_ex__ path the
+        pickle module does; the refusal therefore covers it too."""
+        import copy
+
+        secret = signing.SecretMaterial(b"\x42" * 32, generation=1)
+        with pytest.raises(TypeError):
+            copy.deepcopy(secret)
+        with pytest.raises(TypeError):
+            copy.copy(secret)
+
+    def test_getstate_setstate_raise(self):
+        """Hand-rolled getstate / setstate paths (some serialization
+        libraries use them directly without going through pickle)
+        also refuse, so the breach surface stays uniform."""
+        secret = signing.SecretMaterial(b"\x42" * 32, generation=1)
+        with pytest.raises(TypeError):
+            secret.__getstate__()
+        with pytest.raises(TypeError):
+            secret.__setstate__({"_plaintext": b"x", "generation": 1})
+
 
 # ----------------------------------------------------------------------
 # DB integration: load_secret_for_signing + load_all_active_secrets
