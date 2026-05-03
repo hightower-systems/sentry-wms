@@ -74,6 +74,17 @@ _VALID_SUBSCRIPTION_EVENT_KINDS = frozenset({
     "delivery_url_changed",
     "rate_limit_changed",
     "secret_rotated",
+    # #229: surface filter mutations on the cross-worker channel
+    # so a sleeping worker wakes promptly and the next deliver_one
+    # picks up the new filter from the just-committed
+    # webhook_subscriptions row. deliver_one always re-reads the
+    # row each cycle, so a wake is sufficient -- no per-worker
+    # filter cache to invalidate. Filter changes are NON-
+    # retroactive: events committed BEFORE the PATCH that match
+    # the new filter but not the old are not re-delivered (the
+    # cursor never rewinds). Operators rebuilding history reach
+    # for the replay-batch endpoint instead.
+    "subscription_filter_changed",
 })
 
 

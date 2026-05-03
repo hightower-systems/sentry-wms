@@ -615,6 +615,18 @@ def update_webhook(validated, subscription_id):
                 validated.subscription_filter.model_dump_json(exclude_none=True)
             )
             _record("subscription_filter", old_filter, new_filter_dump)
+            # #229: signal peer workers so they pick up the new
+            # filter on the next deliver_one cycle instead of
+            # waiting for the next inbound NOTIFY. deliver_one
+            # already re-reads the subscription row per cycle, so
+            # the wake here narrows the latency window between
+            # commit and effect; no per-worker filter cache to
+            # invalidate. Filter changes are NON-retroactive: the
+            # cursor never rewinds, so events committed before
+            # the PATCH that match the new filter but not the old
+            # do not re-deliver. Operators backfilling history
+            # reach for the replay-batch endpoint.
+            pubsub_events.append("subscription_filter_changed")
 
     if (
         validated.rate_limit_per_second is not None

@@ -898,6 +898,88 @@ class TestPatchUpdate:
         assert resp.status_code == 400
         assert resp.get_json()["error"] == "unknown_event_types"
 
+    def test_filter_change_publishes_subscription_filter_changed(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#229: a PATCH that changes subscription_filter must
+        publish subscription_filter_changed on the cross-worker
+        channel so peer workers wake and pick up the new filter
+        on the next deliver_one cycle."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(
+            client,
+            auth_headers,
+            subscription_filter={
+                "event_types": ["receipt.completed"],
+            },
+        )
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "subscription_filter": {
+                    "event_types": [
+                        "receipt.completed",
+                        "ship.confirmed",
+                    ]
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert any(
+            c["event"] == "subscription_filter_changed"
+            and c["subscription_id"] == sub_id
+            for c in captured
+        )
+
+        # Audit log surfaces the new event in the events list so
+        # operator triage can name what changed.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_UPDATE' "
+            "AND details->>'subscription_id' = %s "
+            "ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        details = cur.fetchone()[0]
+        cur.close()
+        assert "subscription_filter_changed" in details["events"]
+        assert "subscription_filter" in details["diff"]
+
+    def test_filter_unchanged_does_not_publish(
+        self, client, auth_headers, monkeypatch
+    ):
+        """A PATCH that submits the same filter shape that's already
+        in the DB is a no-op; the worker is not signaled
+        (publishing on every PATCH would amplify into pointless
+        wake-up storms)."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(
+            client,
+            auth_headers,
+            subscription_filter={"event_types": ["receipt.completed"]},
+        )
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "subscription_filter": {
+                    "event_types": ["receipt.completed"]
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert not any(
+            c["event"] == "subscription_filter_changed"
+            for c in captured
+        )
+
     def test_ceiling_above_hard_cap_rejected(
         self, client, auth_headers, monkeypatch
     ):

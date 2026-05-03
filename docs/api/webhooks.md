@@ -233,6 +233,10 @@ A paused subscription does not retry, does not advance the cursor, and does not 
 
 Your endpoint can detect a long pause by watching for a gap in `event_id`s after a sustained outage. Sentry will not silently drop events: the dispatcher's cursor stays at the last terminal delivery until you triage and resume.
 
+## Filter changes are non-retroactive
+
+When the admin edits the subscription's `subscription_filter` (event_types, warehouse_ids, aggregate_external_id_allowlist), the new filter applies to events the dispatcher selects from now on; the cursor never rewinds. Events that were committed before the PATCH and that match the new filter but did not match the old are not re-delivered. To backfill historical events under the new filter, the operator uses the admin panel's replay-batch endpoint with the matching filter shape.
+
 ## Idempotency expectations
 
 Sentry's contract is at-least-once delivery. Your endpoint MUST be idempotent on `event_id`. The retry schedule alone produces duplicates: if your endpoint accepts the request, applies the side effect, and then crashes before returning a 2xx, the dispatcher will retry. A 12-hour gap between attempt 8 and the DLQ also means a replay-batch hours later can produce a "delayed duplicate" your endpoint must absorb.
