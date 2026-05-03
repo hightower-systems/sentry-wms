@@ -85,6 +85,16 @@ _VALID_SUBSCRIPTION_EVENT_KINDS = frozenset({
     # cursor never rewinds). Operators rebuilding history reach
     # for the replay-batch endpoint instead.
     "subscription_filter_changed",
+    # #230: surface ceiling mutations on the cross-worker channel
+    # so audit triage can name what changed and operators can see
+    # the event in the dispatcher's wake stream. Ceiling changes
+    # do NOT auto-resume a subscription that is paused with the
+    # matching pause_reason: the operator must follow up with an
+    # explicit status=active PATCH to resume. The publish here is
+    # informational; the per-cycle re-read in deliver_one already
+    # picks up the new ceilings on every active worker, and a
+    # paused worker will not act on the wake until resumed.
+    "ceiling_changed",
 })
 
 

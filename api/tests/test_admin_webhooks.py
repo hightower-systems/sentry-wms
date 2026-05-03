@@ -950,6 +950,73 @@ class TestPatchUpdate:
         assert "subscription_filter_changed" in details["events"]
         assert "subscription_filter" in details["diff"]
 
+    def test_ceiling_change_on_paused_by_ceiling_includes_hint(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#230: lifting the matching ceiling on a paused-by-ceiling
+        subscription does NOT auto-resume; the response hint names
+        the follow-up the operator still has to send."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        # Force paused-by-pending_ceiling state directly. The
+        # auto-pause path that produces this state is exercised
+        # by the dispatcher tests; here we just need the row in
+        # the right shape to test the response-hint contract.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions "
+            "   SET status = 'paused', pause_reason = 'pending_ceiling' "
+            " WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 50000},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        # Subscription stays paused; the hint surfaces the missing
+        # follow-up step.
+        assert body["status"] == "paused"
+        assert body["pause_reason"] == "pending_ceiling"
+        assert "hint" in body
+        assert "status=active" in body["hint"]
+
+    def test_ceiling_lift_with_status_active_does_not_emit_hint(
+        self, client, auth_headers, monkeypatch
+    ):
+        """A PATCH that simultaneously lifts the ceiling AND sets
+        status=active resumes cleanly; no hint needed."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions "
+            "   SET status = 'paused', pause_reason = 'pending_ceiling' "
+            " WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 50000, "status": "active"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["status"] == "active"
+        assert "hint" not in body
+
     def test_filter_unchanged_does_not_publish(
         self, client, auth_headers, monkeypatch
     ):
@@ -1126,10 +1193,27 @@ class TestPatchUpdate:
         self, client, auth_headers, monkeypatch,
     ):
         """#216: a real diff that does not publish a pubsub event
-        (pending_ceiling change only) still gets an audit row;
+        (display_name change only) still gets an audit row;
         details.events is an empty list. Distinct from the no-diff
         case which short-circuits before any audit row is written."""
         self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"display_name": "renamed-no-publish"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == []
+
+    def test_audit_row_events_field_ceiling_change(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """#230: pending_ceiling or dlq_ceiling change records
+        ceiling_changed in the events list and on the cross-worker
+        pubsub channel."""
+        captured = self._publishes(monkeypatch)
         created = _create_one(client, auth_headers)
         sub_id = created["subscription_id"]
         resp = client.patch(
@@ -1138,7 +1222,47 @@ class TestPatchUpdate:
             headers=auth_headers,
         )
         assert resp.status_code == 200
-        assert self._latest_audit_events(sub_id) == []
+        assert self._latest_audit_events(sub_id) == ["ceiling_changed"]
+        assert any(c["event"] == "ceiling_changed" for c in captured)
+
+    def test_audit_row_events_field_dlq_ceiling_change(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """A dlq_ceiling-only change publishes ceiling_changed too;
+        same pubsub kind covers both."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"dlq_ceiling": 333},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == ["ceiling_changed"]
+        assert any(c["event"] == "ceiling_changed" for c in captured)
+
+    def test_ceiling_change_emits_one_event_per_patch(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """A single PATCH that touches BOTH pending_ceiling AND
+        dlq_ceiling publishes exactly one ceiling_changed event,
+        not two -- the kind is per-pubsub-publish, not per-column."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 8888, "dlq_ceiling": 444},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        ceiling_events = [
+            c for c in captured if c["event"] == "ceiling_changed"
+        ]
+        assert len(ceiling_events) == 1, (
+            f"expected one ceiling_changed event, got {ceiling_events}"
+        )
 
 
 class TestStats:

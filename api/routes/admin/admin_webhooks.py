@@ -641,6 +641,7 @@ def update_webhook(validated, subscription_id):
         )
         pubsub_events.append("rate_limit_changed")
 
+    pending_ceiling_changed = False
     if (
         validated.pending_ceiling is not None
         and validated.pending_ceiling != current.pending_ceiling
@@ -652,7 +653,9 @@ def update_webhook(validated, subscription_id):
             current.pending_ceiling,
             validated.pending_ceiling,
         )
+        pending_ceiling_changed = True
 
+    dlq_ceiling_changed = False
     if (
         validated.dlq_ceiling is not None
         and validated.dlq_ceiling != current.dlq_ceiling
@@ -660,6 +663,17 @@ def update_webhook(validated, subscription_id):
         set_clauses.append("dlq_ceiling = :dlq_ceiling")
         params["dlq_ceiling"] = validated.dlq_ceiling
         _record("dlq_ceiling", current.dlq_ceiling, validated.dlq_ceiling)
+        dlq_ceiling_changed = True
+
+    if pending_ceiling_changed or dlq_ceiling_changed:
+        # #230: publish so peer workers re-evaluate the active
+        # ceiling on their next deliver_one cycle. The publish is
+        # informational for non-paused workers (they re-read every
+        # cycle anyway) and intentionally a no-op for workers that
+        # are paused with a matching pause_reason: ceiling changes
+        # do NOT auto-resume a paused subscription. The operator
+        # must follow up with an explicit status=active PATCH.
+        pubsub_events.append("ceiling_changed")
 
     if validated.status is not None and validated.status != current.status:
         if current.status == "revoked":
@@ -770,7 +784,32 @@ def update_webhook(validated, subscription_id):
         ),
         {"sid": subscription_id},
     ).fetchone()
-    return jsonify(_row_to_listing(refreshed, _stats_for(subscription_id)))
+    body = _row_to_listing(refreshed, _stats_for(subscription_id))
+    # #230: when an operator lifts the ceiling that paused this
+    # subscription but does NOT also flip status=active in the
+    # same PATCH, surface a hint so they know dispatch will not
+    # resume on its own. The hint is advisory; the operator's
+    # next call (status=active) is the actual unblock.
+    paused_by_pending = (
+        refreshed.status == "paused"
+        and refreshed.pause_reason == "pending_ceiling"
+        and pending_ceiling_changed
+        and (validated.status is None or validated.status == "paused")
+    )
+    paused_by_dlq = (
+        refreshed.status == "paused"
+        and refreshed.pause_reason == "dlq_ceiling"
+        and dlq_ceiling_changed
+        and (validated.status is None or validated.status == "paused")
+    )
+    if paused_by_pending or paused_by_dlq:
+        body["hint"] = (
+            "ceiling_changed but subscription remains paused with "
+            f"pause_reason={refreshed.pause_reason!r}. Ceiling changes "
+            "do not auto-resume; PATCH status=active to resume "
+            "dispatch."
+        )
+    return jsonify(body)
 
 
 @admin_bp.route("/webhooks/<subscription_id>/rotate-secret", methods=["POST"])

@@ -383,6 +383,7 @@ class TestRedisPubsubWake:
             "rate_limit_changed",
             "secret_rotated",
             "subscription_filter_changed",
+            "ceiling_changed",
         ):
             sub_id = str(uuid.uuid4())
             self._publish({"subscription_id": sub_id, "event": kind})

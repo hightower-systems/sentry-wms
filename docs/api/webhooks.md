@@ -233,6 +233,10 @@ A paused subscription does not retry, does not advance the cursor, and does not 
 
 Your endpoint can detect a long pause by watching for a gap in `event_id`s after a sustained outage. Sentry will not silently drop events: the dispatcher's cursor stays at the last terminal delivery until you triage and resume.
 
+## Ceiling changes do not auto-resume
+
+When the admin lifts `pending_ceiling` or `dlq_ceiling` on a subscription that is currently paused with the matching `pause_reason`, the subscription does NOT auto-resume. The dispatcher publishes a `ceiling_changed` event on the cross-worker channel and the audit_log records the diff, but the subscription stays paused until the admin issues a follow-up PATCH with `status=active`. The PATCH response carries a `hint` field naming the pending follow-up step when the gap is detected. Resume is always an explicit operator decision so a single misclick cannot un-pause a subscription that is still triaging.
+
 ## Filter changes are non-retroactive
 
 When the admin edits the subscription's `subscription_filter` (event_types, warehouse_ids, aggregate_external_id_allowlist), the new filter applies to events the dispatcher selects from now on; the cursor never rewinds. Events that were committed before the PATCH and that match the new filter but did not match the old are not re-delivered. To backfill historical events under the new filter, the operator uses the admin panel's replay-batch endpoint with the matching filter shape.
