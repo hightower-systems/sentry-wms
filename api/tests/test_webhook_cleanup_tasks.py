@@ -107,6 +107,19 @@ def _delivery_exists(db, delivery_id: int) -> bool:
     return row is not None
 
 
+def _impl_session():
+    """#228: the chunked impl calls session.commit() between
+    batches. Tests pass the SQLAlchemy Connection from the
+    _db_transaction fixture directly into the impl, but
+    Connection.commit() would commit the outer test transaction
+    and break the rollback teardown. Construct a Session via
+    db.SessionLocal (rebound by conftest with savepoint-join
+    mode) so each chunk's commit releases an inner savepoint
+    while the outer test transaction stays intact."""
+    import models.database as db_module
+    return db_module.SessionLocal()
+
+
 class TestCleanupWebhookDeliveries:
     def test_deletes_terminal_rows_past_retention(self, _db_transaction):
         db = _db_transaction
@@ -118,7 +131,11 @@ class TestCleanupWebhookDeliveries:
         old_dlq = _seed_delivery(db, sub_id, event_id, "dlq", old)
         fresh_succ = _seed_delivery(db, sub_id, event_id, "succeeded", fresh)
 
-        deleted = _cleanup_webhook_deliveries_impl(db)
+        sess = _impl_session()
+        try:
+            deleted = _cleanup_webhook_deliveries_impl(sess)
+        finally:
+            sess.close()
         assert deleted == 2
         assert not _delivery_exists(db, old_succ)
         assert not _delivery_exists(db, old_dlq)
@@ -157,7 +174,11 @@ class TestCleanupWebhookDeliveries:
             {"sid": sub_id, "eid": event_id, "sa": old},
         ).fetchone()[0]
 
-        deleted = _cleanup_webhook_deliveries_impl(db)
+        sess = _impl_session()
+        try:
+            deleted = _cleanup_webhook_deliveries_impl(sess)
+        finally:
+            sess.close()
         assert deleted == 0
         assert _delivery_exists(db, pending_id)
         assert _delivery_exists(db, in_flight_id)
@@ -174,9 +195,82 @@ class TestCleanupWebhookDeliveries:
         event_id = _seed_event(db)
         old = datetime.now(timezone.utc) - WEBHOOK_DELIVERIES_RETENTION - timedelta(days=1)
         failed_id = _seed_delivery(db, sub_id, event_id, "failed", old)
-        deleted = _cleanup_webhook_deliveries_impl(db)
+        sess = _impl_session()
+        try:
+            deleted = _cleanup_webhook_deliveries_impl(sess)
+        finally:
+            sess.close()
         assert deleted == 0
         assert _delivery_exists(db, failed_id)
+
+    def test_chunked_delete_drains_more_than_one_chunk(self, _db_transaction):
+        """#228: chunked DELETE keeps each transaction short. Seed
+        more rows than the chunk size and verify the impl drains
+        them all over multiple chunks (one COMMIT per chunk)."""
+        db = _db_transaction
+        sub_id = _seed_subscription(db)
+        event_id = _seed_event(db)
+        old = (
+            datetime.now(timezone.utc)
+            - WEBHOOK_DELIVERIES_RETENTION
+            - timedelta(days=1)
+        )
+        # Bulk-seed 25 expired rows; with chunk_size=10 the impl
+        # runs three chunks (10 + 10 + 5).
+        db.execute(
+            text(
+                """
+                INSERT INTO webhook_deliveries
+                    (subscription_id, event_id, attempt_number, status,
+                     scheduled_at, attempted_at, completed_at, secret_generation)
+                SELECT :sid, :eid, 8, 'dlq', :ca, :ca, :ca, 1
+                  FROM generate_series(1, 25)
+                """
+            ),
+            {"sid": sub_id, "eid": event_id, "ca": old},
+        )
+
+        sess = _impl_session()
+        try:
+            deleted = _cleanup_webhook_deliveries_impl(sess, chunk_size=10)
+        finally:
+            sess.close()
+        assert deleted == 25
+        # Confirm none left.
+        remaining = db.execute(
+            text(
+                "SELECT COUNT(*) FROM webhook_deliveries "
+                "WHERE subscription_id = :sid AND status = 'dlq'"
+            ),
+            {"sid": sub_id},
+        ).fetchone()[0]
+        assert remaining == 0
+
+    def test_max_run_s_bounds_compounded_backlog(self, _db_transaction):
+        """#228: a beat misfire backlog cannot compound into a
+        multi-hour cleanup. The impl exits early once the
+        wall-clock cap is hit; the next beat picks up the
+        remainder. Test by setting max_run_s=0 so the impl exits
+        before deleting anything."""
+        db = _db_transaction
+        sub_id = _seed_subscription(db)
+        event_id = _seed_event(db)
+        old = (
+            datetime.now(timezone.utc)
+            - WEBHOOK_DELIVERIES_RETENTION
+            - timedelta(days=1)
+        )
+        _seed_delivery(db, sub_id, event_id, "succeeded", old)
+
+        sess = _impl_session()
+        try:
+            deleted = _cleanup_webhook_deliveries_impl(
+                sess, chunk_size=10, max_run_s=0
+            )
+        finally:
+            sess.close()
+        # Wall-clock cap fired before the first chunk ran.
+        assert deleted == 0
 
 
 def _seed_secret(
