@@ -831,6 +831,93 @@ CREATE TRIGGER tr_wms_tokens_audit_truncate
     FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_truncate();
 
 -- ============================================================
+-- CROSS-SYSTEM MAPPINGS (v1.7.0 Pipe B canonical bridge)
+-- ============================================================
+-- Bidirectional table binding (source_system, source_type, source_id)
+-- to (canonical_type, canonical_id). Each external ID maps to exactly
+-- one canonical entity (UNIQUE on the source side); a single canonical
+-- entity may carry mappings in many source systems (canonical-side
+-- index, not constraint).
+--
+-- The identical DDL lives in db/migrations/038_cross_system_mappings.sql
+-- for deployments created before v1.7.0.
+-- ============================================================
+
+CREATE TABLE cross_system_mappings (
+    mapping_id       BIGSERIAL    PRIMARY KEY,
+    source_system    VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    source_type      VARCHAR(32)  NOT NULL,
+    source_id        VARCHAR(128) NOT NULL,
+    canonical_type   VARCHAR(32)  NOT NULL,
+    canonical_id     UUID         NOT NULL,
+    first_seen_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CHECK (source_type    IN ('sales_order','item','customer','vendor','purchase_order')),
+    CHECK (canonical_type IN ('sales_order','item','customer','vendor','purchase_order'))
+);
+
+CREATE UNIQUE INDEX cross_system_mappings_source_unique
+    ON cross_system_mappings (source_system, source_type, source_id);
+
+CREATE INDEX cross_system_mappings_canonical
+    ON cross_system_mappings (canonical_type, canonical_id);
+
+-- v1.7.0 forensic audit (V-157 pattern, mirrors wms_tokens_audit).
+CREATE TABLE cross_system_mappings_audit (
+    audit_id         BIGSERIAL    PRIMARY KEY,
+    event_type       VARCHAR(16)  NOT NULL,
+    rows_affected    INTEGER,
+    sess_user        TEXT         NOT NULL,
+    curr_user        TEXT         NOT NULL,
+    backend_pid      INTEGER      NOT NULL,
+    application_name TEXT,
+    event_at         TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX cross_system_mappings_audit_event_at
+    ON cross_system_mappings_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION cross_system_mappings_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO cross_system_mappings_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_cross_system_mappings_audit_delete
+    AFTER DELETE ON cross_system_mappings
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION cross_system_mappings_audit_delete();
+
+CREATE OR REPLACE FUNCTION cross_system_mappings_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO cross_system_mappings_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_cross_system_mappings_audit_truncate
+    AFTER TRUNCATE ON cross_system_mappings
+    FOR EACH STATEMENT EXECUTE FUNCTION cross_system_mappings_audit_truncate();
+
+-- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
 -- ============================================================
 -- Per-scan metadata for GET /api/v1/snapshot/inventory. The API tier
