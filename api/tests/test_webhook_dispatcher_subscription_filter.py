@@ -265,7 +265,14 @@ def test_filter_narrows_by_aggregate_external_id_allowlist():
         _delete_events(emitted)
 
 
-def test_malformed_filter_falls_back_to_empty(caplog):
+def test_malformed_filter_fails_closed_auto_pauses(caplog):
+    """#232: a Pydantic-incompatible filter shape USED TO fall
+    open (empty filter, deliver every event). The new fail-closed
+    contract auto-pauses the subscription with
+    pause_reason='malformed_filter' and refuses to deliver until
+    the operator fixes the column. This test pins the new
+    behavior in the subscription_filter test module so a future
+    regression to fail-open surfaces here too."""
     sub_id, _, cleanup = _make_subscription()
     emitted = []
     try:
@@ -278,17 +285,43 @@ def test_malformed_filter_falls_back_to_empty(caplog):
 
         client = StubHttpClient(responses=[200])
         conn = _conn()
-        with caplog.at_level("WARNING", logger="webhook_dispatcher.dispatch"):
+        with caplog.at_level("ERROR", logger="webhook_dispatcher.dispatch"):
             try:
                 outcome = dispatch_module.deliver_one(conn, sub_id, client)
             finally:
                 conn.close()
-        assert outcome is not None
-        assert outcome.event_id == e1
+        # No event delivered; subscription is now paused.
+        assert outcome is None
+        assert client.calls == []
         assert any(
-            "unparseable subscription_filter" in rec.message
+            "auto-pausing" in rec.message
+            and "malformed_filter" in rec.message
             for rec in caplog.records
         )
+        # Subscription row reflects the auto-pause.
+        c = _conn()
+        c.autocommit = True
+        cur = c.cursor()
+        cur.execute(
+            "SELECT status, pause_reason FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        status, pause_reason = cur.fetchone()
+        c.close()
+        assert status == "paused"
+        assert pause_reason == "malformed_filter"
     finally:
+        # Audit_log row from the auto-pause; cleanup so the row
+        # does not leak into the next test's view.
+        cleanup_conn = _conn()
+        cleanup_conn.autocommit = True
+        cleanup_conn.cursor().execute(
+            "DELETE FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
+            "  AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        cleanup_conn.close()
         cleanup()
         _delete_events(emitted)

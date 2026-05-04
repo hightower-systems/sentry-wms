@@ -371,7 +371,19 @@ def _auto_pause_for_malformed_filter(
     + row_hash automatically.
     """
     sub_id = str(subscription.get("subscription_id"))
-    parse_error_str = f"{type(exc).__name__}: {exc}"[:512]
+    # #232: Pydantic ValidationError's str() is multi-line. The
+    # audit_log_chain_hash trigger casts ``details::text || '|' ||
+    # ... :: bytea`` (V-025 tamper-resistance hash); the JSONB
+    # serialization of a multi-line string escapes newlines as
+    # ``\n`` literals, and bytea's escape-format parser rejects
+    # ``\`` followed by a non-octal-digit, so the INSERT raises
+    # InvalidTextRepresentation. Collapse to a single line and
+    # strip backslashes so the audit row stores a sanitized
+    # operator-readable summary.
+    raw_error = f"{type(exc).__name__}: {exc}"
+    parse_error_str = (
+        raw_error.replace("\\", "/").replace("\n", " ").replace("\r", " ")
+    )[:512]
     cur.execute(
         """
         UPDATE webhook_subscriptions
