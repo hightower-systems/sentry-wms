@@ -87,7 +87,7 @@ from queue import Empty, Queue
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 
 from . import envelope as envelope_module
 from . import http_client as http_client_module
@@ -346,29 +346,127 @@ def _select_next_pending(cur, subscription_id: str) -> Optional[Mapping[str, Any
     return cur.fetchone()
 
 
+def _auto_pause_for_malformed_filter(
+    cur, subscription: Mapping[str, Any], exc: Exception
+) -> None:
+    """#232: pause the subscription with
+    ``pause_reason='malformed_filter'`` and write an audit_log row
+    capturing the parse failure. Idempotent: a follow-up dispatch
+    with the same bad row will hit the early-return at deliver_one
+    on status!='active', so the audit_log only gets one row per
+    transition. The conditional UPDATE WHERE status='active' makes
+    the same call from a peer dispatcher a no-op too.
+
+    Commits the auto-pause + audit row directly because deliver_one
+    rolls back its open transaction when ``_select_next_fresh_event``
+    returns None; an UPDATE that lives only in the rolled-back
+    snapshot would never persist. The helper's commit closes that
+    window while still letting deliver_one's rollback clear any
+    other unrelated SELECTs in the same transaction.
+
+    Uses raw psycopg2 cursor.execute (not write_audit_log) because
+    the dispatcher's connection is a psycopg2 connection, not a
+    SQLAlchemy session; the audit_log INSERT shape is small enough
+    to inline. The hash-chain trigger on audit_log fills prev_hash
+    + row_hash automatically.
+    """
+    sub_id = str(subscription.get("subscription_id"))
+    # #232: Pydantic ValidationError's str() is multi-line. The
+    # audit_log_chain_hash trigger casts ``details::text || '|' ||
+    # ... :: bytea`` (V-025 tamper-resistance hash); the JSONB
+    # serialization of a multi-line string escapes newlines as
+    # ``\n`` literals, and bytea's escape-format parser rejects
+    # ``\`` followed by a non-octal-digit, so the INSERT raises
+    # InvalidTextRepresentation. Collapse to a single line and
+    # strip backslashes so the audit row stores a sanitized
+    # operator-readable summary.
+    raw_error = f"{type(exc).__name__}: {exc}"
+    parse_error_str = (
+        raw_error.replace("\\", "/").replace("\n", " ").replace("\r", " ")
+    )[:512]
+    cur.execute(
+        """
+        UPDATE webhook_subscriptions
+           SET status = 'paused',
+               pause_reason = 'malformed_filter',
+               updated_at = NOW()
+         WHERE subscription_id = %s
+           AND status = 'active'
+        """,
+        (sub_id,),
+    )
+    if cur.rowcount > 0:
+        LOGGER.error(
+            "subscription %s has unparseable subscription_filter; "
+            "auto-pausing with pause_reason='malformed_filter'. "
+            "Fix the subscription_filter column via the admin "
+            "endpoint and PATCH status='active' to resume. "
+            "parse_error=%s",
+            sub_id,
+            parse_error_str,
+        )
+        # #232: psycopg2.extras.Json adapts the dict through
+        # psycopg2's serializer so the CI single-serialization
+        # lint that forbids the stdlib JSON encoder call site in
+        # dispatch.py stays clean (the lint regex matches the
+        # literal substring). The adapter produces the same wire
+        # bytes a SQL CAST '...'::jsonb would emit; the audit_log
+        # details column is JSONB so the cast happens server-side.
+        cur.execute(
+            """
+            INSERT INTO audit_log
+                (action_type, entity_type, entity_id, user_id,
+                 warehouse_id, details)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                "WEBHOOK_SUBSCRIPTION_AUTO_PAUSE",
+                "WEBHOOK_SUBSCRIPTION",
+                0,
+                "system",
+                None,
+                Json(
+                    {
+                        "subscription_id": sub_id,
+                        "pause_reason": "malformed_filter",
+                        "parse_error": parse_error_str,
+                    }
+                ),
+            ),
+        )
+        # Persist the auto-pause + audit row. deliver_one rolls
+        # back when fresh is None (which we are about to return),
+        # so without this commit the UPDATE evaporates and the
+        # next cycle re-runs the parse, re-pauses, re-audits in
+        # an infinite loop.
+        cur.connection.commit()
+
+
 def _select_next_fresh_event(
     cur, subscription: Mapping[str, Any]
 ) -> Optional[Mapping[str, Any]]:
     """Find the next integration_events row past the subscription
     cursor that matches the subscription filter and has cleared
-    the visible-at gate."""
+    the visible-at gate.
+
+    #232: a Pydantic parse failure on the subscription_filter
+    JSONB row USED TO fall open (empty filter, matches every
+    event). That converted an authorization-shaped column from
+    "deliver only the operator's documented scope" to "deliver
+    everything" the moment the row went bad -- a fail-OPEN
+    posture for an authz column. Now fail closed: auto-pause
+    the subscription with pause_reason='malformed_filter',
+    write an audit_log row capturing the parse error, return
+    None so deliver_one backs off without selecting any event.
+    The operator fixes the column via PATCH and explicitly
+    resumes via status='active'.
+    """
     raw_filter = subscription.get("subscription_filter")
     try:
         parsed_filter = subscription_filter_module.parse(raw_filter)
     except Exception as exc:  # noqa: BLE001 -- pydantic + json both possible
-        # A legacy bad row surfaces here as a recoverable parse
-        # error. Fall back to the empty filter so the dispatcher
-        # keeps making forward progress; the operator runbook
-        # covers the WARN log -- the subscription stays active and
-        # the bad column gets fixed via admin update.
-        LOGGER.warning(
-            "subscription %s has unparseable subscription_filter; "
-            "falling back to empty filter (matches every event). "
-            "Fix the column via the admin endpoint. parse error: %s",
-            subscription.get("subscription_id"),
-            exc,
-        )
-        parsed_filter = subscription_filter_module.SubscriptionFilter()
+        _auto_pause_for_malformed_filter(cur, subscription, exc)
+        return None
     filter_clause, filter_params = _build_filter_clauses(parsed_filter)
 
     cur.execute(
@@ -529,11 +627,29 @@ def deliver_one(
             terminal=False,
         )
 
+    # #225: load_secret_for_signing acquires FOR SHARE on the
+    # webhook_secrets row. We must commit BEFORE the HTTP send so
+    # the rotation wait is bounded by sign duration (microseconds)
+    # rather than the HTTP round-trip (up to 10s). Stamp
+    # secret_generation on the delivery row from the row actually
+    # read (not the hardcoded placeholder at INSERT time) so the
+    # wire header and the audit row both reflect the truth -- a
+    # strict-generation consumer that survived rotation cannot
+    # get out of sync.
     secret = signing.load_secret_for_signing(cur, subscription_id)
     signed = signing.sign_request(
         envelope_module.build_envelope(_row_to_event_envelope(event_row)),
         secret,
     )
+    cur.execute(
+        """
+        UPDATE webhook_deliveries
+           SET secret_generation = %s
+         WHERE delivery_id = %s
+        """,
+        (signed.secret_generation, pending["delivery_id"]),
+    )
+    conn.commit()
 
     started = time.monotonic()
     http_status: Optional[int] = None
@@ -554,11 +670,15 @@ def deliver_one(
         http_status = response.status_code
         error_kind = response.error_kind
         error_detail = response.error_detail
-    except AssertionError:
+    except (AssertionError, http_client_module.SingleSerializationViolation):
         # Single-serialization invariant fired. Re-raise so the
         # test suite surfaces it loudly; production code paths
         # never hit this because the body is constructed exactly
-        # once via sign_request and never transformed.
+        # once via sign_request and never transformed. AssertionError
+        # is retained for forward / backward compat with any test
+        # that drives the old shape; the production raise is
+        # SingleSerializationViolation (#221: assert was strippable
+        # under python -O).
         raise
     except Exception as exc:  # noqa: BLE001
         error_kind, error_detail = _classify_request_exception(exc)
@@ -880,7 +1000,10 @@ class SubscriptionWorker(threading.Thread):
                             redis_url=self.redis_url,
                             acquire_rate_token=self._acquire_rate_token,
                         )
-                    except AssertionError:
+                    except (
+                        AssertionError,
+                        http_client_module.SingleSerializationViolation,
+                    ):
                         raise
                     except psycopg2.InterfaceError:
                         # Eviction closed the connection mid-

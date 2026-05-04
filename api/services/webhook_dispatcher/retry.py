@@ -1,17 +1,26 @@
-"""Retry schedule + terminal-attempt classification (plan §2.4).
+"""Retry schedule + terminal-attempt classification.
 
 Hard-coded eight-slot exponential schedule. Cumulative window
-between attempt 1 and the 8th-attempt DLQ flip is ~14.6h (close
-to the plan's documented ~15h). An event that fails every
+between attempt 1 and the 8th-attempt DLQ flip is ~14.6h
+(close to the documented ~15h). An event that fails every
 attempt sits in ``webhook_deliveries`` for that window before
 terminating in ``dlq`` and the cursor advancing.
 
-Plan §2.4 prescribes no jitter for v1.6.0 (one consumer, one
-dispatcher). When v1.9 introduces per-connector dispatcher
-pools, jitter becomes the next lever before pool isolation.
+#234 (V-316): each retry slot carries a +/-10% jitter applied
+per attempt. Without jitter, multiple subscriptions whose first
+delivery to the same consumer URL fails at the same minute
+retry at the same minute every retry slot, giving the consumer
+a synchronized retry storm indistinguishable from a coordinated
+DoS. The cumulative window stays inside the documented ~15h
+budget (worst case +10% on every slot is still under ~17h, so
+the bound is bounded). Per-attempt jitter does NOT decorrelate
+adjacent retries on the SAME delivery (one delivery is one
+fan-in to one consumer), but it does decorrelate retries
+ACROSS deliveries that share the same nominal slot.
+
 The schedule itself is deliberately public: a consumer that
-needs to budget its own incident response can plan against
-the documented cumulative window.
+needs to budget its own incident response can plan against the
+documented cumulative window.
 
 Schema invariant pairs with this module: migration 030 (#166)
 constrains ``webhook_deliveries.attempt_number BETWEEN 1 AND
@@ -20,31 +29,26 @@ would surface as a CHECK violation at INSERT time -- the
 bottom rung that catches the slip before the database is
 contaminated with out-of-band rows.
 
-Indexing convention (the part the v1.6.0 D6 review caught):
+Indexing convention:
 
   * Attempt 1 fires at NOW() with no delay (D5 INSERTs the
     initial pending row at scheduled_at=NOW()).
   * For attempts 2..8, the delay BEFORE the attempt fires is
-    ``RETRY_SCHEDULE_SECONDS[next_attempt_number - 1]``.
-  * Slot 0 (1 second) is plan-prescribed but currently unused;
-    it represents a reserved "dispatcher startup latency
-    budget" that v1.6.0 does not consume because the visible_at
-    gate (2s) already covers any commit-vs-poll race. Keeping
-    the slot in the public tuple preserves byte-for-byte
-    fidelity with the plan's §2.4 vector.
-  * Slot 7 (12 hours) is the wait BEFORE attempt 8. Without
-    this slot the cumulative retry window collapses from ~15h
-    to ~2.6h, which would silently shrink consumers' incident-
-    response budget.
+    ``RETRY_SCHEDULE_SECONDS[next_attempt_number - 1]``
+    multiplied by a per-call jitter factor in [0.9, 1.1].
+  * Slot 0 (1 second) is reserved; v1.6.0 does not consume it
+    because the visible_at gate (2s) covers commit-vs-poll
+    races.
+  * Slot 7 (12 hours) is the wait BEFORE attempt 8.
 """
 
+import secrets
 from typing import Sequence
 
 
-# Plan §2.4 hard-coded schedule, 8 slots. retry_delay(N) for
-# N in [2, 8] returns RETRY_SCHEDULE_SECONDS[N-1] (slots 1..7
-# are the delays BEFORE attempts 2..8). Slot 0 is reserved per
-# the docstring above.
+# Hard-coded schedule, 8 slots. retry_delay(N) for N in [2, 8]
+# returns RETRY_SCHEDULE_SECONDS[N-1] times a per-call jitter
+# factor (slots 1..7 are the delays BEFORE attempts 2..8).
 RETRY_SCHEDULE_SECONDS: Sequence[int] = (
     1,           # slot 0: reserved (attempt 1 fires at NOW())
     4,           # slot 1: delay before attempt 2 (4 seconds)
@@ -58,19 +62,41 @@ RETRY_SCHEDULE_SECONDS: Sequence[int] = (
 
 MAX_ATTEMPTS = 8
 
+# #234 (V-316): jitter band for per-attempt randomization.
+# +/-10% keeps the cumulative window inside the documented ~15h
+# budget (worst case 1.1 ** 7 * sum(slots) is still under 17h).
+# Exposed as a constant so the test can pin the bounds and a
+# future expansion to broader jitter is a one-line change.
+_JITTER_MIN = 0.9
+_JITTER_MAX = 1.1
+
+# secrets.SystemRandom uses os.urandom under the hood, giving
+# non-predictability across processes (a deterministic random.Random
+# seeded from time would let a single observation predict subsequent
+# slot offsets). Per-process singleton so the seeding cost is paid
+# once at import.
+_JITTER_RNG = secrets.SystemRandom()
+
 
 def retry_delay(next_attempt_number: int) -> int:
-    """Return the seconds to wait before ``next_attempt_number``.
+    """Return the seconds to wait before ``next_attempt_number``,
+    with +/-10% jitter applied per call (#234).
 
     ``next_attempt_number`` is the attempt about to be scheduled
     (the value the dispatcher will INSERT into the new
     ``webhook_deliveries`` row's ``attempt_number`` column). For
     an event whose attempt 1 just failed, ``next_attempt_number``
-    is 2 and this returns 4 (seconds, plan §2.4 second slot).
+    is 2 and this returns ~4 seconds (the second-slot value
+    perturbed by [0.9, 1.1]).
 
     Raises ``ValueError`` for values outside [2, 8] -- attempt 1
     is scheduled at NOW() at emit time (no retry delay), and a
     9th attempt does not exist (the 8th is terminal).
+
+    The minimum returned value is 1 second so a chance jitter
+    on the slot-1 (4s) value cannot land below the dispatcher's
+    poll cadence. A future schedule with sub-second slots would
+    need to revisit the floor.
     """
     if next_attempt_number < 2 or next_attempt_number > MAX_ATTEMPTS:
         raise ValueError(
@@ -78,7 +104,15 @@ def retry_delay(next_attempt_number: int) -> int:
             f"got {next_attempt_number}. Attempt 1 fires at NOW() with "
             f"no delay; the 8th attempt is terminal (DLQ on failure)."
         )
-    return RETRY_SCHEDULE_SECONDS[next_attempt_number - 1]
+    base = RETRY_SCHEDULE_SECONDS[next_attempt_number - 1]
+    if base == 0:
+        # Preserve the zero-delay shape used by tests that
+        # monkey-patch RETRY_SCHEDULE_SECONDS to ``(0,) * 8`` to
+        # avoid waiting through the real schedule. Production
+        # slots are never 0; this branch is test-fixture support.
+        return 0
+    jitter_factor = _JITTER_RNG.uniform(_JITTER_MIN, _JITTER_MAX)
+    return max(1, int(base * jitter_factor))
 
 
 def is_terminal_attempt(attempt_number: int) -> bool:

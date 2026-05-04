@@ -1,7 +1,7 @@
-"""Schema-level tests for migration 032 (v1.6.0 #167).
+"""Schema-level tests for migrations 032 + 035 (v1.6.0 #167; v1.6.1 #235).
 
-Locks the forensic instrumentation on webhook_subscriptions and
-webhook_secrets:
+Locks the forensic instrumentation on webhook_subscriptions,
+webhook_secrets, and webhook_deliveries:
 
   * Both audit tables exist with the V-157 column shape.
   * Both have a (event_at DESC) index for "most recent forensic
@@ -78,7 +78,11 @@ def _max_audit_id(cur, table):
 class TestWebhookAuditTablesShape:
     @pytest.mark.parametrize(
         "table",
-        ["webhook_subscriptions_audit", "webhook_secrets_audit"],
+        [
+            "webhook_subscriptions_audit",
+            "webhook_secrets_audit",
+            "webhook_deliveries_audit",
+        ],
     )
     def test_columns(self, table):
         conn = _make_conn()
@@ -111,6 +115,7 @@ class TestWebhookAuditTablesShape:
         [
             ("webhook_subscriptions_audit", "webhook_subscriptions_audit_event_at"),
             ("webhook_secrets_audit", "webhook_secrets_audit_event_at"),
+            ("webhook_deliveries_audit", "webhook_deliveries_audit_event_at"),
         ],
     )
     def test_event_at_descending_index(self, table, index):
@@ -160,6 +165,18 @@ class TestWebhookAuditTriggersRegistered:
                 "webhook_secrets",
                 "TRUNCATE",
                 "webhook_secrets_audit_truncate",
+            ),
+            (
+                "tr_webhook_deliveries_audit_delete",
+                "webhook_deliveries",
+                "DELETE",
+                "webhook_deliveries_audit_delete",
+            ),
+            (
+                "tr_webhook_deliveries_audit_truncate",
+                "webhook_deliveries",
+                "TRUNCATE",
+                "webhook_deliveries_audit_truncate",
             ),
         ],
     )
@@ -382,6 +399,209 @@ class TestWebhookSecretsAuditFiring:
             assert event_type == "TRUNCATE"
             assert rows_affected is None
             conn.rollback()
+        finally:
+            conn.close()
+            cleanup()
+
+
+class TestWebhookDeliveriesAuditFiring:
+    """#235: webhook_deliveries DELETE / TRUNCATE produce
+    statement-level forensic rows in webhook_deliveries_audit.
+    Mirrors the migration 032 shape so a privileged-role error
+    or compromised cleanup-task role cannot mass-DELETE the
+    per-attempt history with no forensic surface."""
+
+    def _make_subscription_with_deliveries(self, count=3):
+        """Insert a subscription, an integration_events row, and
+        ``count`` succeeded webhook_deliveries rows referencing
+        the same event_id. Returns (sub_id, cleanup)."""
+        conn = _make_conn()
+        conn.autocommit = True
+        cur = conn.cursor()
+        connector_id = _ensure_connector(
+            cur, connector_id="test-conn-035-deliveries"
+        )
+        cur.execute(
+            """
+            INSERT INTO webhook_subscriptions (connector_id, display_name, delivery_url)
+            VALUES (%s, %s, %s)
+            RETURNING subscription_id
+            """,
+            (
+                connector_id,
+                "deliveries audit fire",
+                "https://example.invalid/audit-deliveries",
+            ),
+        )
+        sub_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            INSERT INTO integration_events
+                (event_type, event_version, aggregate_type, aggregate_id,
+                 aggregate_external_id, warehouse_id, source_txn_id, payload)
+            VALUES ('test.audit', 1, 'agg', %s, %s, 1, %s, '{}'::jsonb)
+            RETURNING event_id
+            """,
+            (
+                abs(hash(uuid.uuid4())) % (10**9),
+                str(uuid.uuid4()),
+                str(uuid.uuid4()),
+            ),
+        )
+        event_id = cur.fetchone()[0]
+        for _ in range(count):
+            cur.execute(
+                "INSERT INTO webhook_deliveries "
+                "(subscription_id, event_id, attempt_number, status, "
+                " scheduled_at, attempted_at, completed_at, secret_generation) "
+                "VALUES (%s, %s, 1, 'succeeded', NOW(), NOW(), NOW(), 1)",
+                (str(sub_id), event_id),
+            )
+        conn.close()
+
+        def cleanup():
+            c = _make_conn()
+            c.autocommit = True
+            cc = c.cursor()
+            cc.execute(
+                "DELETE FROM webhook_deliveries WHERE subscription_id = %s",
+                (str(sub_id),),
+            )
+            cc.execute(
+                "DELETE FROM webhook_subscriptions WHERE subscription_id = %s",
+                (str(sub_id),),
+            )
+            cc.execute(
+                "DELETE FROM integration_events WHERE event_id = %s",
+                (event_id,),
+            )
+            c.close()
+
+        return sub_id, cleanup
+
+    def test_multi_row_delete_writes_one_audit_row(self):
+        sub_id, cleanup = self._make_subscription_with_deliveries(count=3)
+
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            baseline = _max_audit_id(cur, "webhook_deliveries_audit")
+
+            cur.execute(
+                "DELETE FROM webhook_deliveries WHERE subscription_id = %s",
+                (str(sub_id),),
+            )
+            conn.commit()
+
+            rows = _audit_rows_since(cur, "webhook_deliveries_audit", baseline)
+            assert len(rows) == 1, (
+                "statement-level trigger must produce exactly one audit "
+                "row for a multi-row DELETE on webhook_deliveries; got "
+                + str(len(rows))
+            )
+            event_type, rows_affected, sess_user, curr_user, backend_pid, app, event_at = rows[0]
+            assert event_type == "DELETE"
+            assert rows_affected == 3
+            assert sess_user and curr_user
+            assert backend_pid > 0
+            assert event_at is not None
+        finally:
+            conn.close()
+            cleanup()
+
+    def test_chunked_delete_writes_one_audit_row_per_chunk(self):
+        """#228: cleanup_webhook_deliveries chunks DELETEs with
+        COMMIT between batches. Each chunk lands one audit row;
+        the test simulates two chunks to confirm the per-chunk
+        forensic surface stays bounded (not per-row)."""
+        sub_id, cleanup = self._make_subscription_with_deliveries(count=4)
+
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            baseline = _max_audit_id(cur, "webhook_deliveries_audit")
+
+            # Two LIMITed DELETEs to simulate the chunked beat path.
+            for _ in range(2):
+                cur.execute(
+                    """
+                    DELETE FROM webhook_deliveries
+                     WHERE delivery_id IN (
+                         SELECT delivery_id FROM webhook_deliveries
+                          WHERE subscription_id = %s
+                          ORDER BY delivery_id
+                          LIMIT 2
+                     )
+                    """,
+                    (str(sub_id),),
+                )
+                conn.commit()
+
+            rows = _audit_rows_since(cur, "webhook_deliveries_audit", baseline)
+            assert len(rows) == 2, (
+                "two chunked DELETEs must produce two audit rows; "
+                "the cleanup beat task's bounded forensic surface "
+                "depends on per-chunk firing"
+            )
+            for r in rows:
+                assert r[0] == "DELETE"
+                assert r[1] == 2  # rows_affected per chunk
+        finally:
+            conn.close()
+            cleanup()
+
+    def test_truncate_writes_audit_row_with_null_rows_affected(self):
+        sub_id, cleanup = self._make_subscription_with_deliveries(count=1)
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            baseline = _max_audit_id(cur, "webhook_deliveries_audit")
+            try:
+                cur.execute("TRUNCATE webhook_deliveries")
+            except psycopg2.errors.InsufficientPrivilege:
+                pytest.skip("DB role lacks TRUNCATE privilege; skipping")
+
+            rows = _audit_rows_since(cur, "webhook_deliveries_audit", baseline)
+            assert len(rows) == 1
+            event_type, rows_affected, *_ = rows[0]
+            assert event_type == "TRUNCATE"
+            assert rows_affected is None, (
+                "TRUNCATE does not expose a transition table; "
+                "rows_affected must be NULL so investigators do not "
+                "assume a count"
+            )
+            conn.rollback()  # do not actually wipe the dev DB
+        finally:
+            conn.close()
+            cleanup()
+
+    def test_insert_and_update_dont_fire_audit(self):
+        """The webhook_deliveries triggers are bound to DELETE
+        and TRUNCATE only; the dispatcher's hot-path INSERTs and
+        per-attempt UPDATEs must NOT inflate the audit table."""
+        sub_id, cleanup = self._make_subscription_with_deliveries(count=1)
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            baseline = _max_audit_id(cur, "webhook_deliveries_audit")
+
+            # UPDATE the existing row.
+            cur.execute(
+                "UPDATE webhook_deliveries "
+                "   SET http_status = 200 "
+                " WHERE subscription_id = %s",
+                (str(sub_id),),
+            )
+            conn.commit()
+
+            assert (
+                _max_audit_id(cur, "webhook_deliveries_audit") == baseline
+            ), (
+                "UPDATE on webhook_deliveries must not write to "
+                "webhook_deliveries_audit; the dispatcher updates "
+                "rows on every attempt and audit noise would drown "
+                "out a real DELETE event"
+            )
         finally:
             conn.close()
             cleanup()

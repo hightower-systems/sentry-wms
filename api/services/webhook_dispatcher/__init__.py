@@ -130,10 +130,37 @@ class WebhookDispatcher:
                 ),
             )
             self._wake.start()
+            # #237: install an HttpClient factory that pulls
+            # the wall-clock + per-op timeouts from env on each
+            # worker-spin-up. The factory closes over the
+            # validated values (env_validator already gated boot
+            # on connect + read <= timeout) so each per-worker
+            # HttpClient gets the same shape without re-checking
+            # the inequality at construction time.
+            timeout_s = (
+                env_validator.int_var("DISPATCHER_HTTP_TIMEOUT_MS") / 1000.0
+            )
+            connect_timeout_s = (
+                env_validator.int_var("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS")
+                / 1000.0
+            )
+            read_timeout_s = (
+                env_validator.int_var("DISPATCHER_HTTP_READ_TIMEOUT_MS")
+                / 1000.0
+            )
+
+            def _http_client_factory():
+                return dispatch_module.HttpClient(
+                    timeout_s=timeout_s,
+                    connect_timeout_s=connect_timeout_s,
+                    read_timeout_s=read_timeout_s,
+                )
+
             self._pool = dispatch_module.SubscriptionWorkerPool(
                 database_url=database_url,
                 wake_queue=self._wake.queue,
                 redis_url=os.environ.get("REDIS_URL"),
+                http_client_factory=_http_client_factory,
             )
             self._pool.start()
             LOGGER.info(

@@ -345,6 +345,41 @@ class TestSecretMaterialDoesNotLeak:
         with pytest.raises(TypeError):
             signing.SecretMaterial("string-not-bytes", generation=1)  # type: ignore
 
+    def test_pickle_dumps_raises(self):
+        """#220: pickle of a __slots__-only class default-serializes
+        the slot values, leaking _plaintext into the stream. The
+        wrapper refuses pickle on every protocol."""
+        import pickle
+
+        plaintext = b"super-duper-secret-key-bytes-32!"
+        secret = signing.SecretMaterial(plaintext, generation=1)
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            with pytest.raises(TypeError) as exc_info:
+                pickle.dumps(secret, protocol=protocol)
+            assert "not picklable" in str(exc_info.value)
+            assert "bytes(secret)" in str(exc_info.value)
+
+    def test_copy_deepcopy_raises(self):
+        """copy.deepcopy uses the same __reduce_ex__ path the
+        pickle module does; the refusal therefore covers it too."""
+        import copy
+
+        secret = signing.SecretMaterial(b"\x42" * 32, generation=1)
+        with pytest.raises(TypeError):
+            copy.deepcopy(secret)
+        with pytest.raises(TypeError):
+            copy.copy(secret)
+
+    def test_getstate_setstate_raise(self):
+        """Hand-rolled getstate / setstate paths (some serialization
+        libraries use them directly without going through pickle)
+        also refuse, so the breach surface stays uniform."""
+        secret = signing.SecretMaterial(b"\x42" * 32, generation=1)
+        with pytest.raises(TypeError):
+            secret.__getstate__()
+        with pytest.raises(TypeError):
+            secret.__setstate__({"_plaintext": b"x", "generation": 1})
+
 
 # ----------------------------------------------------------------------
 # DB integration: load_secret_for_signing + load_all_active_secrets
@@ -475,6 +510,70 @@ class TestLoadSecretForSigning:
             secrets = signing.load_all_active_secrets(cur, self.sub_id)
             assert len(secrets) == 1
             assert secrets[0].generation == 1
+        finally:
+            conn.close()
+
+    def test_load_acquires_for_share_lock(self):
+        """#225: the dispatcher's SELECT must hold a FOR SHARE row
+        lock on the gen=1 webhook_secrets row so the admin's
+        rotation transaction (UPDATE/DELETE/INSERT on the same
+        rows) blocks until sign + stamp commit. Verified by
+        inspecting pg_locks while the dispatcher's transaction
+        is open."""
+        # Open a connection in non-autocommit mode and run the
+        # signer's load. The lock must be visible in pg_locks
+        # before we commit.
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            secret = signing.load_secret_for_signing(cur, self.sub_id)
+            assert secret.generation == 1
+
+            # pg_locks records row-level locks via mode='ShareLock'
+            # on the relation when FOR SHARE is in effect. The
+            # webhook_secrets row's relation OID exposes the lock.
+            inspector = _make_conn()
+            try:
+                ic = inspector.cursor()
+                ic.execute(
+                    """
+                    SELECT 1 FROM pg_locks l
+                      JOIN pg_class c ON c.oid = l.relation
+                     WHERE c.relname = 'webhook_secrets'
+                       AND l.mode IN ('RowShareLock', 'ShareLock', 'ShareUpdateExclusiveLock')
+                       AND l.granted = TRUE
+                       AND l.pid = %s
+                    """,
+                    (conn.info.backend_pid,),
+                )
+                assert ic.fetchone() is not None, (
+                    "load_secret_for_signing must take a FOR SHARE lock so "
+                    "rotation cannot demote the row mid-sign"
+                )
+            finally:
+                inspector.close()
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_load_returns_generation_from_row_not_hardcoded(self):
+        """#225: the SecretMaterial's generation comes from the
+        row's actual generation column. The dispatcher stamps that
+        value on the wire header; if the loader hardcoded 1, a
+        future change to sign with gen=2 would silently produce a
+        mismatched header."""
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            secret = signing.load_secret_for_signing(cur, self.sub_id)
+            # Confirm generation came from the row, not a constant.
+            cur.execute(
+                "SELECT generation FROM webhook_secrets "
+                "WHERE subscription_id = %s AND generation = 1",
+                (str(self.sub_id),),
+            )
+            row = cur.fetchone()
+            assert secret.generation == int(row[0])
         finally:
             conn.close()
 

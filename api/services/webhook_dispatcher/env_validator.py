@@ -28,6 +28,14 @@ LOGGER = logging.getLogger("webhook_dispatcher.env_validator")
 # (var_name, lower_bound, upper_bound, default_value)
 _RANGE_VARS = [
     ("DISPATCHER_HTTP_TIMEOUT_MS", 1000, 60000, 10000),
+    # #237: connect + read are per-operation caps requests passes
+    # through to urllib3. The wall-clock cap above fires first
+    # when a consumer drip-feeds bytes within the per-op budget;
+    # the per-op caps still matter for connect + send phases
+    # before the body read starts. Defaults: 5s connect + 8s read,
+    # both inside the 10s wall-clock cap.
+    ("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", 100, 60000, 5000),
+    ("DISPATCHER_HTTP_READ_TIMEOUT_MS", 100, 60000, 8000),
     ("DISPATCHER_FALLBACK_POLL_MS", 500, 10000, 2000),
     ("DISPATCHER_SHUTDOWN_DRAIN_S", 1, 300, 30),
     ("DISPATCHER_MAX_CONCURRENT_POSTS", 1, 100, 16),
@@ -52,6 +60,21 @@ _REQUIRED_VARS_WHEN_ENABLED = [
         "leaves peer workers on stale subscription state. Set REDIS_URL "
         "in .env (or set DISPATCHER_ENABLED=false to use the kill "
         "switch). Same authenticated URL shape as CELERY_BROKER_URL.",
+    ),
+    # #227: HMAC key for the cross-worker pubsub envelope. An unset
+    # or trivial value lets a Redis-side attacker forge subscription_event
+    # messages (eviction storms, spammed secret_rotated). The full weak-
+    # key validation (placeholder shape, length floor) lives in
+    # pubsub_signing.load_key; this guard fires fast at boot so the
+    # daemon refuses to come up unconfigured.
+    (
+        "SENTRY_PUBSUB_HMAC_KEY",
+        "SENTRY_PUBSUB_HMAC_KEY is required when the dispatcher is "
+        "enabled. The webhook_subscription_events Redis channel is "
+        "HMAC-signed (#227); an unset key would let a Redis-side "
+        "attacker forge eviction or secret_rotated messages. "
+        "Generate with: python -c \"import secrets; "
+        "print(secrets.token_hex(32))\"",
     ),
 ]
 
@@ -161,6 +184,26 @@ def _validate_combinations() -> None:
             "in production is operator error."
         )
 
+    # #237: each per-op cap must fit inside the wall-clock cap so
+    # the per-op timeouts are not dead defense. A configuration
+    # where READ alone exceeds TIMEOUT means the wall-clock fires
+    # first on every legitimate slow consumer and the per-op cap
+    # is unreachable. Refuse boot when CONNECT or READ exceeds
+    # TIMEOUT individually; the SUM constraint is intentionally
+    # weaker because connect and read run in different phases of
+    # the roundtrip and the wall-clock cap dominates anyway.
+    timeout_ms = int_var("DISPATCHER_HTTP_TIMEOUT_MS")
+    connect_ms = int_var("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS")
+    read_ms = int_var("DISPATCHER_HTTP_READ_TIMEOUT_MS")
+    if connect_ms > timeout_ms or read_ms > timeout_ms:
+        raise DispatcherEnvError(
+            "refusing to boot: each of DISPATCHER_HTTP_CONNECT_TIMEOUT_MS "
+            f"({connect_ms}) and DISPATCHER_HTTP_READ_TIMEOUT_MS "
+            f"({read_ms}) must be <= DISPATCHER_HTTP_TIMEOUT_MS "
+            f"({timeout_ms}). The wall-clock cap dominates; a per-op "
+            "cap larger than it is unreachable defense (#237)."
+        )
+
     # Soft warning: HTTPS-only is a hard requirement in production but
     # an opt-out is allowed for emergency rollouts. Log CRITICAL on
     # every boot so the acknowledgement stays visible in
@@ -196,6 +239,16 @@ def _validate_required() -> None:
             raise DispatcherEnvError(
                 f"refusing to boot: {name} is unset. {message}"
             )
+    # #227: pubsub HMAC key has additional shape requirements
+    # (placeholder rejection, byte-length floor) that pubsub_signing
+    # owns. Surface its weak-key error here as a DispatcherEnvError
+    # so the daemon entry's catch-and-exit path is uniform.
+    from . import pubsub_signing  # noqa: WPS433 -- localised import
+
+    try:
+        pubsub_signing.load_key()
+    except pubsub_signing.PubsubKeyConfigError as exc:
+        raise DispatcherEnvError(f"refusing to boot: {exc}")
 
 
 def validate_or_die() -> None:

@@ -31,12 +31,19 @@ os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432
 os.environ.setdefault("JWT_SECRET", "NEVER_USE_THIS_IN_PRODUCTION_32!")
 os.environ.setdefault("SENTRY_ENCRYPTION_KEY", "t5hPIEVn_O41qfiMqAiPEnwzQh68o3Es46YfSOBvEK8=")
 os.environ.setdefault("SENTRY_TOKEN_PEPPER", "NEVER_USE_THIS_PEPPER_IN_PRODUCTION")
+# #227: pubsub HMAC key. Tests that exercise weak-key rejection
+# clear / mutate this at the test level.
+os.environ.setdefault(
+    "SENTRY_PUBSUB_HMAC_KEY",
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import psycopg2
 import pytest
 
+from services.webhook_dispatcher import pubsub_signing
 from services.webhook_dispatcher import wake as wake_module
 
 
@@ -327,12 +334,35 @@ class TestRedisPubsubWake:
         self.orchestrator.join(timeout_s=5)
 
     def _publish(self, payload):
+        """#227: wrap inner payload in the HMAC envelope so the
+        subscriber's verification path accepts it. Inner payload
+        may be a dict (built-by-helper) or a raw string (used by
+        the malformed-payload test to drive the unsigned path)."""
         import redis  # noqa: WPS433
 
         client = redis.Redis.from_url(REDIS_URL)
-        if isinstance(payload, (dict, list)):
-            payload = json.dumps(payload)
-        client.publish(wake_module.SUBSCRIPTION_EVENTS_CHANNEL, payload)
+        if isinstance(payload, dict):
+            sub_id = payload.get("subscription_id", "")
+            event = payload.get("event", "")
+            wire = pubsub_signing.build_envelope(
+                sub_id, event, pubsub_signing.load_key()
+            )
+        elif isinstance(payload, list):
+            # No subscription_id / event tuple to sign; intentionally
+            # send raw so the subscriber's malformed path runs.
+            wire = json.dumps(payload)
+        else:
+            wire = payload
+        client.publish(wake_module.SUBSCRIPTION_EVENTS_CHANNEL, wire)
+
+    def _publish_raw(self, raw_str):
+        """Bypass the HMAC envelope entirely. Drives the
+        unsigned-message rejection path. The subscriber must drop
+        these and not enqueue."""
+        import redis  # noqa: WPS433
+
+        client = redis.Redis.from_url(REDIS_URL)
+        client.publish(wake_module.SUBSCRIPTION_EVENTS_CHANNEL, raw_str)
 
     def test_subscription_event_lands_on_queue(self):
         sub_id = str(uuid.uuid4())
@@ -352,6 +382,8 @@ class TestRedisPubsubWake:
             "delivery_url_changed",
             "rate_limit_changed",
             "secret_rotated",
+            "subscription_filter_changed",
+            "ceiling_changed",
         ):
             sub_id = str(uuid.uuid4())
             self._publish({"subscription_id": sub_id, "event": kind})
@@ -403,6 +435,178 @@ class TestRedisPubsubWake:
             assert evt.kind != "subscription_event", (
                 f"malformed payload must not enqueue: got {evt!r}"
             )
+
+
+# ----------------------------------------------------------------------
+# #227: pubsub HMAC envelope verification
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not _redis_available(),
+    reason="Redis service not reachable; skipping pubsub HMAC tests",
+)
+class TestPubsubHmacEnvelope:
+    """Defense in depth against a Redis-side attacker forging
+    subscription_event messages. Pre-#227 the channel was
+    unauthenticated; any client with publish rights could trigger
+    eviction storms or spam secret_rotated events."""
+
+    def setup_method(self, method):
+        self.orchestrator = _make_orchestrator(
+            redis_url=REDIS_URL, fallback_poll_ms=10000
+        )
+        self.orchestrator.start()
+        time.sleep(0.2)
+
+    def teardown_method(self, method):
+        self.orchestrator.shutdown()
+        self.orchestrator.join(timeout_s=5)
+
+    def _drain(self):
+        events = []
+        while not self.orchestrator.queue.empty():
+            try:
+                events.append(self.orchestrator.queue.get_nowait())
+            except Exception:  # noqa: BLE001
+                break
+        return events
+
+    def _publish_raw(self, raw_str):
+        import redis  # noqa: WPS433
+
+        client = redis.Redis.from_url(REDIS_URL)
+        client.publish(wake_module.SUBSCRIPTION_EVENTS_CHANNEL, raw_str)
+
+    def test_unsigned_inner_payload_is_rejected(self, caplog):
+        """A pre-#227 publisher (raw inner payload, no envelope)
+        no longer reaches the queue. This is the load-bearing
+        regression: a Redis-side attacker who replays a captured
+        pre-#227 message gets dropped."""
+        sub_id = str(uuid.uuid4())
+        unsigned = json.dumps({"subscription_id": sub_id, "event": "deleted"})
+        with caplog.at_level(
+            logging.WARNING, logger="webhook_dispatcher.wake"
+        ):
+            self._publish_raw(unsigned)
+            time.sleep(0.4)
+        events = self._drain()
+        assert all(
+            e.subscription_id != sub_id for e in events
+        ), "unsigned (pre-#227) payload must not enqueue"
+        assert any(
+            "signature missing or invalid" in r.getMessage()
+            for r in caplog.records
+        ), "unsigned payload rejection must produce a WARNING log"
+
+    def test_tampered_signature_is_rejected(self, caplog):
+        sub_id = str(uuid.uuid4())
+        # Build a valid envelope, then corrupt the signature.
+        good = pubsub_signing.build_envelope(
+            sub_id, "deleted", pubsub_signing.load_key()
+        )
+        tampered = good.replace('"sig":"', '"sig":"00')
+        with caplog.at_level(
+            logging.WARNING, logger="webhook_dispatcher.wake"
+        ):
+            self._publish_raw(tampered)
+            time.sleep(0.4)
+        events = self._drain()
+        assert all(e.subscription_id != sub_id for e in events)
+        assert any(
+            "signature missing or invalid" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_payload_swap_keeps_signature_invalid(self, caplog):
+        """An attacker who captures a legitimate envelope cannot
+        swap the inner payload (e.g. `paused` -> `deleted`) without
+        invalidating the signature. Build the tampered envelope by
+        re-encoding the outer JSON with a mutated inner payload
+        string but the original sig from the `paused` envelope."""
+        sub_id = str(uuid.uuid4())
+        outer = json.loads(
+            pubsub_signing.build_envelope(
+                sub_id, "paused", pubsub_signing.load_key()
+            )
+        )
+        sig_for_paused = outer["sig"]
+        deleted_inner = pubsub_signing.canonical_payload(sub_id, "deleted")
+        tampered = json.dumps(
+            {"sig": sig_for_paused, "payload": deleted_inner}
+        )
+        with caplog.at_level(
+            logging.WARNING, logger="webhook_dispatcher.wake"
+        ):
+            self._publish_raw(tampered)
+            time.sleep(0.4)
+        events = self._drain()
+        assert all(e.subscription_id != sub_id for e in events)
+
+    def test_signed_envelope_round_trips(self):
+        """Sanity check: the publisher's envelope is decoded and
+        routed by the subscriber. If this regresses, the suite
+        loses ground truth on the HMAC path."""
+        sub_id = str(uuid.uuid4())
+        envelope = pubsub_signing.build_envelope(
+            sub_id, "secret_rotated", pubsub_signing.load_key()
+        )
+        self._publish_raw(envelope)
+        event = _drain_until(
+            self.orchestrator,
+            lambda e: (
+                e.kind == "subscription_event"
+                and e.subscription_id == sub_id
+            ),
+            timeout_s=2.0,
+        )
+        assert event.subscription_event_kind == "secret_rotated"
+
+    def test_publish_subscription_event_envelope_is_signed(self):
+        """The producer side: publish_subscription_event sends a
+        signed envelope on the channel. Captured via a real
+        subscriber that pulls one raw message off the channel and
+        verifies the HMAC under the same key."""
+        import redis  # noqa: WPS433
+
+        client = redis.Redis.from_url(REDIS_URL)
+        sub = client.pubsub(ignore_subscribe_messages=True)
+        sub.subscribe(wake_module.SUBSCRIPTION_EVENTS_CHANNEL)
+        time.sleep(0.1)
+
+        try:
+            wake_module.publish_subscription_event(
+                REDIS_URL, "abc-123", "paused"
+            )
+            wire = None
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                msg = sub.get_message(timeout=0.2)
+                if msg and msg.get("type") == "message":
+                    wire = msg["data"]
+                    if isinstance(wire, bytes):
+                        wire = wire.decode("utf-8")
+                    break
+            assert wire is not None, (
+                "publish_subscription_event did not put a message on "
+                "the channel within 2s"
+            )
+            inner = pubsub_signing.parse_envelope(
+                wire, pubsub_signing.load_key()
+            )
+            assert inner is not None, (
+                "publisher's envelope did not verify under the same "
+                "HMAC key (sign / verify out of sync)"
+            )
+            assert inner == {
+                "subscription_id": "abc-123",
+                "event": "paused",
+            }
+        finally:
+            try:
+                sub.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ----------------------------------------------------------------------

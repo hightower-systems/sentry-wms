@@ -104,6 +104,12 @@ ACTION_WEBHOOK_SUBSCRIPTION_DELETE_HARD = "WEBHOOK_SUBSCRIPTION_DELETE_HARD"
 ACTION_WEBHOOK_SECRET_ROTATE = "WEBHOOK_SECRET_ROTATE"
 ACTION_WEBHOOK_DELIVERY_REPLAY_SINGLE = "WEBHOOK_DELIVERY_REPLAY_SINGLE"
 ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH = "WEBHOOK_DELIVERY_REPLAY_BATCH"
+# #232: dispatcher auto-pause when subscription_filter fails
+# Pydantic validation. user_id is the daemon's identity ("system");
+# details.subscription_id + details.parse_error capture the
+# offending row + the recoverable error so an operator can find
+# the bad column in audit_log without grepping daemon logs.
+ACTION_WEBHOOK_SUBSCRIPTION_AUTO_PAUSE = "WEBHOOK_SUBSCRIPTION_AUTO_PAUSE"
 
 # Bin types
 BIN_STAGING = "Staging"

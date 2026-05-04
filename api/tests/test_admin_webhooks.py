@@ -194,6 +194,59 @@ class TestValidationFailures:
         assert body["error"] == "unknown_warehouse_ids"
         assert 9999999 in body["missing"]
 
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "event_types",
+            "warehouse_ids",
+            "aggregate_external_id_allowlist",
+        ],
+    )
+    def test_empty_filter_array_returns_400(
+        self, client, auth_headers, field
+    ):
+        """#231: an explicit empty array (e.g.
+        ``event_types=[]``) silently means "match every event"
+        because the dispatcher's filter clauses are truthy-gated.
+        That inverts what the shape looks like it asks for. The
+        admin endpoint refuses ``[]`` outright; operators who
+        want "no events" use status='paused', operators who want
+        "all events" omit the field."""
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "x",
+                "delivery_url": "https://example.com/x",
+                "subscription_filter": {field: []},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "empty_filter_array"
+        assert body["field"] == field
+        assert "status='paused'" in body["detail"]
+
+    def test_omitted_filter_field_still_accepted(self, client, auth_headers):
+        """A missing field is the documented "match everything"
+        shape and must still be accepted; the empty-array refusal
+        does not collapse the omitted-field path."""
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "x",
+                "delivery_url": f"https://example.com/{uuid.uuid4()}",
+                "subscription_filter": {
+                    "event_types": ["receipt.completed"]
+                    # warehouse_ids omitted; should accept.
+                },
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
     def test_http_url_rejected_without_opt_out(
         self, client, auth_headers, monkeypatch
     ):
@@ -291,13 +344,24 @@ class TestAuthorization:
 
 class TestUrlReuseTombstone:
     def _seed_tombstone(self, delivery_url: str) -> int:
+        from services.webhook_dispatcher.url_normalize import (
+            canonicalize_delivery_url,
+        )
+
         conn = get_raw_connection()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO webhook_subscriptions_tombstones "
-            "(subscription_id, delivery_url_at_delete, connector_id, deleted_by) "
-            "VALUES (%s, %s, %s, %s) RETURNING tombstone_id",
-            (str(uuid.uuid4()), delivery_url, "test-conn-webhook", 1),
+            "(subscription_id, delivery_url_at_delete, "
+            "delivery_url_canonical, connector_id, deleted_by) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING tombstone_id",
+            (
+                str(uuid.uuid4()),
+                delivery_url,
+                canonicalize_delivery_url(delivery_url),
+                "test-conn-webhook",
+                1,
+            ),
         )
         tombstone_id = cur.fetchone()[0]
         cur.close()
@@ -351,6 +415,81 @@ class TestUrlReuseTombstone:
         cur.close()
         assert ack_at is not None
         assert ack_by == 1
+
+    @pytest.mark.parametrize(
+        "variant_suffix",
+        [
+            # Casing on host segment.
+            ("CASE", lambda raw: raw.replace("example.com", "EXAMPLE.com")),
+            # Mixed scheme casing.
+            ("SCHEME", lambda raw: raw.replace("https://", "HTTPS://")),
+            # Default port noise.
+            ("PORT", lambda raw: raw.replace("example.com", "example.com:443")),
+            # Trailing slash on a non-root path.
+            ("SLASH", lambda raw: raw + "/"),
+            # Fragment that should be stripped.
+            ("FRAGMENT", lambda raw: raw + "#fragment"),
+        ],
+    )
+    def test_canonicalization_variants_still_trip_gate(
+        self, client, auth_headers, variant_suffix
+    ):
+        """#218: a one-character casing / port / fragment / trailing-slash
+        mutation must not bypass the URL-reuse acknowledgement step."""
+        label, mutator = variant_suffix
+        unique = uuid.uuid4().hex[:8]
+        seeded_url = f"https://example.com/hook-{unique}"
+        self._seed_tombstone(seeded_url)
+
+        mutated = mutator(seeded_url)
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": f"variant-{label}",
+                "delivery_url": mutated,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, (label, mutated, resp.get_json())
+        assert resp.get_json()["error"] == "url_reuse_tombstone"
+
+    def test_canonical_column_populated_on_hard_delete_tombstone(
+        self, client, auth_headers
+    ):
+        """#218: hard-delete writes both raw delivery_url_at_delete and
+        the canonical column so the gate can match variants."""
+        url = f"https://Example.COM:443/hook-{uuid.uuid4().hex[:8]}/"
+        created = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "to-be-purged",
+                "delivery_url": url,
+            },
+            headers=auth_headers,
+        ).get_json()
+
+        sub_id = created["subscription_id"]
+        purge = client.delete(
+            f"/api/admin/webhooks/{sub_id}?purge=true", headers=auth_headers
+        )
+        assert purge.status_code == 200, purge.get_json()
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT delivery_url_at_delete, delivery_url_canonical "
+            "FROM webhook_subscriptions_tombstones "
+            "WHERE tombstone_id = %s",
+            (purge.get_json()["tombstone_id"],),
+        )
+        raw, canonical = cur.fetchone()
+        cur.close()
+        # Raw is the URL the admin originally typed; canonical is
+        # lowercased / port-stripped / trailing-slash-collapsed.
+        assert raw == url
+        assert canonical == f"https://example.com/hook-{url.split('-')[-1].rstrip('/')}"
 
 
 def _create_one(client, auth_headers, **overrides) -> dict:
@@ -544,6 +683,120 @@ class TestPatchUpdate:
             c["event"] == "delivery_url_changed" for c in captured
         )
 
+    def test_patch_to_tombstoned_url_returns_409(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#219: a PATCH that switches delivery_url to a previously-
+        tombstoned URL must trip the same gate the POST handler
+        runs. Without this check, create-then-PATCH bypasses the
+        URL-reuse acknowledgement step entirely."""
+        captured = self._publishes(monkeypatch)
+        # Seed a tombstone for the URL we will PATCH to.
+        tombstoned = f"https://example.com/tombstoned-{uuid.uuid4().hex[:8]}"
+        seeder = TestUrlReuseTombstone()
+        tombstone_id = seeder._seed_tombstone(tombstoned)
+
+        created = _create_one(client, auth_headers, display_name="patch-victim")
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": tombstoned},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "url_reuse_tombstone"
+        assert body["tombstone_id"] == tombstone_id
+        # No pubsub fires when the gate refuses; the row was not
+        # mutated, so no peer state needs invalidation.
+        assert captured == []
+
+    def test_patch_with_acknowledge_url_reuse_clears_tombstone(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#219: PATCH accepts the same acknowledge_url_reuse opt-in
+        as the POST handler. The tombstone is acknowledged in the
+        same transaction as the URL change."""
+        captured = self._publishes(monkeypatch)
+        tombstoned = f"https://example.com/ack-{uuid.uuid4().hex[:8]}"
+        seeder = TestUrlReuseTombstone()
+        tombstone_id = seeder._seed_tombstone(tombstoned)
+
+        created = _create_one(client, auth_headers, display_name="patch-ack")
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "delivery_url": tombstoned,
+                "acknowledge_url_reuse": True,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert resp.get_json()["delivery_url"] == tombstoned
+        assert any(c["event"] == "delivery_url_changed" for c in captured)
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT acknowledged_at, acknowledged_by "
+            "FROM webhook_subscriptions_tombstones WHERE tombstone_id = %s",
+            (tombstone_id,),
+        )
+        ack_at, ack_by = cur.fetchone()
+        cur.close()
+        assert ack_at is not None
+        assert ack_by == 1
+
+    def test_patch_canonicalization_variant_still_trips_gate(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#218 + #219: a one-character casing / port mutation on the
+        PATCH side must still match the canonical key."""
+        self._publishes(monkeypatch)
+        seeded = f"https://example.com/canon-{uuid.uuid4().hex[:8]}"
+        seeder = TestUrlReuseTombstone()
+        seeder._seed_tombstone(seeded)
+
+        created = _create_one(client, auth_headers, display_name="patch-canon")
+        sub_id = created["subscription_id"]
+
+        # Mutate: uppercase host + add default port.
+        mutated = seeded.replace(
+            "example.com", "EXAMPLE.com:443"
+        )
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": mutated},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, resp.get_json()
+        assert resp.get_json()["error"] == "url_reuse_tombstone"
+
+    def test_patch_to_same_url_does_not_run_gate(
+        self, client, auth_headers, monkeypatch
+    ):
+        """A no-op delivery_url PATCH (passing the current value
+        verbatim) must not consult the tombstone table; the URL
+        is unchanged and an unrelated tombstone for the same URL
+        from a prior subscription would be a false positive."""
+        self._publishes(monkeypatch)
+        url = f"https://example.com/idem-{uuid.uuid4().hex[:8]}"
+        created = _create_one(
+            client, auth_headers, display_name="patch-idem", delivery_url=url
+        )
+        sub_id = created["subscription_id"]
+
+        # No tombstone seeded; PATCH passes the same URL.
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"delivery_url": url},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+
     def test_rate_limit_change_publishes_rate_limit_changed(
         self, client, auth_headers, monkeypatch
     ):
@@ -698,6 +951,183 @@ class TestPatchUpdate:
         assert resp.status_code == 400
         assert resp.get_json()["error"] == "unknown_event_types"
 
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "event_types",
+            "warehouse_ids",
+            "aggregate_external_id_allowlist",
+        ],
+    )
+    def test_patch_empty_filter_array_returns_400(
+        self, client, auth_headers, monkeypatch, field
+    ):
+        """#231: PATCH refuses an explicit empty list with the
+        same shape as POST so a create-then-PATCH workflow cannot
+        sneak past the create-side gate."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"subscription_filter": {field: []}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "empty_filter_array"
+        assert body["field"] == field
+
+    def test_filter_change_publishes_subscription_filter_changed(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#229: a PATCH that changes subscription_filter must
+        publish subscription_filter_changed on the cross-worker
+        channel so peer workers wake and pick up the new filter
+        on the next deliver_one cycle."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(
+            client,
+            auth_headers,
+            subscription_filter={
+                "event_types": ["receipt.completed"],
+            },
+        )
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "subscription_filter": {
+                    "event_types": [
+                        "receipt.completed",
+                        "ship.confirmed",
+                    ]
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert any(
+            c["event"] == "subscription_filter_changed"
+            and c["subscription_id"] == sub_id
+            for c in captured
+        )
+
+        # Audit log surfaces the new event in the events list so
+        # operator triage can name what changed.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_UPDATE' "
+            "AND details->>'subscription_id' = %s "
+            "ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        details = cur.fetchone()[0]
+        cur.close()
+        assert "subscription_filter_changed" in details["events"]
+        assert "subscription_filter" in details["diff"]
+
+    def test_ceiling_change_on_paused_by_ceiling_includes_hint(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#230: lifting the matching ceiling on a paused-by-ceiling
+        subscription does NOT auto-resume; the response hint names
+        the follow-up the operator still has to send."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        # Force paused-by-pending_ceiling state directly. The
+        # auto-pause path that produces this state is exercised
+        # by the dispatcher tests; here we just need the row in
+        # the right shape to test the response-hint contract.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions "
+            "   SET status = 'paused', pause_reason = 'pending_ceiling' "
+            " WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 50000},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        # Subscription stays paused; the hint surfaces the missing
+        # follow-up step.
+        assert body["status"] == "paused"
+        assert body["pause_reason"] == "pending_ceiling"
+        assert "hint" in body
+        assert "status=active" in body["hint"]
+
+    def test_ceiling_lift_with_status_active_does_not_emit_hint(
+        self, client, auth_headers, monkeypatch
+    ):
+        """A PATCH that simultaneously lifts the ceiling AND sets
+        status=active resumes cleanly; no hint needed."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions "
+            "   SET status = 'paused', pause_reason = 'pending_ceiling' "
+            " WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        cur.close()
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 50000, "status": "active"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        body = resp.get_json()
+        assert body["status"] == "active"
+        assert "hint" not in body
+
+    def test_filter_unchanged_does_not_publish(
+        self, client, auth_headers, monkeypatch
+    ):
+        """A PATCH that submits the same filter shape that's already
+        in the DB is a no-op; the worker is not signaled
+        (publishing on every PATCH would amplify into pointless
+        wake-up storms)."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(
+            client,
+            auth_headers,
+            subscription_filter={"event_types": ["receipt.completed"]},
+        )
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={
+                "subscription_filter": {
+                    "event_types": ["receipt.completed"]
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert not any(
+            c["event"] == "subscription_filter_changed"
+            for c in captured
+        )
+
     def test_ceiling_above_hard_cap_rejected(
         self, client, auth_headers, monkeypatch
     ):
@@ -844,10 +1274,27 @@ class TestPatchUpdate:
         self, client, auth_headers, monkeypatch,
     ):
         """#216: a real diff that does not publish a pubsub event
-        (pending_ceiling change only) still gets an audit row;
+        (display_name change only) still gets an audit row;
         details.events is an empty list. Distinct from the no-diff
         case which short-circuits before any audit row is written."""
         self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"display_name": "renamed-no-publish"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == []
+
+    def test_audit_row_events_field_ceiling_change(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """#230: pending_ceiling or dlq_ceiling change records
+        ceiling_changed in the events list and on the cross-worker
+        pubsub channel."""
+        captured = self._publishes(monkeypatch)
         created = _create_one(client, auth_headers)
         sub_id = created["subscription_id"]
         resp = client.patch(
@@ -856,7 +1303,47 @@ class TestPatchUpdate:
             headers=auth_headers,
         )
         assert resp.status_code == 200
-        assert self._latest_audit_events(sub_id) == []
+        assert self._latest_audit_events(sub_id) == ["ceiling_changed"]
+        assert any(c["event"] == "ceiling_changed" for c in captured)
+
+    def test_audit_row_events_field_dlq_ceiling_change(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """A dlq_ceiling-only change publishes ceiling_changed too;
+        same pubsub kind covers both."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"dlq_ceiling": 333},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert self._latest_audit_events(sub_id) == ["ceiling_changed"]
+        assert any(c["event"] == "ceiling_changed" for c in captured)
+
+    def test_ceiling_change_emits_one_event_per_patch(
+        self, client, auth_headers, monkeypatch,
+    ):
+        """A single PATCH that touches BOTH pending_ceiling AND
+        dlq_ceiling publishes exactly one ceiling_changed event,
+        not two -- the kind is per-pubsub-publish, not per-column."""
+        captured = self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"pending_ceiling": 8888, "dlq_ceiling": 444},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        ceiling_events = [
+            c for c in captured if c["event"] == "ceiling_changed"
+        ]
+        assert len(ceiling_events) == 1, (
+            f"expected one ceiling_changed event, got {ceiling_events}"
+        )
 
 
 class TestStats:
@@ -1330,6 +1817,387 @@ class TestReplayBatch:
             json={"filter": {}},
         )
         assert resp.status_code == 401
+
+    def _bulk_seed_deliveries(self, sub_id: str, event_id: int, count: int):
+        """Bulk INSERT helper for ceiling tests. Single statement is
+        much faster than per-row INSERTs when the row count is in
+        the low hundreds; the schema CHECK on pending_ceiling
+        (BETWEEN 100 AND 100000) forces us to seed at least 101
+        rows for any test that wants to overshoot the ceiling."""
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO webhook_deliveries "
+            "(subscription_id, event_id, attempt_number, status, "
+            " scheduled_at, attempted_at, completed_at, secret_generation) "
+            "SELECT %s, %s, 8, 'dlq', NOW(), NOW(), NOW(), 1 "
+            "FROM generate_series(1, %s)",
+            (sub_id, event_id, count),
+        )
+        cur.close()
+
+    def test_replay_refused_when_would_exceed_pending_ceiling(
+        self, client, auth_headers
+    ):
+        """#222: a replay-batch that would push pending+in_flight
+        past the subscription's pending_ceiling is refused with 409
+        BEFORE the INSERT lands. The auto-pause path only fires
+        after a delivery attempt; without a pre-INSERT check the
+        batch could overshoot the ceiling silently."""
+        # Schema CHECK enforces pending_ceiling BETWEEN 100 AND
+        # 100000, so seed 101 dlq rows against a ceiling of 100 to
+        # trip the gate by exactly one.
+        body = {
+            "connector_id": "test-conn-webhook",
+            "display_name": "ceiling-victim",
+            "delivery_url": f"https://example.com/{uuid.uuid4()}",
+            "pending_ceiling": 100,
+            "dlq_ceiling": 200,
+        }
+        sub_id = client.post(
+            "/api/admin/webhooks", json=body, headers=auth_headers
+        ).get_json()["subscription_id"]
+
+        event_id = self._seed_event()
+        self._bulk_seed_deliveries(sub_id, event_id, 101)
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409, resp.get_json()
+        body_out = resp.get_json()
+        assert body_out["error"] == "replay_would_exceed_pending_ceiling"
+        assert body_out["current_pending"] == 0
+        assert body_out["impact_count"] == 101
+        assert body_out["pending_ceiling"] == 100
+        assert body_out["gap"] == 1
+
+        # The INSERT did not land.
+        assert self._pending_count(sub_id) == 0
+
+    def test_replay_within_ceiling_proceeds(self, client, auth_headers):
+        """An impact that fits inside the remaining pending budget
+        replays normally."""
+        body = {
+            "connector_id": "test-conn-webhook",
+            "display_name": "ceiling-fits",
+            "delivery_url": f"https://example.com/{uuid.uuid4()}",
+            "pending_ceiling": 200,
+            "dlq_ceiling": 200,
+        }
+        sub_id = client.post(
+            "/api/admin/webhooks", json=body, headers=auth_headers
+        ).get_json()["subscription_id"]
+
+        event_id = self._seed_event()
+        for _ in range(3):
+            self._seed_delivery(sub_id, event_id, "dlq")
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        assert resp.get_json()["replayed_count"] == 3
+
+    def test_replay_acknowledge_large_replay_does_not_waive_ceiling(
+        self, client, auth_headers
+    ):
+        """The acknowledge_large_replay flag covers the per-batch
+        hard cap; the pending_ceiling is independent and not
+        waivable. A request with the flag set must still be 409'd
+        when the ceiling would be crossed."""
+        body = {
+            "connector_id": "test-conn-webhook",
+            "display_name": "ack-no-waive",
+            "delivery_url": f"https://example.com/{uuid.uuid4()}",
+            "pending_ceiling": 100,
+            "dlq_ceiling": 200,
+        }
+        sub_id = client.post(
+            "/api/admin/webhooks", json=body, headers=auth_headers
+        ).get_json()["subscription_id"]
+
+        event_id = self._seed_event()
+        self._bulk_seed_deliveries(sub_id, event_id, 101)
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {"status": "dlq"},
+                "acknowledge_large_replay": True,
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 409
+        assert resp.get_json()["error"] == "replay_would_exceed_pending_ceiling"
+
+    def test_pruned_event_breakdown_in_response_and_audit(
+        self, client, auth_headers
+    ):
+        """#233: replay-batch reports
+        ``matched_with_event_data`` + ``matched_without_event_data``
+        so a forensic query can see how many DLQ rows match the
+        webhook_deliveries shape but lost their integration_events
+        row. Pre-#233 those rows silently disappeared from the
+        impact count when an e.* predicate was in play."""
+        created = _create_one(
+            client, auth_headers, display_name="pruned-breakdown"
+        )
+        sub_id = created["subscription_id"]
+
+        # Three dlq deliveries with their integration_events row
+        # intact; two more whose row will be DELETEd to simulate
+        # retention pruning.
+        intact_event_id = self._seed_event(event_type="ship.confirmed")
+        for _ in range(3):
+            self._seed_delivery(sub_id, intact_event_id, "dlq")
+
+        pruned_event_id = self._seed_event(event_type="ship.confirmed")
+        for _ in range(2):
+            self._seed_delivery(sub_id, pruned_event_id, "dlq")
+
+        # webhook_deliveries.event_id is not FK'd to
+        # integration_events, so events can be pruned out from
+        # under terminal deliveries (which is the operational
+        # shape the breakdown surfaces).
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM integration_events WHERE event_id = %s",
+            (pruned_event_id,),
+        )
+        cur.close()
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {
+                    "status": "dlq",
+                    "event_type": "ship.confirmed",
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        assert body["matched_with_event_data"] == 3
+        assert body["matched_without_event_data"] == 2
+        assert body["impact_count"] == 3
+        assert body["replayed_count"] == 3
+        assert "detail" in body
+        assert "could not be re-dispatched" in body["detail"]
+
+        cur = get_raw_connection().cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_DELIVERY_REPLAY_BATCH' "
+            "AND details->>'subscription_id' = %s "
+            "ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        details = cur.fetchone()[0]
+        cur.close()
+        assert details["matched_with_event_data"] == 3
+        assert details["matched_without_event_data"] == 2
+
+    def test_no_pruned_events_omits_detail_field(
+        self, client, auth_headers
+    ):
+        """When every matching row has its integration_events row
+        intact, ``matched_without_event_data`` is 0 and the
+        response does not carry the ``detail`` hint -- there is
+        nothing for the operator to investigate."""
+        created = _create_one(client, auth_headers, display_name="no-pruned")
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event(event_type="ship.confirmed")
+        for _ in range(2):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {
+                    "status": "dlq",
+                    "event_type": "ship.confirmed",
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        assert body["matched_with_event_data"] == 2
+        assert body["matched_without_event_data"] == 0
+        assert "detail" not in body
+
+    def test_replay_batch_handler_holds_for_update_on_subscription_row(self):
+        """#223: the replay-batch handler must hold SELECT FOR
+        UPDATE on the subscription row through the throttle SELECT
+        and the pre-INSERT pending_ceiling check. Source-level
+        sentinel: a refactor that drops the lock surfaces here.
+
+        Reading the file rather than driving real concurrency
+        because the test client routes every request through the
+        same SQLAlchemy connection (conftest wraps the suite in a
+        single transaction), so two threaded requests serialize at
+        the connection level and never expose the row-lock
+        behavior. The lock-acquisition shape itself is exercised
+        by test_replay_batch_for_update_blocks_concurrent_session
+        below."""
+        handler_path = os.path.join(
+            os.path.dirname(__file__), "..", "routes", "admin",
+            "admin_webhooks.py",
+        )
+        with open(handler_path) as f:
+            source = f.read()
+        # Locate the replay_batch function and check that its body
+        # contains a SELECT against webhook_subscriptions with FOR
+        # UPDATE. A refactor that drops the lock would surface
+        # here.
+        anchor = "def replay_batch("
+        start = source.index(anchor)
+        # End at the next top-level def or admin_bp.route to
+        # bound the function body inspection.
+        end = source.find("\n@admin_bp.route", start + len(anchor))
+        assert end > start, "could not bound replay_batch source"
+        body = source[start:end]
+        assert "FROM webhook_subscriptions" in body
+        assert "FOR UPDATE" in body, (
+            "replay_batch must hold SELECT FOR UPDATE on the "
+            "subscription row to close the throttle TOCTOU race"
+        )
+
+    def _seed_global_throttle_audit_rows(self, count: int):
+        """Insert N WEBHOOK_DELIVERY_REPLAY_BATCH audit_log rows
+        across distinct fake subscription_ids so the global
+        throttle bucket counts them but the per-subscription
+        throttle does not match any real subscription. Inserts
+        through the test transaction's raw connection so the rows
+        are visible to the handler under test and roll back at
+        teardown (no cross-test pollution)."""
+        import json as _json
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        for _ in range(count):
+            cur.execute(
+                "INSERT INTO audit_log "
+                "(action_type, entity_type, entity_id, user_id, "
+                " warehouse_id, details) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb)",
+                (
+                    "WEBHOOK_DELIVERY_REPLAY_BATCH",
+                    "WEBHOOK_SUBSCRIPTION",
+                    0,
+                    "seed",
+                    None,
+                    _json.dumps({"subscription_id": str(uuid.uuid4())}),
+                ),
+            )
+        cur.close()
+
+    def test_global_throttle_refuses_after_budget_consumed(
+        self, client, auth_headers, monkeypatch
+    ):
+        """#224: once the rolling global budget of N
+        WEBHOOK_DELIVERY_REPLAY_BATCH rows lands, a fresh request
+        from any subscription is refused 429
+        replay_batch_global_throttled. Closes the fan-out path
+        where a compromised admin distributes batches across many
+        subscriptions to bypass the per-subscription 60s bucket."""
+        # Tighten the global budget for a fast test; 2 rows in
+        # any subscription saturates the bucket.
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET", "2")
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S", "300")
+
+        # Pre-fill the bucket with 2 audit rows attributed to other
+        # subscriptions so the per-subscription throttle on this
+        # subscription is clear.
+        self._seed_global_throttle_audit_rows(2)
+
+        created = _create_one(client, auth_headers, display_name="global-throttle")
+        sub_id = created["subscription_id"]
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "replay_batch_global_throttled"
+        assert body["global_count"] >= 2
+        assert body["global_budget"] == 2
+
+    def test_global_throttle_lets_through_when_under_budget(
+        self, client, auth_headers, monkeypatch
+    ):
+        """The global bucket only refuses once it is FULL; an
+        empty / under-budget bucket still accepts."""
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET", "5")
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S", "300")
+
+        created = _create_one(client, auth_headers, display_name="global-fits")
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
+    def test_global_throttle_counts_only_recent_window(
+        self, client, auth_headers, monkeypatch
+    ):
+        """The bucket is rolling: a row outside the window does
+        not count. Insert one audit row with a backdated
+        created_at older than the configured window and confirm
+        the new request is admitted (audit_log is append-only;
+        UPDATE is forbidden by V-025, so we INSERT with the
+        timestamp pre-set)."""
+        import json as _json
+
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET", "1")
+        monkeypatch.setenv("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S", "5")
+
+        # Insert one audit row dated 60s ago. audit_log_chain_hash
+        # honors NEW.created_at, so an explicit backdated value
+        # survives the trigger.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO audit_log "
+            "(action_type, entity_type, entity_id, user_id, "
+            " warehouse_id, details, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s::jsonb, "
+            "        NOW() - INTERVAL '60 seconds')",
+            (
+                "WEBHOOK_DELIVERY_REPLAY_BATCH",
+                "WEBHOOK_SUBSCRIPTION",
+                0,
+                "seed",
+                None,
+                _json.dumps({"subscription_id": str(uuid.uuid4())}),
+            ),
+        )
+        cur.close()
+
+        created = _create_one(client, auth_headers, display_name="rolling")
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event()
+        self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={"filter": {"status": "dlq"}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
 
     def test_cursor_unchanged_after_batch(self, client, auth_headers):
         created = _create_one(client, auth_headers)

@@ -171,6 +171,22 @@ def create_app():
     from middleware.auth_middleware import validate_pepper_config
     validate_pepper_config(os.getenv("SENTRY_TOKEN_PEPPER"))
 
+    # #238: pre-#238, validate_or_die() ran ONLY in the dispatcher
+    # container (WebhookDispatcher.run). The api container reads
+    # the same dispatcher env vars (DISPATCHER_MAX_PENDING_HARD_CAP,
+    # DISPATCHER_MAX_DLQ_HARD_CAP, DISPATCHER_REPLAY_BATCH_HARD_CAP,
+    # SENTRY_PUBSUB_HMAC_KEY, etc.) for admin-endpoint enforcement
+    # and for the cross-worker pubsub publisher, but a typo'd or
+    # out-of-range value never tripped a boot guard here. The two
+    # containers could disagree silently on the cap; the api would
+    # boot and fall back to defaults while the dispatcher refused
+    # to start. Run the same validator on the api boot path so
+    # both containers fail loudly with the same range messages.
+    # Idempotent: each helper re-reads from os.environ, so running
+    # it twice (api + dispatcher) is safe.
+    from services.webhook_dispatcher import env_validator as _dispatcher_env
+    _dispatcher_env.validate_or_die()
+
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
         "CORS_ORIGINS",

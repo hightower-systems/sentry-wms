@@ -1,14 +1,16 @@
-"""Schema-level tests for migration 033 (v1.6.0 #168).
+"""Schema-level tests for migrations 033 + 034 (#168, #218).
 
-Locks the column shapes, the FKs to users on deleted_by +
-acknowledged_by, the BIGSERIAL on tombstone_id, and the partial
-index that backs the URL-reuse gate query path.
+Locks the column shapes (raw + canonical delivery URLs), the FKs
+to users on deleted_by + acknowledged_by, the BIGSERIAL on
+tombstone_id, and the partial index on delivery_url_canonical
+that backs the URL-reuse gate query path after #218.
 
 CI loads db/schema.sql, so these tests are the load-bearing
 assertion that the migration body and the schema.sql mirror
 agree -- a missing partial-index WHERE clause would silently
 turn the URL-reuse gate into a full-table TEXT scan on every
-webhook create.
+webhook create, and a missing canonical column would let
+case / port / fragment / trailing-slash variants bypass the gate.
 """
 
 import os
@@ -60,13 +62,18 @@ class TestWebhookSubscriptionsTombstonesShape:
         assert cols["tombstone_id"] == ("bigint", "NO")
         assert cols["subscription_id"] == ("uuid", "NO")
         assert cols["delivery_url_at_delete"] == ("text", "NO")
+        assert cols["delivery_url_canonical"] == ("text", "NO")
         assert cols["connector_id"] == ("character varying", "NO")
         assert cols["deleted_at"] == ("timestamp with time zone", "NO")
         assert cols["deleted_by"] == ("integer", "NO")
         assert cols["acknowledged_at"] == ("timestamp with time zone", "YES")
         assert cols["acknowledged_by"] == ("integer", "YES")
 
-    def test_partial_index_on_unacknowledged_url(self):
+    def test_partial_index_on_unacknowledged_canonical_url(self):
+        """#218: the gate compares delivery_url_canonical so the
+        partial index must be on the canonical column. The pre-#218
+        index on delivery_url_at_delete was vulnerable to case /
+        port / fragment / trailing-slash mutations."""
         conn = _make_conn()
         try:
             cur = conn.cursor()
@@ -74,24 +81,46 @@ class TestWebhookSubscriptionsTombstonesShape:
                 """
                 SELECT indexdef FROM pg_indexes
                  WHERE tablename = 'webhook_subscriptions_tombstones'
-                   AND indexname = 'webhook_subscriptions_tombstones_url_unack'
+                   AND indexname = 'webhook_subscriptions_tombstones_canonical_unack'
                 """
             )
             row = cur.fetchone()
         finally:
             conn.close()
         assert row is not None, (
-            "partial index on (delivery_url_at_delete) WHERE acknowledged_at IS NULL "
+            "partial index on (delivery_url_canonical) WHERE acknowledged_at IS NULL "
             "must exist; full-table btree on the TEXT column would scan acknowledged "
             "rows on every webhook create"
         )
         idef = row[0]
-        assert "delivery_url_at_delete" in idef
+        assert "delivery_url_canonical" in idef
         assert "WHERE" in idef
         assert "acknowledged_at IS NULL" in idef, (
             "the partial index predicate is the load-bearing part: a refactor "
             "that drops the WHERE clause would silently double the gate query "
             "cost as acknowledged tombstones accumulate"
+        )
+
+    def test_pre_canonical_index_was_dropped(self):
+        """The migration 033 index on (delivery_url_at_delete) is
+        explicitly dropped by migration 034 so the gate query
+        cannot accidentally fall back to the case-sensitive shape."""
+        conn = _make_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT 1 FROM pg_indexes
+                 WHERE tablename = 'webhook_subscriptions_tombstones'
+                   AND indexname = 'webhook_subscriptions_tombstones_url_unack'
+                """
+            )
+            row = cur.fetchone()
+        finally:
+            conn.close()
+        assert row is None, (
+            "the pre-#218 index on delivery_url_at_delete must be dropped "
+            "so the gate query cannot bind to the case-sensitive shape"
         )
 
     def test_fks_to_users_on_deleted_by_and_acknowledged_by(self):
@@ -129,16 +158,19 @@ class TestWebhookSubscriptionsTombstonesBigSerial:
             cur = conn.cursor()
             admin_id = _admin_user_id(cur)
             for i in range(3):
+                url = f"https://example.invalid/bigserial-{i}"
                 cur.execute(
                     """
                     INSERT INTO webhook_subscriptions_tombstones
-                        (subscription_id, delivery_url_at_delete, connector_id, deleted_by)
-                    VALUES (%s, %s, %s, %s)
+                        (subscription_id, delivery_url_at_delete,
+                         delivery_url_canonical, connector_id, deleted_by)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING tombstone_id
                     """,
                     (
                         str(uuid.uuid4()),
-                        f"https://example.invalid/bigserial-{i}",
+                        url,
+                        url,
                         "test-conn-033",
                         admin_id,
                     ),
@@ -164,15 +196,18 @@ class TestWebhookSubscriptionsTombstonesForeignKeyReject:
         try:
             with pytest.raises(psycopg2.errors.ForeignKeyViolation):
                 cur = conn.cursor()
+                url = "https://example.invalid/orphan-deleted-by"
                 cur.execute(
                     """
                     INSERT INTO webhook_subscriptions_tombstones
-                        (subscription_id, delivery_url_at_delete, connector_id, deleted_by)
-                    VALUES (%s, %s, %s, %s)
+                        (subscription_id, delivery_url_at_delete,
+                         delivery_url_canonical, connector_id, deleted_by)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
                         str(uuid.uuid4()),
-                        "https://example.invalid/orphan-deleted-by",
+                        url,
+                        url,
                         "test-conn-033",
                         bogus_user,
                     ),
@@ -188,16 +223,19 @@ class TestWebhookSubscriptionsTombstonesForeignKeyReject:
             cur = conn.cursor()
             admin_id = _admin_user_id(cur)
             with pytest.raises(psycopg2.errors.ForeignKeyViolation):
+                url = "https://example.invalid/orphan-ack-by"
                 cur.execute(
                     """
                     INSERT INTO webhook_subscriptions_tombstones
-                        (subscription_id, delivery_url_at_delete, connector_id,
+                        (subscription_id, delivery_url_at_delete,
+                         delivery_url_canonical, connector_id,
                          deleted_by, acknowledged_at, acknowledged_by)
-                    VALUES (%s, %s, %s, %s, NOW(), %s)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), %s)
                     """,
                     (
                         str(uuid.uuid4()),
-                        "https://example.invalid/orphan-ack-by",
+                        url,
+                        url,
                         "test-conn-033",
                         admin_id,
                         bogus_user,
@@ -218,16 +256,19 @@ class TestWebhookSubscriptionsTombstonesAcknowledgedNullableInsert:
         try:
             cur = conn.cursor()
             admin_id = _admin_user_id(cur)
+            url = "https://example.invalid/unack"
             cur.execute(
                 """
                 INSERT INTO webhook_subscriptions_tombstones
-                    (subscription_id, delivery_url_at_delete, connector_id, deleted_by)
-                VALUES (%s, %s, %s, %s)
+                    (subscription_id, delivery_url_at_delete,
+                     delivery_url_canonical, connector_id, deleted_by)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING tombstone_id, acknowledged_at, acknowledged_by
                 """,
                 (
                     str(uuid.uuid4()),
-                    "https://example.invalid/unack",
+                    url,
+                    url,
                     "test-conn-033",
                     admin_id,
                 ),
@@ -264,11 +305,12 @@ class TestWebhookSubscriptionsTombstonesPartialIndexBehavior:
             cur.execute(
                 """
                 INSERT INTO webhook_subscriptions_tombstones
-                    (subscription_id, delivery_url_at_delete, connector_id, deleted_by)
-                VALUES (%s, %s, %s, %s)
+                    (subscription_id, delivery_url_at_delete,
+                     delivery_url_canonical, connector_id, deleted_by)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING tombstone_id
                 """,
-                (str(uuid.uuid4()), url, "test-conn-033", admin_id),
+                (str(uuid.uuid4()), url, url, "test-conn-033", admin_id),
             )
             tombstone_id = cur.fetchone()[0]
             conn.commit()
@@ -276,7 +318,7 @@ class TestWebhookSubscriptionsTombstonesPartialIndexBehavior:
             # Gate query: unacknowledged tombstones for this URL.
             cur.execute(
                 "SELECT COUNT(*) FROM webhook_subscriptions_tombstones "
-                "WHERE delivery_url_at_delete = %s AND acknowledged_at IS NULL",
+                "WHERE delivery_url_canonical = %s AND acknowledged_at IS NULL",
                 (url,),
             )
             assert cur.fetchone()[0] == 1
@@ -297,7 +339,7 @@ class TestWebhookSubscriptionsTombstonesPartialIndexBehavior:
             # reuse gate.
             cur.execute(
                 "SELECT COUNT(*) FROM webhook_subscriptions_tombstones "
-                "WHERE delivery_url_at_delete = %s AND acknowledged_at IS NULL",
+                "WHERE delivery_url_canonical = %s AND acknowledged_at IS NULL",
                 (url,),
             )
             assert cur.fetchone()[0] == 0

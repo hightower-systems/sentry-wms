@@ -35,6 +35,7 @@ class UpdateWebhookRequest(BaseModel):
     pending_ceiling: Optional[int] = Field(None, ge=1)
     dlq_ceiling: Optional[int] = Field(None, ge=1)
     status: Optional[str] = None
+    acknowledge_url_reuse: bool = False
 
     @field_validator("delivery_url")
     @classmethod

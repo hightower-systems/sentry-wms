@@ -26,6 +26,8 @@ from services.webhook_dispatcher import env_validator
 # refusal, then poke values INSIDE and confirm acceptance.
 _RANGE_CASES = [
     ("DISPATCHER_HTTP_TIMEOUT_MS", 1000, 60000),
+    ("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", 100, 60000),
+    ("DISPATCHER_HTTP_READ_TIMEOUT_MS", 100, 60000),
     ("DISPATCHER_FALLBACK_POLL_MS", 500, 10000),
     ("DISPATCHER_SHUTDOWN_DRAIN_S", 1, 300),
     ("DISPATCHER_MAX_CONCURRENT_POSTS", 1, 100),
@@ -38,8 +40,9 @@ def _clean_env(monkeypatch):
     """Wipe every env var the validator looks at so a host-shell
     leak does not interfere with the test. REDIS_URL is set to a
     valid placeholder because #212 added it as a required env;
-    tests that target the REDIS_URL guard specifically delete it
-    after this helper runs."""
+    SENTRY_PUBSUB_HMAC_KEY is set to a valid 32-byte placeholder
+    because #227 added it as a required env. Tests that target
+    those guards specifically delete the var after this helper runs."""
     for name, _lo, _hi in _RANGE_CASES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("SENTRY_ALLOW_HTTP_WEBHOOKS", raising=False)
@@ -47,6 +50,24 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv("FLASK_ENV", raising=False)
     monkeypatch.delenv("DISPATCHER_ENABLED", raising=False)
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv(
+        "SENTRY_PUBSUB_HMAC_KEY",
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    )
+
+
+def _safe_timeout_baseline(monkeypatch):
+    """#237: validate_or_die enforces max(connect, read) <= timeout.
+    Boundary tests on a SINGLE timeout var leave the others at
+    their documented defaults, which can violate the inequality
+    (e.g. CONNECT at upper bound 60000 vs default TIMEOUT 10000).
+    Call this from any test that runs validate_or_die while
+    pushing one timeout var to its bound; explicitly NOT folded
+    into _clean_env because TestEnvVarHelpers expects the vars
+    unset so int_var returns the documented _RANGE_VARS defaults."""
+    monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "60000")
+    monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "100")
+    monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "100")
 
 
 class TestRangeValidators:
@@ -70,6 +91,12 @@ class TestRangeValidators:
     @pytest.mark.parametrize("name,lo,hi", _RANGE_CASES, ids=[c[0] for c in _RANGE_CASES])
     def test_at_boundary_accepts(self, monkeypatch, name, lo, hi):
         _clean_env(monkeypatch)
+        # #237: the three timeout vars share a max(connect, read)
+        # <= timeout inequality. Establish a coordinated baseline
+        # before pushing any single var to its bound; the var
+        # under test gets overwritten right after so its value
+        # still drives the assertion.
+        _safe_timeout_baseline(monkeypatch)
         monkeypatch.setenv(name, str(lo))
         env_validator.validate_or_die()  # no raise
         monkeypatch.setenv(name, str(hi))
@@ -229,6 +256,96 @@ class TestRequiredEnvVars:
     def test_set_redis_url_accepted(self, monkeypatch):
         _clean_env(monkeypatch)
         # _clean_env sets REDIS_URL; validate succeeds.
+        env_validator.validate_or_die()  # no raise
+
+
+class TestHttpTimeoutInequality:
+    """#237: each per-op cap must fit inside the wall-clock cap so
+    the per-op timeouts are not dead defense. A boot guard refuses
+    configurations where CONNECT or READ exceeds TIMEOUT alone."""
+
+    def test_read_above_timeout_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "5000")
+        monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "1000")
+        monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "9000")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        msg = str(excinfo.value)
+        assert "DISPATCHER_HTTP_READ_TIMEOUT_MS" in msg
+        assert "DISPATCHER_HTTP_TIMEOUT_MS" in msg
+
+    def test_connect_above_timeout_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "5000")
+        monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "9000")
+        monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "1000")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "DISPATCHER_HTTP_CONNECT_TIMEOUT_MS" in str(excinfo.value)
+
+    def test_per_op_at_or_below_timeout_accepts_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("DISPATCHER_HTTP_TIMEOUT_MS", "10000")
+        monkeypatch.setenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", "5000")
+        monkeypatch.setenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", "8000")
+        env_validator.validate_or_die()  # no raise
+
+    def test_default_values_accept_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        # Clear the test baseline overrides so the validator falls
+        # back to the documented _RANGE_VARS defaults: TIMEOUT=10000,
+        # CONNECT=5000, READ=8000. max(5000, 8000) = 8000 <= 10000.
+        monkeypatch.delenv("DISPATCHER_HTTP_TIMEOUT_MS", raising=False)
+        monkeypatch.delenv("DISPATCHER_HTTP_CONNECT_TIMEOUT_MS", raising=False)
+        monkeypatch.delenv("DISPATCHER_HTTP_READ_TIMEOUT_MS", raising=False)
+        env_validator.validate_or_die()  # no raise
+
+
+class TestPubsubHmacKeyBootGuard:
+    """#227: SENTRY_PUBSUB_HMAC_KEY is required when the dispatcher
+    is enabled. The wake module's pubsub envelope is HMAC-signed
+    with this key; an unset / placeholder / short key would let a
+    Redis-side attacker forge subscription_event messages."""
+
+    def test_unset_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.delenv("SENTRY_PUBSUB_HMAC_KEY", raising=False)
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "SENTRY_PUBSUB_HMAC_KEY" in str(excinfo.value)
+
+    def test_empty_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("SENTRY_PUBSUB_HMAC_KEY", "")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "SENTRY_PUBSUB_HMAC_KEY" in str(excinfo.value)
+
+    def test_placeholder_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv(
+            "SENTRY_PUBSUB_HMAC_KEY",
+            "replace-me-with-secrets-token-hex-32",
+        )
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "placeholder" in str(excinfo.value)
+
+    def test_short_key_refuses_boot(self, monkeypatch):
+        _clean_env(monkeypatch)
+        monkeypatch.setenv("SENTRY_PUBSUB_HMAC_KEY", "short")
+        with pytest.raises(env_validator.DispatcherEnvError) as excinfo:
+            env_validator.validate_or_die()
+        assert "32 bytes" in str(excinfo.value)
+
+    def test_kill_switch_skips_pubsub_key_check(self, monkeypatch):
+        """DISPATCHER_ENABLED=false bypasses the pubsub-key guard
+        too, so an operator can run the kill switch without having
+        configured the key."""
+        _clean_env(monkeypatch)
+        monkeypatch.delenv("SENTRY_PUBSUB_HMAC_KEY", raising=False)
+        monkeypatch.setenv("DISPATCHER_ENABLED", "false")
         env_validator.validate_or_die()  # no raise
 
 

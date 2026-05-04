@@ -905,7 +905,26 @@ CREATE TABLE webhook_subscriptions (
     CONSTRAINT webhook_subscriptions_pending_ceiling_range
         CHECK (pending_ceiling BETWEEN 100 AND 100000),
     CONSTRAINT webhook_subscriptions_dlq_ceiling_range
-        CHECK (dlq_ceiling BETWEEN 10 AND 10000)
+        CHECK (dlq_ceiling BETWEEN 10 AND 10000),
+    -- #236: bottom-rung enforcement on status + pause_reason.
+    -- Migration 029 left validation to the application layer
+    -- ("Status validation is application side"); migration 036
+    -- adds the column-level CHECKs so a privileged-role error
+    -- or malicious migration cannot write an out-of-band value.
+    -- The malformed_filter value lands here because the
+    -- dispatcher's V-314 auto-pause path writes it.
+    CONSTRAINT webhook_subscriptions_status_enum
+        CHECK (status IN ('active', 'paused', 'revoked')),
+    CONSTRAINT webhook_subscriptions_pause_reason_enum
+        CHECK (
+            pause_reason IS NULL
+            OR pause_reason IN (
+                'manual',
+                'pending_ceiling',
+                'dlq_ceiling',
+                'malformed_filter'
+            )
+        )
 );
 
 CREATE INDEX webhook_subscriptions_status
@@ -1117,6 +1136,71 @@ CREATE TRIGGER tr_webhook_secrets_audit_truncate
     FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_truncate();
 
 -- ============================================================
+-- WEBHOOK DELIVERIES audit (#235; v1.6.1)
+-- ============================================================
+-- Statement-level DELETE / TRUNCATE forensic instrumentation for
+-- webhook_deliveries, mirroring the migration 032 shape on
+-- webhook_subscriptions / webhook_secrets. cleanup_webhook_deliveries
+-- (#228 chunked beat task) and the cascade in the hard-delete
+-- admin path both DELETE rows here; without these triggers a
+-- compromised cleanup-task role could mass-DELETE the per-attempt
+-- history with no forensic surface. The DDL lives in
+-- db/migrations/035_webhook_deliveries_audit.sql.
+CREATE TABLE webhook_deliveries_audit (
+    audit_id          BIGSERIAL    PRIMARY KEY,
+    event_type        VARCHAR(16)  NOT NULL,
+    rows_affected     INTEGER,
+    sess_user         TEXT         NOT NULL,
+    curr_user         TEXT         NOT NULL,
+    backend_pid       INTEGER      NOT NULL,
+    application_name  TEXT,
+    event_at          TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX webhook_deliveries_audit_event_at
+    ON webhook_deliveries_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION webhook_deliveries_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO webhook_deliveries_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_deliveries_audit_delete
+    AFTER DELETE ON webhook_deliveries
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_deliveries_audit_delete();
+
+CREATE OR REPLACE FUNCTION webhook_deliveries_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO webhook_deliveries_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_deliveries_audit_truncate
+    AFTER TRUNCATE ON webhook_deliveries
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_deliveries_audit_truncate();
+
+-- ============================================================
 -- WEBHOOK SUBSCRIPTIONS TOMBSTONES (v1.6.0 URL-reuse gate)
 -- ============================================================
 -- Per-deletion history that backs the URL-reuse acknowledgement
@@ -1137,11 +1221,15 @@ CREATE TRIGGER tr_webhook_secrets_audit_truncate
 -- NOT NULL because the admin endpoint always runs under cookie
 -- auth; acknowledged_by is nullable until the gate is cleared.
 --
--- The identical DDL lives in db/migrations/033_webhook_subscriptions_tombstones.sql.
+-- The identical DDL lives in db/migrations/033_webhook_subscriptions_tombstones.sql
+-- plus db/migrations/034_webhook_tombstones_canonical.sql (#218: the gate
+-- compares delivery_url_canonical so a case / port / fragment / trailing-
+-- slash mutation cannot bypass URL-reuse acknowledgement).
 CREATE TABLE webhook_subscriptions_tombstones (
     tombstone_id            BIGSERIAL    PRIMARY KEY,
     subscription_id         UUID         NOT NULL,
     delivery_url_at_delete  TEXT         NOT NULL,
+    delivery_url_canonical  TEXT         NOT NULL,
     connector_id            VARCHAR(64)  NOT NULL,
     deleted_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     deleted_by              INTEGER      NOT NULL REFERENCES users(user_id),
@@ -1149,6 +1237,6 @@ CREATE TABLE webhook_subscriptions_tombstones (
     acknowledged_by         INTEGER      REFERENCES users(user_id)
 );
 
-CREATE INDEX webhook_subscriptions_tombstones_url_unack
-    ON webhook_subscriptions_tombstones (delivery_url_at_delete)
+CREATE INDEX webhook_subscriptions_tombstones_canonical_unack
+    ON webhook_subscriptions_tombstones (delivery_url_canonical)
     WHERE acknowledged_at IS NULL;

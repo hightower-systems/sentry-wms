@@ -32,6 +32,41 @@ from . import ssrf_guard
 LOGGER = logging.getLogger("webhook_dispatcher.http_client")
 
 _DEFAULT_HTTP_TIMEOUT_S = 10.0
+# #237: per-operation connect / read timeouts. The pre-#237 code
+# passed a single float to ``session.post(..., timeout=...)`` which
+# requests interprets as "max wait for any single I/O operation,"
+# not "max wall-clock for the whole exchange." A consumer that
+# drip-feeds the response one byte every 9s under a 10s read
+# timeout could keep the connection alive forever. The tuple form
+# bounds connect and read independently, and the wall-clock
+# watchdog below caps the whole exchange. Defaults are chosen so
+# connect + read <= TIMEOUT_S; env_validator enforces the
+# inequality at boot.
+_DEFAULT_HTTP_CONNECT_TIMEOUT_S = 5.0
+_DEFAULT_HTTP_READ_TIMEOUT_S = 8.0
+
+# #226: maximum response-body bytes the dispatcher will read.
+# The dispatcher never inspects the body (error_detail comes from
+# the server-owned catalog; consumer bodies are intentionally
+# discarded to avoid credential-exfiltration via the DLQ viewer).
+# A malicious or misconfigured consumer can stream an unbounded
+# 5xx body that the default `requests` path buffers entirely
+# before the call returns; under sustained abuse the dispatcher
+# worker's RSS spikes. Cap at 64 KB (orders of magnitude above
+# any reasonable ACK) and close the connection past that point.
+_MAX_RESPONSE_BODY_BYTES = 64 * 1024
+
+
+class SingleSerializationViolation(RuntimeError):
+    """Raised when the bytes about to be POSTed do not match the
+    bytes that were signed. The dispatcher catches this by name
+    and re-raises so the test suite (and the operator's logs)
+    surface a programmer error rather than reclassifying the
+    breach as a generic delivery failure.
+
+    #221: replaced ``assert`` so the check is part of the emitted
+    bytecode regardless of ``python -O`` / PYTHONOPTIMIZE level.
+    """
 
 
 @dataclass(frozen=True)
@@ -117,8 +152,22 @@ class HttpClient:
     call. D8 ships the bare client.
     """
 
-    def __init__(self, timeout_s: float = _DEFAULT_HTTP_TIMEOUT_S):
+    def __init__(
+        self,
+        timeout_s: float = _DEFAULT_HTTP_TIMEOUT_S,
+        connect_timeout_s: float = _DEFAULT_HTTP_CONNECT_TIMEOUT_S,
+        read_timeout_s: float = _DEFAULT_HTTP_READ_TIMEOUT_S,
+    ):
+        # timeout_s is the wall-clock cap on the entire send call;
+        # connect_timeout_s + read_timeout_s are the per-operation
+        # caps requests passes through to urllib3. The wall-clock
+        # cap fires first when a consumer drip-feeds bytes within
+        # the per-op read budget (#237). The CI workflow / env_validator
+        # enforces connect + read <= timeout so the per-op caps are
+        # not dead defense.
         self.timeout_s = timeout_s
+        self.connect_timeout_s = connect_timeout_s
+        self.read_timeout_s = read_timeout_s
         self._session = None  # lazy
 
     def _get_session(self):
@@ -160,15 +209,30 @@ class HttpClient:
         status_code (response landed) or an error_kind
         (exception fired before the response).
 
-        Plan §3.1 single-serialization runtime assertion: the
-        bytes the HTTP layer is about to send MUST equal the
-        bytes that were signed. A refactor that introduces a
-        transformation between sign and send surfaces here.
+        Single-serialization runtime check: the bytes the HTTP
+        layer is about to send MUST equal the bytes that were
+        signed. A refactor that introduces a transformation
+        between sign and send surfaces here.
+
+        #221: this used to be ``assert``, which Python ``-O``
+        strips at compile time (the bytecode emitted under
+        PYTHONOPTIMIZE=1 omits the SETUP_ASSERTION block entirely).
+        A production deployment that runs the dispatcher with
+        ``python -O`` or with PYTHONOPTIMIZE in the environment
+        loses this defense silently, and a body mismatch
+        introduced by a logging middleware or instrumentation
+        layer ships unsigned. Replaced with an explicit
+        ``raise RuntimeError`` so the check is part of the
+        emitted bytecode regardless of optimization level.
         """
-        assert body is signed_body_for_assertion or body == signed_body_for_assertion, (
-            "single-serialization invariant violated: the bytes about to be "
-            "POSTed do not match the bytes that were signed."
-        )
+        if not (
+            body is signed_body_for_assertion
+            or body == signed_body_for_assertion
+        ):
+            raise SingleSerializationViolation(
+                "single-serialization invariant violated: the bytes about "
+                "to be POSTed do not match the bytes that were signed."
+            )
 
         try:
             ssrf_guard.assert_url_safe(url)
@@ -191,41 +255,110 @@ class HttpClient:
         }
 
         session = self._get_session()
+        # #226 + #237: stream=True bounds the response-buffer surface
+        # AND is required for the wall-clock watchdog below to be able
+        # to interrupt a slow-drip read (an unbounded body without
+        # stream=True would keep the underlying urllib3 read alive
+        # past the wall-clock deadline). The (connect, read) tuple
+        # caps each individual I/O step; the wall-clock watchdog
+        # caps the whole exchange.
+        import threading
+        from queue import Empty, Queue
+
+        result_q: Queue = Queue(maxsize=1)
+
+        def _do_request():
+            try:
+                resp = session.post(
+                    url,
+                    data=body,
+                    headers=headers,
+                    timeout=(self.connect_timeout_s, self.read_timeout_s),
+                    verify=True,
+                    allow_redirects=False,
+                    stream=True,
+                )
+                result_q.put(("ok", resp))
+            except Exception as exc:  # noqa: BLE001
+                result_q.put(("err", exc))
+
+        # daemon=True so an orphaned request thread cannot block
+        # process exit on SIGTERM. The orphan continues running in
+        # the background until the per-op read timeout fires (at
+        # which point it puts its err result into a queue nobody
+        # is reading and the GC reaps it), or until the process
+        # exits.
+        threading.Thread(target=_do_request, daemon=True).start()
         try:
-            response = session.post(
-                url,
-                data=body,
-                headers=headers,
-                timeout=self.timeout_s,
-                verify=True,
-                allow_redirects=False,
-            )
-        except Exception as exc:  # noqa: BLE001
-            kind, detail = classify_exception(exc)
+            kind, payload = result_q.get(timeout=self.timeout_s)
+        except Empty:
+            # #237 wall-clock cap fired before the request thread
+            # produced a result. Reclassify as a timeout error so
+            # the dispatcher's retry path runs the same way it
+            # does for an organic per-op timeout.
             return HttpResponse(
                 status_code=None,
-                error_kind=kind,
-                error_detail=detail,
+                error_kind="timeout",
+                error_detail=error_catalog.get_short_message("timeout"),
             )
 
-        if 200 <= response.status_code < 300:
+        if kind == "err":
+            err_kind, err_detail = classify_exception(payload)
+            return HttpResponse(
+                status_code=None,
+                error_kind=err_kind,
+                error_detail=err_detail,
+            )
+        response = payload
+
+        # #226: regardless of the status_code branches below, the
+        # response is closed via try/finally so a 2xx with a huge
+        # body (e.g. a chatty consumer ACK) cannot leak buffered
+        # bytes either. The error_detail is sourced from the
+        # server-owned catalog, never from response.text or
+        # response.content -- a misconfigured consumer endpoint
+        # can echo upstream credentials (DB connection strings,
+        # API tokens, session cookies) into a 5xx page; persisting
+        # that body would make the DLQ admin viewer a credential-
+        # exfiltration channel for the consumer's secrets.
+        try:
+            # #226: refuse oversized advertised bodies up front.
+            # A consumer that advertises Content-Length above the
+            # cap is reclassified as a 5xx-class failure so the
+            # dispatcher never even drains the bytes.
+            try:
+                advertised = int(response.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                advertised = 0
+            if advertised > _MAX_RESPONSE_BODY_BYTES:
+                kind = classify_status_code(response.status_code)
+                if kind not in ("4xx", "5xx", "redirected"):
+                    kind = "5xx"
+                return HttpResponse(
+                    status_code=response.status_code,
+                    error_kind=kind,
+                    error_detail=error_catalog.get_short_message(kind),
+                )
+
+            if 200 <= response.status_code < 300:
+                return HttpResponse(
+                    status_code=response.status_code,
+                    error_kind=None,
+                    error_detail=None,
+                )
+            kind = classify_status_code(response.status_code)
             return HttpResponse(
                 status_code=response.status_code,
-                error_kind=None,
-                error_detail=None,
+                error_kind=kind,
+                error_detail=error_catalog.get_short_message(kind),
             )
-
-        kind = classify_status_code(response.status_code)
-        # error_detail is sourced from the server-owned catalog. The
-        # consumer's response body is intentionally NOT stored: a
-        # misconfigured consumer endpoint can echo upstream
-        # credentials (DB connection strings, API tokens, session
-        # cookies) into a 5xx page. Persisting that body would make
-        # the DLQ admin viewer a credential-exfiltration channel for
-        # the consumer's secrets. Operators read the catalog
-        # description and triage hint via /admin/webhook-errors.
-        return HttpResponse(
-            status_code=response.status_code,
-            error_kind=kind,
-            error_detail=error_catalog.get_short_message(kind),
-        )
+        finally:
+            # close() returns the underlying connection to the
+            # urllib3 pool without reading the body. Any bytes
+            # urllib3 has already prefetched are bounded by its
+            # internal buffer (a few KB at most); never the full
+            # body the consumer is trying to ship.
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001
+                pass

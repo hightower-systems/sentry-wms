@@ -49,6 +49,11 @@ services:
       # fails to boot without it so a misconfigured deployment never
       # silently falls back to an empty pepper.
       SENTRY_TOKEN_PEPPER: ${SENTRY_TOKEN_PEPPER:?Set SENTRY_TOKEN_PEPPER in .env -- see .env.example}
+      # #227: HMAC key for the webhook_subscription_events Redis channel.
+      # The api container's admin handlers publish signed pubsub envelopes;
+      # the dispatcher container verifies them with the same key. An
+      # unset or trivial value refuses dispatcher boot.
+      SENTRY_PUBSUB_HMAC_KEY: ${SENTRY_PUBSUB_HMAC_KEY:?Set SENTRY_PUBSUB_HMAC_KEY in .env -- see .env.example}
       # The API enqueues Celery tasks (manual sync trigger, fulfillment
       # push) so it needs the authenticated broker URL too.
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
@@ -165,12 +170,23 @@ services:
       # inbound-auth only (wms_tokens hashing) and the dispatcher has
       # no use for it. Forwarding would expand the daemon's secret
       # surface unnecessarily.
+      # #227: same HMAC key the api container uses to sign published
+      # subscription_event messages. The dispatcher verifies inbound
+      # messages with this key; rotating it requires restarting both
+      # containers in lockstep.
+      SENTRY_PUBSUB_HMAC_KEY: ${SENTRY_PUBSUB_HMAC_KEY:?Set SENTRY_PUBSUB_HMAC_KEY in .env -- see .env.example}
       REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env -- see .env.example}@redis:6379/0
       DISPATCHER_HEARTBEAT_FILE: /tmp/webhook-dispatcher-heartbeat
       DISPATCHER_ENABLED: ${DISPATCHER_ENABLED:-true}
       # Dispatcher tunables (env_validator enforces bounds at boot;
       # see plan §2.10). Values shown are the documented defaults.
+      # #237: DISPATCHER_HTTP_TIMEOUT_MS is the wall-clock cap on
+      # the entire send call; CONNECT + READ are the per-op
+      # timeouts requests passes through. env_validator refuses
+      # boot when CONNECT + READ > TIMEOUT.
       DISPATCHER_HTTP_TIMEOUT_MS: ${DISPATCHER_HTTP_TIMEOUT_MS:-10000}
+      DISPATCHER_HTTP_CONNECT_TIMEOUT_MS: ${DISPATCHER_HTTP_CONNECT_TIMEOUT_MS:-5000}
+      DISPATCHER_HTTP_READ_TIMEOUT_MS: ${DISPATCHER_HTTP_READ_TIMEOUT_MS:-8000}
       DISPATCHER_FALLBACK_POLL_MS: ${DISPATCHER_FALLBACK_POLL_MS:-2000}
       DISPATCHER_SHUTDOWN_DRAIN_S: ${DISPATCHER_SHUTDOWN_DRAIN_S:-30}
       DISPATCHER_MAX_CONCURRENT_POSTS: ${DISPATCHER_MAX_CONCURRENT_POSTS:-16}

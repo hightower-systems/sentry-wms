@@ -51,6 +51,8 @@ from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Any, Optional
 
+from . import pubsub_signing
+
 
 LOGGER = logging.getLogger("webhook_dispatcher.wake")
 
@@ -72,6 +74,27 @@ _VALID_SUBSCRIPTION_EVENT_KINDS = frozenset({
     "delivery_url_changed",
     "rate_limit_changed",
     "secret_rotated",
+    # #229: surface filter mutations on the cross-worker channel
+    # so a sleeping worker wakes promptly and the next deliver_one
+    # picks up the new filter from the just-committed
+    # webhook_subscriptions row. deliver_one always re-reads the
+    # row each cycle, so a wake is sufficient -- no per-worker
+    # filter cache to invalidate. Filter changes are NON-
+    # retroactive: events committed BEFORE the PATCH that match
+    # the new filter but not the old are not re-delivered (the
+    # cursor never rewinds). Operators rebuilding history reach
+    # for the replay-batch endpoint instead.
+    "subscription_filter_changed",
+    # #230: surface ceiling mutations on the cross-worker channel
+    # so audit triage can name what changed and operators can see
+    # the event in the dispatcher's wake stream. Ceiling changes
+    # do NOT auto-resume a subscription that is paused with the
+    # matching pause_reason: the operator must follow up with an
+    # explicit status=active PATCH to resume. The publish here is
+    # informational; the per-cycle re-read in deliver_one already
+    # picks up the new ceilings on every active worker, and a
+    # paused worker will not act on the wake until resumed.
+    "ceiling_changed",
 })
 
 
@@ -147,13 +170,29 @@ def publish_subscription_event(
             subscription_id,
         )
         return
+    # #227: HMAC-sign the payload so a Redis-side attacker cannot
+    # forge fake subscription_event messages (eviction storms,
+    # spammed secret_rotated notifications). The key is loaded
+    # from SENTRY_PUBSUB_HMAC_KEY on every publish so a runtime
+    # rotation propagates without restarting the api container.
+    try:
+        key = pubsub_signing.load_key()
+    except pubsub_signing.PubsubKeyConfigError as exc:
+        _record_publish_failure()
+        LOGGER.warning(
+            "wake: SENTRY_PUBSUB_HMAC_KEY misconfigured (%s); refusing "
+            "to publish unsigned subscription_event. Peer workers will "
+            "see the change on the next 60s refresh cycle.",
+            exc,
+        )
+        return
     try:
         import redis  # noqa: WPS433
         client = redis.Redis.from_url(redis_url)
-        client.publish(
-            SUBSCRIPTION_EVENTS_CHANNEL,
-            json.dumps({"subscription_id": subscription_id, "event": event}),
+        envelope = pubsub_signing.build_envelope(
+            subscription_id, event, key
         )
+        client.publish(SUBSCRIPTION_EVENTS_CHANNEL, envelope)
     except Exception as exc:  # noqa: BLE001
         _record_publish_failure()
         # Strip credentials from the URL before logging the host;
@@ -576,35 +615,52 @@ class WakeOrchestrator:
             )
 
     def _handle_pubsub_message(self, message: Any) -> None:
-        """Parse one pubsub message and enqueue. Logs and drops
-        malformed payloads so a misconfigured publisher does not
-        wedge the subscriber thread.
+        """Parse + verify one pubsub message and enqueue. Logs and
+        drops messages that fail HMAC verification (#227),
+        malformed JSON, or unknown event kinds.
 
-        Expected shape (D4 publishes this from admin endpoints):
+        Expected wire shape:
 
-            {"subscription_id": "<uuid>", "event": "<kind>"}
+            {"sig": "<hex>", "payload": "<inner-json-string>"}
+
+        where inner is ``{"subscription_id": ..., "event": ...}``.
+        Pre-#227 the subscriber accepted the inner shape directly;
+        a Redis-side attacker could forge eviction / rotation
+        events with no key. Post-#227 the inner payload is verified
+        with HMAC-SHA256 keyed on SENTRY_PUBSUB_HMAC_KEY before
+        the wake queue picks it up.
         """
-        payload = message.get("data")
-        if isinstance(payload, bytes):
+        raw = message.get("data")
+        if isinstance(raw, bytes):
             try:
-                payload = payload.decode("utf-8")
+                raw = raw.decode("utf-8")
             except UnicodeDecodeError:
                 LOGGER.warning(
                     "wake: pubsub message has non-utf-8 payload; ignored"
                 )
                 return
+        if not isinstance(raw, str) or not raw:
+            LOGGER.warning("wake: pubsub message has empty payload; ignored")
+            return
         try:
-            data = json.loads(payload) if payload else {}
-        except (TypeError, ValueError):
+            key = pubsub_signing.load_key()
+        except pubsub_signing.PubsubKeyConfigError as exc:
             LOGGER.warning(
-                "wake: pubsub message is not valid JSON; ignored: %r",
-                payload,
+                "wake: SENTRY_PUBSUB_HMAC_KEY misconfigured (%s); dropping "
+                "pubsub message",
+                exc,
             )
             return
-        if not isinstance(data, dict):
+        data = pubsub_signing.parse_envelope(raw, key)
+        if data is None:
+            # Verification failed: missing sig, malformed JSON,
+            # or signature mismatch. Log at WARNING with the raw
+            # payload truncated; an attacker pumping forged
+            # messages produces a visible signal in the logs.
             LOGGER.warning(
-                "wake: pubsub message is not a JSON object; ignored: %r",
-                data,
+                "wake: pubsub message rejected (signature missing or "
+                "invalid); dropping. raw=%r",
+                raw[:200],
             )
             return
         sub_id = data.get("subscription_id")

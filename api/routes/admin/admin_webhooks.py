@@ -55,6 +55,7 @@ from services.webhook_dispatcher import env_validator as dispatcher_env
 from services.webhook_dispatcher import error_catalog as dispatcher_error_catalog
 from services.webhook_dispatcher import signing as dispatcher_signing
 from services.webhook_dispatcher import ssrf_guard
+from services.webhook_dispatcher import url_normalize as dispatcher_url_normalize
 from services.webhook_dispatcher import wake as dispatcher_wake
 from utils.validation import validate_body
 
@@ -144,6 +145,98 @@ def _http_webhooks_allowed() -> bool:
     return os.environ.get("SENTRY_ALLOW_HTTP_WEBHOOKS", "").lower() == "true"
 
 
+_EMPTY_FILTER_FIELDS = (
+    "event_types",
+    "warehouse_ids",
+    "aggregate_external_id_allowlist",
+)
+
+
+def _reject_empty_filter_arrays(sub_filter):
+    """#231: refuse ``event_types=[]`` (and the warehouse_ids /
+    aggregate_external_id_allowlist analogs). The dispatcher's
+    truthy gate on each list emits no SQL clause for an empty
+    list, so a subscription created with ``[]`` matches every
+    event -- the inverse of what the shape looks like it asks
+    for. Operators who want "no events" use ``status='paused'``;
+    operators who want "all events" omit the field. Returns a
+    Flask response on rejection or ``None`` on pass.
+
+    Called from both POST and PATCH so the contract is uniform.
+    """
+    if sub_filter is None:
+        return None
+    for field_name in _EMPTY_FILTER_FIELDS:
+        value = getattr(sub_filter, field_name, None)
+        if value is not None and len(value) == 0:
+            response = jsonify(
+                {
+                    "error": "empty_filter_array",
+                    "field": field_name,
+                    "detail": (
+                        f"{field_name}=[] is not supported. Omit the "
+                        "field to match every value, or supply at least "
+                        "one entry to scope the filter. To stop "
+                        "deliveries, set status='paused' instead."
+                    ),
+                }
+            )
+            response.status_code = 400
+            return response
+    return None
+
+
+def _check_url_tombstone(canonical_url: str, acknowledge_url_reuse: bool):
+    """Run the URL-reuse tombstone gate against the canonical form
+    of the delivery_url. Returns ``(early_response, tombstone_row)``:
+
+    - ``early_response``: a Flask response the caller must return
+      as the handler's reply when the gate refuses, or None on
+      pass.
+    - ``tombstone_row``: the matching tombstone row (or None) so
+      the caller can stamp acknowledged_at + acknowledged_by inside
+      the same transaction as the mutation.
+
+    Both POST (#218) and PATCH on delivery_url change (#219) funnel
+    through this helper so the gate's lookup shape and 409 response
+    body stay identical across surfaces.
+    """
+    tombstone_row = g.db.execute(
+        text(
+            """
+            SELECT tombstone_id
+              FROM webhook_subscriptions_tombstones
+             WHERE delivery_url_canonical = :canonical
+               AND acknowledged_at IS NULL
+             ORDER BY tombstone_id DESC
+             LIMIT 1
+            """
+        ),
+        {"canonical": canonical_url},
+    ).fetchone()
+    if tombstone_row is None:
+        return None, None
+    if acknowledge_url_reuse:
+        return None, tombstone_row
+    response = jsonify(
+        {
+            "error": "url_reuse_tombstone",
+            "tombstone_id": int(tombstone_row.tombstone_id),
+            "detail": (
+                "this delivery_url was associated with a previously-"
+                "deleted subscription. Re-submit with "
+                "acknowledge_url_reuse=true to confirm intentional "
+                "reuse."
+            ),
+        }
+    )
+    response.status_code = 409
+    response.headers["X-Sentry-URL-Reuse-Tombstone"] = str(
+        int(tombstone_row.tombstone_id)
+    )
+    return response, tombstone_row
+
+
 @admin_bp.route("/webhooks", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
@@ -219,6 +312,9 @@ def create_webhook(validated):
         )
 
     sub_filter = validated.subscription_filter
+    early_empty = _reject_empty_filter_arrays(sub_filter)
+    if early_empty is not None:
+        return early_empty
     if sub_filter.event_types:
         unknown = sorted(set(sub_filter.event_types) - _KNOWN_EVENT_TYPES)
         if unknown:
@@ -253,37 +349,14 @@ def create_webhook(validated):
                 400,
             )
 
-    tombstone_row = g.db.execute(
-        text(
-            """
-            SELECT tombstone_id
-              FROM webhook_subscriptions_tombstones
-             WHERE delivery_url_at_delete = :url
-               AND acknowledged_at IS NULL
-             ORDER BY tombstone_id DESC
-             LIMIT 1
-            """
-        ),
-        {"url": validated.delivery_url},
-    ).fetchone()
-    if tombstone_row is not None and not validated.acknowledge_url_reuse:
-        response = jsonify(
-            {
-                "error": "url_reuse_tombstone",
-                "tombstone_id": int(tombstone_row.tombstone_id),
-                "detail": (
-                    "this delivery_url was associated with a previously-"
-                    "deleted subscription. Re-submit with "
-                    "acknowledge_url_reuse=true to confirm intentional "
-                    "reuse."
-                ),
-            }
-        )
-        response.status_code = 409
-        response.headers["X-Sentry-URL-Reuse-Tombstone"] = str(
-            int(tombstone_row.tombstone_id)
-        )
-        return response
+    canonical_url = dispatcher_url_normalize.canonicalize_delivery_url(
+        validated.delivery_url
+    )
+    early, tombstone_row = _check_url_tombstone(
+        canonical_url, validated.acknowledge_url_reuse
+    )
+    if early is not None:
+        return early
 
     plaintext = secrets.token_urlsafe(32).encode("utf-8")
     fernet = dispatcher_signing._get_fernet()  # noqa: SLF001
@@ -468,6 +541,7 @@ def update_webhook(validated, subscription_id):
     if current is None:
         return jsonify({"error": "subscription_not_found"}), 404
 
+    patch_tombstone_row = None
     if validated.delivery_url is not None:
         parsed = urlparse(validated.delivery_url)
         if parsed.scheme not in ("http", "https"):
@@ -481,6 +555,24 @@ def update_webhook(validated, subscription_id):
                 jsonify({"error": "private_destination", "detail": str(exc)}),
                 400,
             )
+        # #219: a PATCH that switches delivery_url to a previously-
+        # tombstoned URL must trip the same gate the POST handler
+        # runs. The pre-#219 PATCH path skipped the lookup, so a
+        # compromised admin could create-then-PATCH to take over a
+        # deleted URL with no acknowledgement trail. The gate runs
+        # only when the URL actually changes; touching delivery_url
+        # to its current value is a no-op for this check.
+        if validated.delivery_url != current.delivery_url:
+            canonical_new = (
+                dispatcher_url_normalize.canonicalize_delivery_url(
+                    validated.delivery_url
+                )
+            )
+            early, patch_tombstone_row = _check_url_tombstone(
+                canonical_new, validated.acknowledge_url_reuse
+            )
+            if early is not None:
+                return early
 
     if validated.pending_ceiling is not None:
         cap = dispatcher_env.int_var("DISPATCHER_MAX_PENDING_HARD_CAP")
@@ -503,6 +595,9 @@ def update_webhook(validated, subscription_id):
 
     if validated.subscription_filter is not None:
         sub_filter = validated.subscription_filter
+        early_empty = _reject_empty_filter_arrays(sub_filter)
+        if early_empty is not None:
+            return early_empty
         if sub_filter.event_types:
             unknown = sorted(set(sub_filter.event_types) - _KNOWN_EVENT_TYPES)
             if unknown:
@@ -567,6 +662,18 @@ def update_webhook(validated, subscription_id):
                 validated.subscription_filter.model_dump_json(exclude_none=True)
             )
             _record("subscription_filter", old_filter, new_filter_dump)
+            # #229: signal peer workers so they pick up the new
+            # filter on the next deliver_one cycle instead of
+            # waiting for the next inbound NOTIFY. deliver_one
+            # already re-reads the subscription row per cycle, so
+            # the wake here narrows the latency window between
+            # commit and effect; no per-worker filter cache to
+            # invalidate. Filter changes are NON-retroactive: the
+            # cursor never rewinds, so events committed before
+            # the PATCH that match the new filter but not the old
+            # do not re-deliver. Operators backfilling history
+            # reach for the replay-batch endpoint.
+            pubsub_events.append("subscription_filter_changed")
 
     if (
         validated.rate_limit_per_second is not None
@@ -581,6 +688,7 @@ def update_webhook(validated, subscription_id):
         )
         pubsub_events.append("rate_limit_changed")
 
+    pending_ceiling_changed = False
     if (
         validated.pending_ceiling is not None
         and validated.pending_ceiling != current.pending_ceiling
@@ -592,7 +700,9 @@ def update_webhook(validated, subscription_id):
             current.pending_ceiling,
             validated.pending_ceiling,
         )
+        pending_ceiling_changed = True
 
+    dlq_ceiling_changed = False
     if (
         validated.dlq_ceiling is not None
         and validated.dlq_ceiling != current.dlq_ceiling
@@ -600,6 +710,17 @@ def update_webhook(validated, subscription_id):
         set_clauses.append("dlq_ceiling = :dlq_ceiling")
         params["dlq_ceiling"] = validated.dlq_ceiling
         _record("dlq_ceiling", current.dlq_ceiling, validated.dlq_ceiling)
+        dlq_ceiling_changed = True
+
+    if pending_ceiling_changed or dlq_ceiling_changed:
+        # #230: publish so peer workers re-evaluate the active
+        # ceiling on their next deliver_one cycle. The publish is
+        # informational for non-paused workers (they re-read every
+        # cycle anyway) and intentionally a no-op for workers that
+        # are paused with a matching pause_reason: ceiling changes
+        # do NOT auto-resume a paused subscription. The operator
+        # must follow up with an explicit status=active PATCH.
+        pubsub_events.append("ceiling_changed")
 
     if validated.status is not None and validated.status != current.status:
         if current.status == "revoked":
@@ -645,6 +766,26 @@ def update_webhook(validated, subscription_id):
         params,
     )
 
+    if patch_tombstone_row is not None:
+        # #219: stamp the tombstone acknowledgement in the same
+        # transaction as the PATCH UPDATE. Mirrors the POST path's
+        # acknowledgement step so a successful URL switch closes
+        # the matching tombstone in one atomic operation.
+        g.db.execute(
+            text(
+                """
+                UPDATE webhook_subscriptions_tombstones
+                   SET acknowledged_at = NOW(),
+                       acknowledged_by = :uid
+                 WHERE tombstone_id = :tid
+                """
+            ),
+            {
+                "uid": g.current_user["user_id"],
+                "tid": int(patch_tombstone_row.tombstone_id),
+            },
+        )
+
     write_audit_log(
         g.db,
         action_type=ACTION_WEBHOOK_SUBSCRIPTION_UPDATE,
@@ -664,6 +805,11 @@ def update_webhook(validated, subscription_id):
             "subscription_id": subscription_id,
             "diff": diff,
             "events": list(pubsub_events),
+            "acknowledged_url_reuse_tombstone_id": (
+                int(patch_tombstone_row.tombstone_id)
+                if patch_tombstone_row is not None
+                else None
+            ),
         },
     )
 
@@ -685,7 +831,32 @@ def update_webhook(validated, subscription_id):
         ),
         {"sid": subscription_id},
     ).fetchone()
-    return jsonify(_row_to_listing(refreshed, _stats_for(subscription_id)))
+    body = _row_to_listing(refreshed, _stats_for(subscription_id))
+    # #230: when an operator lifts the ceiling that paused this
+    # subscription but does NOT also flip status=active in the
+    # same PATCH, surface a hint so they know dispatch will not
+    # resume on its own. The hint is advisory; the operator's
+    # next call (status=active) is the actual unblock.
+    paused_by_pending = (
+        refreshed.status == "paused"
+        and refreshed.pause_reason == "pending_ceiling"
+        and pending_ceiling_changed
+        and (validated.status is None or validated.status == "paused")
+    )
+    paused_by_dlq = (
+        refreshed.status == "paused"
+        and refreshed.pause_reason == "dlq_ceiling"
+        and dlq_ceiling_changed
+        and (validated.status is None or validated.status == "paused")
+    )
+    if paused_by_pending or paused_by_dlq:
+        body["hint"] = (
+            "ceiling_changed but subscription remains paused with "
+            f"pause_reason={refreshed.pause_reason!r}. Ceiling changes "
+            "do not auto-resume; PATCH status=active to resume "
+            "dispatch."
+        )
+    return jsonify(body)
 
 
 @admin_bp.route("/webhooks/<subscription_id>/rotate-secret", methods=["POST"])
@@ -876,19 +1047,25 @@ def delete_webhook(subscription_id):
                 409,
             )
 
+        canonical_at_delete = (
+            dispatcher_url_normalize.canonicalize_delivery_url(
+                current.delivery_url
+            )
+        )
         tombstone_row = g.db.execute(
             text(
                 """
                 INSERT INTO webhook_subscriptions_tombstones
                     (subscription_id, delivery_url_at_delete,
-                     connector_id, deleted_by)
-                VALUES (:sid, :url, :connector_id, :uid)
+                     delivery_url_canonical, connector_id, deleted_by)
+                VALUES (:sid, :url, :canonical, :connector_id, :uid)
                 RETURNING tombstone_id
                 """
             ),
             {
                 "sid": subscription_id,
                 "url": current.delivery_url,
+                "canonical": canonical_at_delete,
                 "connector_id": current.connector_id,
                 "uid": g.current_user["user_id"],
             },
@@ -1252,6 +1429,42 @@ def replay_single(subscription_id, delivery_id):
 _REPLAY_BATCH_HARD_CAP_DEFAULT = 10_000
 _REPLAY_BATCH_THROTTLE_S = 60
 
+# #224: aggregate (cross-subscription) throttle bucket. The per-
+# subscription 60s timer above is sized for the operator double-
+# click case; a compromised admin who fans replay-batch across N
+# subscriptions all pointing at the same consumer URL bypasses it
+# by a factor of N. The aggregate bucket caps ALL admin replay-
+# batches across the deployment to N within a rolling window so
+# fan-out abuse cannot exceed the documented operational rate.
+# Both numbers tunable via env so an operator who needs a higher
+# floor for incident-recovery work can lift them; the env vars
+# are operator-only (#212 pattern: a compromised admin cannot
+# raise the safety rail).
+_REPLAY_BATCH_GLOBAL_WINDOW_S_DEFAULT = 300
+_REPLAY_BATCH_GLOBAL_BUDGET_DEFAULT = 5
+
+
+def _replay_batch_global_window_s() -> int:
+    raw = os.environ.get("DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S")
+    if not raw:
+        return _REPLAY_BATCH_GLOBAL_WINDOW_S_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _REPLAY_BATCH_GLOBAL_WINDOW_S_DEFAULT
+    return max(1, value)
+
+
+def _replay_batch_global_budget() -> int:
+    raw = os.environ.get("DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET")
+    if not raw:
+        return _REPLAY_BATCH_GLOBAL_BUDGET_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return _REPLAY_BATCH_GLOBAL_BUDGET_DEFAULT
+    return max(1, value)
+
 
 def _replay_batch_hard_cap() -> int:
     raw = os.environ.get("DISPATCHER_REPLAY_BATCH_HARD_CAP")
@@ -1264,22 +1477,38 @@ def _replay_batch_hard_cap() -> int:
     return max(1, value)
 
 
-def _replay_filter_clauses(f) -> tuple[str, dict]:
-    clauses: list[str] = ["d.subscription_id = :sid", "d.status = :status"]
+def _replay_filter_clauses(f) -> tuple[str, dict, str]:
+    """Build the SQL WHERE clauses for replay-batch filtering.
+
+    Returns ``(full_clause, params, d_only_clause)``:
+      * ``full_clause`` includes both ``d.*`` (webhook_deliveries)
+        and ``e.*`` (integration_events) predicates and is used
+        by the impact COUNT and the INSERT-SELECT.
+      * ``d_only_clause`` includes only ``d.*`` predicates so the
+        handler can compute a separate "matched the
+        webhook_deliveries shape but lost the integration_events
+        row" count. The LEFT JOIN means rows whose
+        integration_events row was pruned silently disappear from
+        the full count when an ``e.*`` predicate is in play (#233).
+    """
+    d_clauses: list[str] = ["d.subscription_id = :sid", "d.status = :status"]
+    e_clauses: list[str] = []
     params: dict = {"status": f.status}
     if f.event_type is not None:
-        clauses.append("e.event_type = :event_type")
+        e_clauses.append("e.event_type = :event_type")
         params["event_type"] = f.event_type
     if f.warehouse_id is not None:
-        clauses.append("e.warehouse_id = :warehouse_id")
+        e_clauses.append("e.warehouse_id = :warehouse_id")
         params["warehouse_id"] = f.warehouse_id
     if f.completed_at_from is not None:
-        clauses.append("d.completed_at >= :completed_at_from")
+        d_clauses.append("d.completed_at >= :completed_at_from")
         params["completed_at_from"] = f.completed_at_from
     if f.completed_at_to is not None:
-        clauses.append("d.completed_at <= :completed_at_to")
+        d_clauses.append("d.completed_at <= :completed_at_to")
         params["completed_at_to"] = f.completed_at_to
-    return " AND ".join(clauses), params
+    full_clause = " AND ".join(d_clauses + e_clauses)
+    d_only_clause = " AND ".join(d_clauses)
+    return full_clause, params, d_only_clause
 
 
 @admin_bp.route("/webhooks/<subscription_id>/replay-batch", methods=["POST"])
@@ -1297,10 +1526,20 @@ def replay_batch(validated, subscription_id):
     except ValueError:
         return jsonify({"error": "invalid_subscription_id"}), 400
 
+    # #223: SELECT FOR UPDATE on the subscription row at the top of
+    # the handler. Without the lock, two concurrent replay-batch
+    # requests both pass the throttle audit_log SELECT before
+    # either commits its WEBHOOK_DELIVERY_REPLAY_BATCH row, so
+    # both batches land within the same 60s window. The lock
+    # serializes concurrent replay-batches on the same subscription
+    # so the throttle SELECT becomes consistent within the locked
+    # window. PATCH and rotate-secret already hold this row lock
+    # for the same TOCTOU reason.
     sub_row = g.db.execute(
         text(
-            "SELECT subscription_id, status FROM webhook_subscriptions "
-            "WHERE subscription_id = :sid"
+            "SELECT subscription_id, status, pending_ceiling "
+            "FROM webhook_subscriptions WHERE subscription_id = :sid "
+            "FOR UPDATE"
         ),
         {"sid": subscription_id},
     ).fetchone()
@@ -1349,9 +1588,61 @@ def replay_batch(validated, subscription_id):
             429,
         )
 
-    filter_clauses, filter_params = _replay_filter_clauses(validated.filter)
+    # #224: aggregate (cross-subscription) throttle. Counts every
+    # WEBHOOK_DELIVERY_REPLAY_BATCH audit_log row across the
+    # deployment in the rolling window; refuses 429 once the
+    # budget is full. Closes the fan-out path where a compromised
+    # admin distributes replay-batches across N subscriptions to
+    # bypass the per-subscription timer. Same audit_log source-of-
+    # truth as the per-subscription throttle so a missed-trigger
+    # restart cannot reset either timer.
+    global_window_s = _replay_batch_global_window_s()
+    global_budget = _replay_batch_global_budget()
+    global_count_row = g.db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+              FROM audit_log
+             WHERE action_type = '{ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH}'
+               AND created_at > NOW() - make_interval(secs => :win)
+            """
+        ),
+        {"win": global_window_s},
+    ).fetchone()
+    global_count = int(global_count_row.n or 0) if global_count_row else 0
+    if global_count >= global_budget:
+        return (
+            jsonify(
+                {
+                    "error": "replay_batch_global_throttled",
+                    "global_count": global_count,
+                    "global_budget": global_budget,
+                    "global_window_s": global_window_s,
+                    "detail": (
+                        "the aggregate replay-batch budget for the "
+                        "deployment is full; wait for the rolling "
+                        "window to clear before retrying. The per-"
+                        "subscription 60s timer is the operator-error "
+                        "bucket; this is the abuse / fan-out bucket."
+                    ),
+                }
+            ),
+            429,
+        )
+
+    filter_clauses, filter_params, d_only_clauses = _replay_filter_clauses(
+        validated.filter
+    )
     filter_params["sid"] = subscription_id
 
+    # #233: report a count breakdown so the operator can see how
+    # many DLQ rows match the webhook_deliveries shape but cannot
+    # be re-dispatched because their integration_events row was
+    # pruned. The LEFT JOIN above filters those rows out
+    # silently when an e.* predicate (event_type / warehouse_id)
+    # is in play; without the breakdown a forensic query
+    # ("show me every event Sentry tried to send") gets a smaller
+    # answer than the operator expects.
     impact_row = g.db.execute(
         text(
             f"""
@@ -1363,7 +1654,22 @@ def replay_batch(validated, subscription_id):
         ),
         filter_params,
     ).fetchone()
-    impact = int(impact_row.n or 0)
+    matched_with_event_data = int(impact_row.n or 0)
+    impact = matched_with_event_data
+
+    pruned_row = g.db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+              FROM webhook_deliveries d
+              LEFT JOIN integration_events e ON e.event_id = d.event_id
+             WHERE {d_only_clauses}
+               AND e.event_id IS NULL
+            """
+        ),
+        filter_params,
+    ).fetchone()
+    matched_without_event_data = int(pruned_row.n or 0)
 
     hard_cap = _replay_batch_hard_cap()
     if impact > hard_cap and not validated.acknowledge_large_replay:
@@ -1383,9 +1689,64 @@ def replay_batch(validated, subscription_id):
             409,
         )
 
+    # #222: pending_ceiling is the safety rail that protects the
+    # dispatcher and the consumer from runaway backlog. The
+    # auto-pause logic (deliver_one) only fires AFTER a delivery
+    # attempt; replay-batch INSERTs N pending rows in one statement
+    # before any attempt happens, sidestepping the rail. Refuse the
+    # batch when it would push current_pending + impact past the
+    # ceiling, mirroring the same _count_pending shape the
+    # dispatcher uses (pending + in_flight). Not waivable: the
+    # acknowledge_large_replay flag covers the per-batch hard cap;
+    # the ceiling is independent.
+    pending_count_row = g.db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n FROM webhook_deliveries
+             WHERE subscription_id = :sid
+               AND status IN ('pending', 'in_flight')
+            """
+        ),
+        {"sid": subscription_id},
+    ).fetchone()
+    current_pending = int(pending_count_row.n or 0) if pending_count_row else 0
+    pending_ceiling = int(sub_row.pending_ceiling)
+    if current_pending + impact > pending_ceiling:
+        return (
+            jsonify(
+                {
+                    "error": "replay_would_exceed_pending_ceiling",
+                    "current_pending": current_pending,
+                    "impact_count": impact,
+                    "pending_ceiling": pending_ceiling,
+                    "gap": (current_pending + impact) - pending_ceiling,
+                    "detail": (
+                        "this replay would push pending+in_flight past "
+                        "the subscription's pending_ceiling. The ceiling "
+                        "is the safety rail; lift pending_ceiling via "
+                        "PATCH or wait for the backlog to drain before "
+                        "retrying."
+                    ),
+                }
+            ),
+            409,
+        )
+
+    pruned_detail = None
+    if matched_without_event_data > 0:
+        pruned_detail = (
+            f"{matched_without_event_data} webhook_deliveries row(s) "
+            "match the filter on webhook_deliveries but their "
+            "integration_events row is no longer present and could "
+            "not be re-dispatched."
+        )
+
     if impact == 0:
         # Nothing to replay; still write an audit row so a
-        # zero-impact filter is visible in the trail.
+        # zero-impact filter is visible in the trail. The audit
+        # row carries the pruned breakdown too so a forensic
+        # query against audit_log can see why the replay matched
+        # zero rows even when the operator believed otherwise.
         write_audit_log(
             g.db,
             action_type=ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH,
@@ -1397,20 +1758,22 @@ def replay_batch(validated, subscription_id):
                 "subscription_id": subscription_id,
                 "filter": validated.filter.model_dump(mode="json"),
                 "impact_count": 0,
+                "matched_with_event_data": 0,
+                "matched_without_event_data": matched_without_event_data,
                 "acknowledge_large_replay": validated.acknowledge_large_replay,
             },
         )
         g.db.commit()
-        return (
-            jsonify(
-                {
-                    "subscription_id": subscription_id,
-                    "impact_count": 0,
-                    "replayed_count": 0,
-                }
-            ),
-            201,
-        )
+        body = {
+            "subscription_id": subscription_id,
+            "impact_count": 0,
+            "replayed_count": 0,
+            "matched_with_event_data": 0,
+            "matched_without_event_data": matched_without_event_data,
+        }
+        if pruned_detail is not None:
+            body["detail"] = pruned_detail
+        return jsonify(body), 201
 
     # INSERT one new pending row per matching delivery, all in a
     # single statement so the batch lands or fails atomically.
@@ -1440,21 +1803,26 @@ def replay_batch(validated, subscription_id):
             "subscription_id": subscription_id,
             "filter": validated.filter.model_dump(mode="json"),
             "impact_count": impact,
+            # #233: capture the breakdown so the audit trail
+            # answers "what matched but could not be re-dispatched
+            # because the integration_events row was pruned?"
+            "matched_with_event_data": matched_with_event_data,
+            "matched_without_event_data": matched_without_event_data,
             "acknowledge_large_replay": validated.acknowledge_large_replay,
         },
     )
 
     g.db.commit()
-    return (
-        jsonify(
-            {
-                "subscription_id": subscription_id,
-                "impact_count": impact,
-                "replayed_count": impact,
-            }
-        ),
-        201,
-    )
+    body = {
+        "subscription_id": subscription_id,
+        "impact_count": impact,
+        "replayed_count": impact,
+        "matched_with_event_data": matched_with_event_data,
+        "matched_without_event_data": matched_without_event_data,
+    }
+    if pruned_detail is not None:
+        body["detail"] = pruned_detail
+    return jsonify(body), 201
 
 
 _STATS_WINDOW_INTERVAL = {

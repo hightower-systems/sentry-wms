@@ -81,7 +81,7 @@ class TestRetryScheduleConstant:
 
 class TestRetryDelay:
     @pytest.mark.parametrize(
-        "next_attempt,expected",
+        "next_attempt,base",
         [
             (2, 4),
             (3, 15),
@@ -92,13 +92,24 @@ class TestRetryDelay:
             (8, 12 * 3600),
         ],
     )
-    def test_each_attempt_returns_documented_value(self, next_attempt, expected):
-        """Plan §2.4: delay before attempt N is
-        RETRY_SCHEDULE_SECONDS[N-1]. The 12h slot at index 7 is
-        reachable via retry_delay(8); without it the cumulative
-        retry window collapses from ~15h to ~2.6h, which would
-        silently shrink consumers' incident-response budget."""
-        assert retry_module.retry_delay(next_attempt) == expected
+    def test_each_attempt_returns_value_in_jitter_band(self, next_attempt, base):
+        """Delay before attempt N is RETRY_SCHEDULE_SECONDS[N-1]
+        multiplied by a per-call jitter factor in [0.9, 1.1]
+        (#234). The 12h slot at index 7 stays reachable via
+        retry_delay(8); without it the cumulative retry window
+        collapses from ~15h to ~2.6h, which would silently shrink
+        consumers' incident-response budget."""
+        # Truncation via int() means the lower bound for short
+        # slots can come in one second under 0.9*base; widen the
+        # bounds by 1s on each side so the assertion is stable.
+        lo = int(0.9 * base) - 1
+        hi = int(1.1 * base) + 1
+        for _ in range(20):  # multiple draws to exercise the RNG path
+            v = retry_module.retry_delay(next_attempt)
+            assert lo <= v <= hi, (
+                f"retry_delay({next_attempt}) = {v} outside "
+                f"jitter band [{lo}, {hi}] for base {base}"
+            )
 
     def test_attempt_one_raises(self):
         """Attempt 1 fires at NOW() with no retry delay; the
@@ -116,6 +127,56 @@ class TestRetryDelay:
         for n in (0, -1, -8):
             with pytest.raises(ValueError):
                 retry_module.retry_delay(n)
+
+
+class TestRetryJitter:
+    """#234: each retry slot carries +/-10% jitter so multiple
+    subscriptions whose first delivery to the same consumer URL
+    fails at the same minute do not retry at the same minute
+    every retry slot. The cumulative window stays inside the
+    documented ~15h budget; the worst case (1.1 ** 7 * sum)
+    is still under ~17h."""
+
+    def test_jitter_produces_spread_across_calls(self):
+        """1000 calls to retry_delay(2) must NOT all return the
+        same value -- if they do, the jitter path is dead and
+        synchronized retry storms still happen."""
+        values = {retry_module.retry_delay(2) for _ in range(1000)}
+        # base=4 with int truncation collapses to {3, 4} after
+        # rounding; the count is small but must be > 1.
+        assert len(values) > 1, (
+            "retry_delay must produce more than one value across "
+            "1000 calls; jitter path appears not to be wired"
+        )
+
+    def test_jitter_band_holds_for_long_slots(self):
+        """A 5-minute slot lets us see a wider integer spread
+        because int truncation no longer collapses the band into
+        one or two bins. Confirms the bounds are honored across
+        a representative sample."""
+        base = 5 * 60
+        lo = int(0.9 * base)
+        hi = int(1.1 * base)
+        for _ in range(200):
+            v = retry_module.retry_delay(5)
+            assert lo - 1 <= v <= hi + 1
+
+    def test_cumulative_worst_case_under_seventeen_hours(self):
+        """Even at the upper jitter bound applied to every slot,
+        the cumulative retry window stays inside the relaxed
+        bound the consumer-side budgeting docs reference."""
+        worst = 1.1 * sum(retry_module.RETRY_SCHEDULE_SECONDS)
+        assert worst < 17 * 3600
+
+    def test_zero_base_returns_zero(self, monkeypatch):
+        """Test fixtures monkey-patch RETRY_SCHEDULE_SECONDS to
+        ``(0,) * 8`` to short-circuit retry waits in integration
+        tests. The jitter floor must respect that contract:
+        base=0 stays 0, not max(1, ...) which would slow the
+        whole loop test suite by 8s per chained-retry test."""
+        monkeypatch.setattr(retry_module, "RETRY_SCHEDULE_SECONDS", (0,) * 8)
+        for n in range(2, retry_module.MAX_ATTEMPTS + 1):
+            assert retry_module.retry_delay(n) == 0
 
 
 class TestIsTerminalAttempt:
@@ -294,8 +355,12 @@ class TestRetrySlotScheduledAtCorrectInterval:
     def test_retry_slot_scheduled_at_matches_schedule(self):
         """No monkeypatch here -- exercise the real schedule
         and confirm the scheduled_at on the inserted retry slot
-        sits at NOW() + retry_delay(2) (= 4 seconds, plan §2.4
-        second slot) within tolerance."""
+        lands inside the jittered band around the second-slot
+        4-second base. #234 jitters retry slots by +/-10%, so
+        the dispatcher's retry_delay call inside deliver_one
+        produces a value that is independent of any retry_delay
+        the test calls -- the test must tolerate the full
+        [0.9*base, 1.1*base] band rather than pin one value."""
         sub_id, _plaintext, cleanup = _make_subscription()
         emitted = []
         try:
@@ -303,8 +368,10 @@ class TestRetrySlotScheduledAtCorrectInterval:
             emitted.append(e1)
             _wait_for_visible(e1)
 
-            expected_delay_s = retry_module.retry_delay(2)
-            assert expected_delay_s == 4
+            base_delay_s = retry_module.RETRY_SCHEDULE_SECONDS[1]
+            assert base_delay_s == 4
+            min_jittered = 0.9 * base_delay_s
+            max_jittered = 1.1 * base_delay_s
 
             stub = StubHttpClient(responses=[500])
             conn = _conn()
@@ -320,13 +387,13 @@ class TestRetrySlotScheduledAtCorrectInterval:
             retry_slot = rows[1]
             assert retry_slot[2] == 2  # attempt_number = 2
             assert retry_slot[3] == "pending"
-            # Tolerate DB clock drift on either side.
+            # Tolerate the jitter band + DB clock drift on either side.
             scheduled_at_ts = retry_slot[4].timestamp()
-            min_expected = t_before + expected_delay_s
-            max_expected = t_after + expected_delay_s + 0.5
+            min_expected = t_before + min_jittered - 1.0
+            max_expected = t_after + max_jittered + 1.0
             assert min_expected <= scheduled_at_ts <= max_expected, (
                 f"retry slot scheduled_at={scheduled_at_ts} not within "
-                f"[{min_expected}, {max_expected}]"
+                f"jittered band [{min_expected}, {max_expected}]"
             )
         finally:
             cleanup()

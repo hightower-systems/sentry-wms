@@ -186,7 +186,7 @@ The dispatcher retries any non-2xx response (and any network-level failure) on a
 | 8 | 2 hours |
 | (DLQ) | 12 hours after attempt 8's failure |
 
-Cumulative window: ~15 hours. There is no jitter in v1.6 (one consumer, one dispatcher); revisit if your fleet grows past one subscription per dispatcher.
+Cumulative window: ~15 hours nominal. v1.6.1 adds +/-10% jitter applied per attempt to decorrelate retries across multiple subscriptions that share a consumer URL: without jitter, N subscriptions whose first delivery to the same URL fails at the same minute retry at the same minute on every slot, presenting the consumer with a synchronized retry storm indistinguishable from a coordinated DoS. The cumulative window stays inside ~17h worst case under the jitter band, so consumer-side incident-response budgeting is unchanged.
 
 Per-aggregate FIFO is intentional. Head-of-line blocking applies: a stuck event blocks newer events on the same subscription until the head terminates (succeeds, hits the DLQ, or auto-pauses at the ceiling). This is by design; per-aggregate ordering matters more than throughput when the consumer is mid-failure.
 
@@ -222,6 +222,17 @@ When the admin rotates, the new generation 1 plaintext appears in the rotation m
 
 A second rotation within the 24h window overwrites generation 2 and shortens the cutover; the operator runbook documents waiting the full window before re-rotating except in compromise scenarios.
 
+### Handling the secret bytes
+
+The shared secret bytes are sensitive. Treat them as you would any HMAC key: keep them in a secret manager (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, or your platform's equivalent) and load them per-process. Do NOT:
+
+- Commit the plaintext to source control or write it to a `.env` file that ends up in a backup tarball.
+- Print or log the plaintext - structured loggers that capture local variables on exceptions will dump it.
+- Let it sit in process state that might be pickled (Python `pickle`, `joblib`, `multiprocessing`'s default IPC), swapped to disk, captured in an APM error report (`Sentry.io`'s SDK with `capture_locals=True`, Datadog/New Relic equivalents), or read out of a debugger snapshot.
+- Cache it in a long-lived dict that gets serialized for warm-restart hydration. Reload from the secret manager on each process boot.
+
+A leaked secret means an attacker who reaches your webhook endpoint can forge signed deliveries indistinguishable from Sentry's until you rotate. Rotate via the Sentry admin panel and update your secret store within the 24-hour dual-accept window. Sentry's server side mirrors this contract: the dispatcher's `SecretMaterial` wrapper refuses `repr` / `str` / `pickle` so the plaintext cannot escape via the analogous server-side leak surfaces.
+
 ## Subscription pause + DLQ behavior
 
 Two ceilings auto-pause the subscription:
@@ -233,6 +244,14 @@ A paused subscription does not retry, does not advance the cursor, and does not 
 
 Your endpoint can detect a long pause by watching for a gap in `event_id`s after a sustained outage. Sentry will not silently drop events: the dispatcher's cursor stays at the last terminal delivery until you triage and resume.
 
+## Ceiling changes do not auto-resume
+
+When the admin lifts `pending_ceiling` or `dlq_ceiling` on a subscription that is currently paused with the matching `pause_reason`, the subscription does NOT auto-resume. The dispatcher publishes a `ceiling_changed` event on the cross-worker channel and the audit_log records the diff, but the subscription stays paused until the admin issues a follow-up PATCH with `status=active`. The PATCH response carries a `hint` field naming the pending follow-up step when the gap is detected. Resume is always an explicit operator decision so a single misclick cannot un-pause a subscription that is still triaging.
+
+## Filter changes are non-retroactive
+
+When the admin edits the subscription's `subscription_filter` (event_types, warehouse_ids, aggregate_external_id_allowlist), the new filter applies to events the dispatcher selects from now on; the cursor never rewinds. Events that were committed before the PATCH and that match the new filter but did not match the old are not re-delivered. To backfill historical events under the new filter, the operator uses the admin panel's replay-batch endpoint with the matching filter shape.
+
 ## Idempotency expectations
 
 Sentry's contract is at-least-once delivery. Your endpoint MUST be idempotent on `event_id`. The retry schedule alone produces duplicates: if your endpoint accepts the request, applies the side effect, and then crashes before returning a 2xx, the dispatcher will retry. A 12-hour gap between attempt 8 and the DLQ also means a replay-batch hours later can produce a "delayed duplicate" your endpoint must absorb.
@@ -242,6 +261,20 @@ Sentry's contract is at-least-once delivery. Your endpoint MUST be idempotent on
 If your endpoint returns a 4xx or 5xx, or fails the network call, the dispatcher classifies the failure into one of seven `error_kind` values: `timeout`, `connection`, `tls`, `4xx`, `5xx`, `ssrf_rejected`, `unknown`. Sentry stores ONLY the categorical kind plus the HTTP status code; your response body is never persisted. This is intentional: a misconfigured consumer endpoint can echo upstream credentials (database connection strings, API tokens) into a 5xx page, and Sentry refuses to act as a persistence channel for the consumer's secrets.
 
 If the Sentry admin needs to debug a delivery failure, they will see the categorical short message and triage hint from the server-owned error catalog. Specifics about why your endpoint failed live in your endpoint's logs.
+
+## Response body size
+
+The dispatcher caps the response body it will read at 64 KB and closes the connection past that point. A consumer that advertises `Content-Length` above the cap is reclassified as a 5xx-class failure without the bytes ever being drained. Ship a small JSON ACK or a bare 200; do NOT return a stack trace, an HTML error page, or any large payload. The dispatcher does not inspect the body anyway -- only the status code drives delivery state.
+
+## Timeout budget
+
+The dispatcher enforces three timeouts on every delivery:
+
+- `DISPATCHER_HTTP_CONNECT_TIMEOUT_MS` (default 5 s) bounds DNS + TCP + TLS handshake.
+- `DISPATCHER_HTTP_READ_TIMEOUT_MS` (default 8 s) bounds each individual socket read.
+- `DISPATCHER_HTTP_TIMEOUT_MS` (default 10 s) is the WALL-CLOCK cap on the entire send. A consumer that drip-feeds bytes within the per-op read budget cannot keep the connection alive past this; the dispatcher's watchdog cancels the request and classifies the delivery as `timeout`.
+
+Your endpoint must return a complete 2xx response inside the wall-clock cap. Streaming a slow chunked body is not supported; ship the ACK and close.
 
 ## Replay timestamps
 
