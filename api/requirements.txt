@@ -15,6 +15,6 @@ flask-limiter[redis]==3.8.0
 jsonschema==4.23.0
 PyYAML==6.0.2
 jsonpath-ng==1.6.1
-simpleeval==1.0.3
+simpleeval==1.0.5
 pytest==9.0.3
 pytest-cov==7.1.0
