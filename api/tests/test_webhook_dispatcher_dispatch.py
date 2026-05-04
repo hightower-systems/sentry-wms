@@ -623,6 +623,152 @@ class TestPausedSubscriptionSkipped:
             cleanup_conn.close()
 
 
+class TestMalformedFilterFailsClosed:
+    """#232: a subscription_filter row that fails Pydantic
+    validation USED TO fall open (empty filter, matches every
+    event). Now fail closed: auto-pause the subscription with
+    pause_reason='malformed_filter', write an audit_log row,
+    return None so deliver_one backs off without selecting any
+    event.
+    """
+
+    def _corrupt_filter(self, sub_id: str) -> None:
+        """Write a Pydantic-incompatible filter shape via raw SQL.
+        Pydantic SubscriptionFilter has extra='forbid', so an
+        unknown key trips validation."""
+        c = _conn()
+        c.autocommit = True
+        cur = c.cursor()
+        cur.execute(
+            "UPDATE webhook_subscriptions "
+            "   SET subscription_filter = "
+            "       '{\"unknown_field\": 1}'::jsonb "
+            " WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        c.close()
+
+    def _read_subscription(self, sub_id: str):
+        c = _conn()
+        c.autocommit = True
+        cur = c.cursor()
+        cur.execute(
+            "SELECT status, pause_reason FROM webhook_subscriptions "
+            "WHERE subscription_id = %s",
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        c.close()
+        return row
+
+    def _audit_count(self, sub_id: str) -> int:
+        c = _conn()
+        c.autocommit = True
+        cur = c.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
+            "  AND details->>'subscription_id' = %s",
+            (sub_id,),
+        )
+        n = cur.fetchone()[0]
+        c.close()
+        return n
+
+    def test_malformed_filter_pauses_and_logs_audit(self):
+        sub_id, _plaintext, cleanup = _make_subscription(
+            subscription_filter={"event_types": ["receipt.completed"]},
+        )
+        emitted = []
+        try:
+            e1 = _emit_event(event_type="d5.malformed")
+            emitted.append(e1)
+            _wait_for_visible(e1)
+
+            self._corrupt_filter(sub_id)
+
+            stub = StubHttpClient(responses=[200])
+            conn = _conn()
+            try:
+                outcome = dispatch_module.deliver_one(conn, sub_id, stub)
+            finally:
+                conn.close()
+
+            # deliver_one returns None: no event selected.
+            assert outcome is None
+            # No HTTP send happened: a fail-open path would have
+            # delivered the event under an empty filter.
+            assert stub.calls == []
+            # Subscription is now paused with the documented
+            # malformed_filter reason.
+            row = self._read_subscription(sub_id)
+            assert row[0] == "paused"
+            assert row[1] == "malformed_filter"
+            # Audit_log captured the auto-pause.
+            assert self._audit_count(sub_id) == 1
+        finally:
+            cleanup()
+            cleanup_conn = _conn()
+            cleanup_conn.autocommit = True
+            cur = cleanup_conn.cursor()
+            cur.execute(
+                "DELETE FROM integration_events WHERE event_id = ANY(%s)",
+                (emitted,),
+            )
+            cur.execute(
+                "DELETE FROM audit_log "
+                "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
+                "  AND details->>'subscription_id' = %s",
+                (sub_id,),
+            )
+            cleanup_conn.close()
+
+    def test_already_paused_does_not_re_audit(self):
+        """A second deliver_one call against the same bad row
+        does not write a duplicate audit row -- the conditional
+        UPDATE WHERE status='active' is a no-op the second time
+        and the audit INSERT is gated on rowcount."""
+        sub_id, _plaintext, cleanup = _make_subscription(
+            subscription_filter={"event_types": ["receipt.completed"]},
+        )
+        emitted = []
+        try:
+            e1 = _emit_event(event_type="d5.malformed-2")
+            emitted.append(e1)
+            _wait_for_visible(e1)
+            self._corrupt_filter(sub_id)
+
+            stub = StubHttpClient(responses=[200, 200])
+            conn = _conn()
+            try:
+                first = dispatch_module.deliver_one(conn, sub_id, stub)
+                # Second call hits the early-return at deliver_one
+                # on status!='active' before reaching the filter
+                # parse path.
+                second = dispatch_module.deliver_one(conn, sub_id, stub)
+            finally:
+                conn.close()
+            assert first is None
+            assert second is None
+            assert self._audit_count(sub_id) == 1
+        finally:
+            cleanup()
+            cleanup_conn = _conn()
+            cleanup_conn.autocommit = True
+            cur = cleanup_conn.cursor()
+            cur.execute(
+                "DELETE FROM integration_events WHERE event_id = ANY(%s)",
+                (emitted,),
+            )
+            cur.execute(
+                "DELETE FROM audit_log "
+                "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
+                "  AND details->>'subscription_id' = %s",
+                (sub_id,),
+            )
+            cleanup_conn.close()
+
+
 # ---------------------------------------------------------------------
 # Error classification
 # ---------------------------------------------------------------------

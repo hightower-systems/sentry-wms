@@ -346,29 +346,108 @@ def _select_next_pending(cur, subscription_id: str) -> Optional[Mapping[str, Any
     return cur.fetchone()
 
 
+def _auto_pause_for_malformed_filter(
+    cur, subscription: Mapping[str, Any], exc: Exception
+) -> None:
+    """#232: pause the subscription with
+    ``pause_reason='malformed_filter'`` and write an audit_log row
+    capturing the parse failure. Idempotent: a follow-up dispatch
+    with the same bad row will hit the early-return at deliver_one
+    on status!='active', so the audit_log only gets one row per
+    transition. The conditional UPDATE WHERE status='active' makes
+    the same call from a peer dispatcher a no-op too.
+
+    Commits the auto-pause + audit row directly because deliver_one
+    rolls back its open transaction when ``_select_next_fresh_event``
+    returns None; an UPDATE that lives only in the rolled-back
+    snapshot would never persist. The helper's commit closes that
+    window while still letting deliver_one's rollback clear any
+    other unrelated SELECTs in the same transaction.
+
+    Uses raw psycopg2 cursor.execute (not write_audit_log) because
+    the dispatcher's connection is a psycopg2 connection, not a
+    SQLAlchemy session; the audit_log INSERT shape is small enough
+    to inline. The hash-chain trigger on audit_log fills prev_hash
+    + row_hash automatically.
+    """
+    sub_id = str(subscription.get("subscription_id"))
+    parse_error_str = f"{type(exc).__name__}: {exc}"[:512]
+    cur.execute(
+        """
+        UPDATE webhook_subscriptions
+           SET status = 'paused',
+               pause_reason = 'malformed_filter',
+               updated_at = NOW()
+         WHERE subscription_id = %s
+           AND status = 'active'
+        """,
+        (sub_id,),
+    )
+    if cur.rowcount > 0:
+        LOGGER.error(
+            "subscription %s has unparseable subscription_filter; "
+            "auto-pausing with pause_reason='malformed_filter'. "
+            "Fix the subscription_filter column via the admin "
+            "endpoint and PATCH status='active' to resume. "
+            "parse_error=%s",
+            sub_id,
+            parse_error_str,
+        )
+        cur.execute(
+            """
+            INSERT INTO audit_log
+                (action_type, entity_type, entity_id, user_id,
+                 warehouse_id, details)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                "WEBHOOK_SUBSCRIPTION_AUTO_PAUSE",
+                "WEBHOOK_SUBSCRIPTION",
+                0,
+                "system",
+                None,
+                json.dumps(
+                    {
+                        "subscription_id": sub_id,
+                        "pause_reason": "malformed_filter",
+                        "parse_error": parse_error_str,
+                    }
+                ),
+            ),
+        )
+        # Persist the auto-pause + audit row. deliver_one rolls
+        # back when fresh is None (which we are about to return),
+        # so without this commit the UPDATE evaporates and the
+        # next cycle re-runs the parse, re-pauses, re-audits in
+        # an infinite loop.
+        cur.connection.commit()
+
+
 def _select_next_fresh_event(
     cur, subscription: Mapping[str, Any]
 ) -> Optional[Mapping[str, Any]]:
     """Find the next integration_events row past the subscription
     cursor that matches the subscription filter and has cleared
-    the visible-at gate."""
+    the visible-at gate.
+
+    #232: a Pydantic parse failure on the subscription_filter
+    JSONB row USED TO fall open (empty filter, matches every
+    event). That converted an authorization-shaped column from
+    "deliver only the operator's documented scope" to "deliver
+    everything" the moment the row went bad -- a fail-OPEN
+    posture for an authz column. Now fail closed: auto-pause
+    the subscription with pause_reason='malformed_filter',
+    write an audit_log row capturing the parse error, return
+    None so deliver_one backs off without selecting any event.
+    The operator fixes the column via PATCH and explicitly
+    resumes via status='active'.
+    """
     raw_filter = subscription.get("subscription_filter")
     try:
         parsed_filter = subscription_filter_module.parse(raw_filter)
     except Exception as exc:  # noqa: BLE001 -- pydantic + json both possible
-        # A legacy bad row surfaces here as a recoverable parse
-        # error. Fall back to the empty filter so the dispatcher
-        # keeps making forward progress; the operator runbook
-        # covers the WARN log -- the subscription stays active and
-        # the bad column gets fixed via admin update.
-        LOGGER.warning(
-            "subscription %s has unparseable subscription_filter; "
-            "falling back to empty filter (matches every event). "
-            "Fix the column via the admin endpoint. parse error: %s",
-            subscription.get("subscription_id"),
-            exc,
-        )
-        parsed_filter = subscription_filter_module.SubscriptionFilter()
+        _auto_pause_for_malformed_filter(cur, subscription, exc)
+        return None
     filter_clause, filter_params = _build_filter_clauses(parsed_filter)
 
     cur.execute(
