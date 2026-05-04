@@ -325,6 +325,7 @@ def create_app():
     from routes.warehouses import warehouses_bp
     from routes.polling import polling_bp
     from routes.snapshot import snapshot_bp
+    from routes.inbound import inbound_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
@@ -343,6 +344,10 @@ def create_app():
     # v1.5.0 #133: bulk snapshot paging. Shares the same
     # @require_wms_token surface as polling, distinct 2/min rate limit.
     app.register_blueprint(snapshot_bp, url_prefix="/api/v1/snapshot")
+    # v1.7.0 Pipe B: inbound surface. Currently exposes only the
+    # documentation-aid /mapping-schema endpoint. Per-resource POST
+    # endpoints land in subsequent commits and reuse this blueprint.
+    app.register_blueprint(inbound_bp, url_prefix="/api/v1/inbound")
 
     # Import connector modules so they auto-register with the registry
     import connectors.example  # noqa: F401
