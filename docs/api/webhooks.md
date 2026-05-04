@@ -186,7 +186,7 @@ The dispatcher retries any non-2xx response (and any network-level failure) on a
 | 8 | 2 hours |
 | (DLQ) | 12 hours after attempt 8's failure |
 
-Cumulative window: ~15 hours. There is no jitter in v1.6 (one consumer, one dispatcher); revisit if your fleet grows past one subscription per dispatcher.
+Cumulative window: ~15 hours nominal. v1.6.1 adds +/-10% jitter applied per attempt to decorrelate retries across multiple subscriptions that share a consumer URL: without jitter, N subscriptions whose first delivery to the same URL fails at the same minute retry at the same minute on every slot, presenting the consumer with a synchronized retry storm indistinguishable from a coordinated DoS. The cumulative window stays inside ~17h worst case under the jitter band, so consumer-side incident-response budgeting is unchanged.
 
 Per-aggregate FIFO is intentional. Head-of-line blocking applies: a stuck event blocks newer events on the same subscription until the head terminates (succeeds, hits the DLQ, or auto-pauses at the ceiling). This is by design; per-aggregate ordering matters more than throughput when the consumer is mid-failure.
 
