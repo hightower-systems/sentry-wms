@@ -91,7 +91,7 @@ Every rotation writes an `audit_log` row with `action_type=WEBHOOK_SECRET_ROTATE
 
 - The `subscription_id` you rotated.
 - The `user_id` matches the admin who clicked rotate.
-- `details.demoted_prior_primary` is `true` (every rotation in v1.6.0 except the very first issuance demotes a prior gen=1).
+- `details.demoted_prior_primary` is `true` (every rotation except the very first issuance demotes a prior gen=1).
 - The `created_at` timestamp matches your wall-time expectation.
 
 ```sql

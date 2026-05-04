@@ -6,6 +6,217 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.6.1 -- Webhook Security Patch
+
+*2026-05-03.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.6.1).
+
+Security patch closing 22 findings (V-300 through V-321) from the
+post-v1.6.0 audit on the new outbound webhook surface. The audit
+applied a webhook-classes lens (SSRF, signature timing, retry-storm
+amplification, secret-rotation race windows, DLQ poisoning,
+replay-batch amplification, downstream consumer trust boundaries,
+cross-worker pubsub integrity) plus the v1.5.1 21-class regression
+check; 22 findings landed and every one is fixed in this release. No
+deferrals. No API contract changes. Mobile is unchanged.
+
+Three new migrations (034-036). Five new env vars
+(`SENTRY_PUBSUB_HMAC_KEY`, `DISPATCHER_HTTP_CONNECT_TIMEOUT_MS`,
+`DISPATCHER_HTTP_READ_TIMEOUT_MS`,
+`DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET`,
+`DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S`). The cookie-auth admin
+surface is unchanged outside the response-body fields surfaced by
+the replay-batch breakdown and the new `hint` field on PATCH
+responses for paused-by-ceiling subscriptions.
+
+Tombstone gate (chained pair):
+
+- **URL canonicalization on the tombstone gate (#218).** Pre-fix the
+  URL-reuse gate matched on the raw `delivery_url_at_delete` column;
+  one-character casing or default-port mutations bypassed the gate
+  without supplying `acknowledge_url_reuse`. New
+  `canonicalize_delivery_url` helper is the single source of truth.
+  Migration 034 adds `delivery_url_canonical`, backfills via a
+  PL/pgSQL twin of the helper, and swaps the partial unique index
+  over to the canonical column.
+- **PATCH endpoint runs the tombstone gate on `delivery_url` change
+  (#219).** Pre-fix the PATCH path validated a new URL against
+  scheme + the dispatch-time SSRF guard but did NOT consult
+  `webhook_subscriptions_tombstones`. Shared `_check_url_tombstone`
+  helper now called from both POST and PATCH; `acknowledge_url_reuse`
+  is accepted on `UpdateWebhookRequest`.
+
+HMAC + secret material:
+
+- **`SecretMaterial` refuses pickle (#220).** The default `__slots__`
+  pickle path serialized `_plaintext` verbatim. Override
+  `__reduce_ex__`, `__reduce__`, `__getstate__`, and `__setstate__`
+  so multiprocessing IPC, joblib, APM local-capture, and shelve all
+  surface loudly.
+- **Single-serialization runtime check raises
+  `SingleSerializationViolation` instead of `assert` (#221).**
+  Python `-O` strips assertions; production deployments under that
+  flag lost the `body == signed_body_for_assertion` defense
+  silently. Replaced with an explicit `raise` so the check is
+  emitted bytecode regardless of optimization level.
+- **Secret-rotation race closed via `SELECT FOR SHARE` (#225).**
+  Concurrent rotation could demote `gen=1` to `gen=2` between the
+  dispatcher's read and its sign + send. `FOR SHARE` serializes
+  against rotation; the row's actual `generation` is projected into
+  the returned `SecretMaterial` and stamped onto
+  `webhook_deliveries.secret_generation` before the HTTP send.
+
+Cross-worker pubsub integrity:
+
+- **HMAC-signed `webhook_subscription_events` envelope (#227).**
+  SECURITY.md explicitly assumes Redis may be compromised; the
+  pre-fix channel accepted unauthenticated JSON, so an attacker with
+  publish rights could forge `event="deleted"`,
+  `event="secret_rotated"`, or `event="delivery_url_changed"`. New
+  `pubsub_signing` module owns `load_key` / `sign` / `verify` /
+  `build_envelope` / `parse_envelope` keyed on
+  `SENTRY_PUBSUB_HMAC_KEY`; subscriber verifies via
+  `hmac.compare_digest` before enqueueing. Boot guard refuses api
+  and dispatcher boot on unset / placeholder / short keys.
+
+Replay-batch hardening:
+
+- **Pre-INSERT `pending_ceiling` check (#222).** Auto-pause in
+  `deliver_one` only fires AFTER a delivery attempt; replay-batch
+  INSERTed N pending rows in one statement BEFORE any attempt,
+  sidestepping the rail. Refuse 409 with structured `current_pending`
+  / `impact_count` / `pending_ceiling` / `gap` fields.
+- **`SELECT FOR UPDATE` on the replay-batch subscription row
+  (#223).** Two HTTP requests racing each other could both pass the
+  60-second per-subscription throttle SELECT before either committed
+  its audit row. `FOR UPDATE` serializes concurrent replay-batches
+  on the same subscription.
+- **Aggregate (cross-subscription) replay-batch throttle (#224).**
+  The per-subscription bucket was bypassable by a factor of N for a
+  compromised admin who creates N subscriptions all pointing at the
+  same consumer URL. New global throttle counts every
+  `WEBHOOK_DELIVERY_REPLAY_BATCH` audit_log row across the
+  deployment in a rolling window; defaults 5 batches per 5 minutes.
+- **Replay-batch reports matched-but-pruned count breakdown
+  (#233).** The impact COUNT used a LEFT JOIN to `integration_events`
+  so rows whose underlying event was pruned silently disappeared
+  from the count. Surface `matched_with_event_data` (replayable) +
+  `matched_without_event_data` (pruned) on both the response body
+  and audit_log details.
+
+HTTP client:
+
+- **Response body buffering capped at 64KB (#226).** `session.post`
+  ran without `stream=True`, so a malicious consumer that streamed a
+  multi-GB 5xx body spiked worker RSS by gigabytes per delivery.
+  Pass `stream=True`, close in a finally block, and refuse oversized
+  advertised `Content-Length` up front.
+- **Tuple HTTP timeouts + wall-clock watchdog (#237).** A consumer
+  dripping one byte every 9 seconds under a 10s read timeout could
+  keep the connection alive forever. Pass timeout as `(connect,
+  read)` and wrap the call with a thread watchdog enforcing a hard
+  wall-clock cap. Two new env vars
+  `DISPATCHER_HTTP_CONNECT_TIMEOUT_MS` (5000) +
+  `DISPATCHER_HTTP_READ_TIMEOUT_MS` (8000); env_validator boot
+  guard refuses configurations where either per-op cap exceeds the
+  wall-clock cap.
+
+Subscription state propagation + filter validation:
+
+- **PATCH publishes `subscription_filter_changed` on filter
+  mutation (#229).** New cross-worker kind appended on filter
+  mutation. Filter changes stay non-retroactive: events committed
+  before the PATCH that match the new filter but not the old do NOT
+  re-deliver. Operators backfilling reach for the replay-batch
+  endpoint.
+- **PATCH publishes `ceiling_changed` and surfaces a non-resume
+  hint (#230).** When the operator lifts the ceiling that paused
+  the subscription but does NOT also flip `status=active`, the
+  response carries a `hint` field naming the follow-up step.
+  Resume stays an explicit operator decision.
+- **Empty `subscription_filter` array refusal (#231).**
+  `subscription_filter={"event_types": []}` looked like "deliver no
+  events" but actually meant "deliver every event": filter clauses
+  are truthy-gated on each list field. New
+  `_reject_empty_filter_arrays` helper called from POST and PATCH
+  refuses with 400 `empty_filter_array`.
+- **Malformed `subscription_filter` fails closed (#232).** Pre-fix,
+  a Pydantic parse failure on the JSONB column logged WARNING and
+  fell back to `SubscriptionFilter()` (matches every event). For an
+  authorization-shaped column this was fail-OPEN. Now fail closed:
+  the dispatcher auto-pauses with `pause_reason='malformed_filter'`,
+  writes a `WEBHOOK_SUBSCRIPTION_AUTO_PAUSE` audit_log row, and
+  backs off.
+
+Cleanup, forensic triggers, CHECK constraints:
+
+- **`cleanup_webhook_deliveries` chunked deletes (#228).** The
+  6-hour beat task issued a single DELETE that could span tens of
+  millions of rows in one transaction at sustained 50 events/sec,
+  holding a long lock and starving autovacuum. Switched to chunked
+  DELETE with COMMIT between batches; default chunk 1000, default
+  10-minute wall-clock cap.
+- **`webhook_deliveries` DELETE/TRUNCATE forensic triggers (#235).**
+  Migration 035 mirrors the V-157 / migration 032 shape on
+  `webhook_deliveries`. New `webhook_deliveries_audit` table,
+  statement-level AFTER DELETE + AFTER TRUNCATE triggers. Brings
+  v1.6 to parity with the v1.5.1 forensic posture.
+- **`webhook_subscriptions.status` + `pause_reason` CHECK
+  constraints (#236).** Migration 036 adds enums for `status` and
+  `pause_reason`. Pre-fix asymmetry: migration 030 had CHECK enums
+  on `webhook_deliveries.status` but migration 029 left the same
+  column on `webhook_subscriptions` to application validation.
+
+Retry storm + boot validation + docs:
+
+- **+/-10% jitter on every retry slot (#234).** Pre-fix the retry
+  schedule was deterministic, so N subscriptions whose first
+  delivery to the same consumer URL failed at the same minute then
+  retried at the same minute on every retry slot. Apply +/-10%
+  jitter using `secrets.SystemRandom`; cumulative worst-case still
+  under 17h.
+- **API container runs `dispatcher_env.validate_or_die` (#238).**
+  validate_or_die ran ONLY in the dispatcher container pre-fix. The
+  api container reads the same dispatcher env vars for
+  admin-endpoint enforcement and the cross-worker pubsub publisher,
+  but a typo'd or out-of-range value never tripped a boot guard
+  there. Wire validate_or_die into `create_app()` after
+  `validate_pepper_config` and before blueprint registration.
+- **Consumer secret-handling guidance in `docs/api/webhooks.md`
+  (#239).** New "Handling the secret bytes" subsection covers
+  secret-manager storage, never-commit / never-log, and the pickle
+  / shelve / joblib / APM / debugger leak surfaces consumers
+  commonly do not think about. Symmetric with the server-side gap
+  V-302 closed.
+
+Migrations: **034** adds
+`webhook_subscriptions_tombstones.delivery_url_canonical` + PL/pgSQL
+backfill + partial unique index swap. **035** adds
+`webhook_deliveries_audit` + statement-level DELETE / TRUNCATE
+triggers. **036** adds CHECK constraints on
+`webhook_subscriptions.status` and `pause_reason`; ships AFTER
+V-314 so `malformed_filter` is in use before the constraint locks
+it down. All three are small DDL operations, BEGIN/COMMIT-wrapped
+per V-213.
+
+Operator notes: `SENTRY_PUBSUB_HMAC_KEY` is required when the
+dispatcher is enabled; both api and webhook-dispatcher containers
+must receive the same value (docker-compose forwards it). Generate
+with `python -c "import secrets; print(secrets.token_hex(32))"`.
+`DISPATCHER_ENABLED=false` bypasses the boot guard so a
+kill-switched deployment can come up without the key.
+`DISPATCHER_HTTP_CONNECT_TIMEOUT_MS` (5000) +
+`DISPATCHER_HTTP_READ_TIMEOUT_MS` (8000) must each be `<=
+DISPATCHER_HTTP_TIMEOUT_MS` (10000, the wall-clock cap).
+`DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET` (5) +
+`DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S` (300) tune the aggregate
+replay-batch throttle and are operator-only. No mobile APK ships
+with v1.6.1; existing v1.5.1 APKs on Chainway C6000 devices
+continue to work. Standard upgrade procedure applies: `git pull
+&& docker compose down && docker compose build && docker compose
+up -d`.
+
+---
+
 ## v1.6.0 -- Outbound Push (Pipe A Write)
 
 *2026-04-30.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.6.0).

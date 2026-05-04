@@ -28,7 +28,7 @@ Open the admin panel `/webhooks` page and click the per-row `DLQ` action on the 
 | Delivery | `delivery_id`, the per-attempt PK. Replay-one targets this column. |
 | Event | `event_id`, the `integration_events` PK the delivery was carrying. Stable across retries; this is the consumer-facing dedupe key. |
 | Type | `event_type` (joined from `integration_events`). |
-| Attempt | Always `8` for DLQ rows in v1.6.0 (the eighth failure is the terminal transition). |
+| Attempt | Always `8` for DLQ rows (the eighth failure is the terminal transition). |
 | HTTP | The HTTP status code from the consumer's last response. `null` for network-level failures (timeout, TLS, SSRF reject). |
 | Error | `error_kind` from the catalog (`timeout`, `connection`, `tls`, `4xx`, `5xx`, `ssrf_rejected`, `unknown`). |
 | Detail | The catalog `short_message` for the kind. Hover for the longer description. **No bytes from the consumer's response body are stored or shown.** |

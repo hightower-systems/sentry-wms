@@ -1,6 +1,6 @@
-# Webhooks (v1.6.0)
+# Webhooks (v1.6.1)
 
-This is the consumer integration guide for the v1.6.0 Outbound Push surface. If you are integrating an external system that wants to receive Sentry's `integration_events` as HTTPS POSTs instead of polling `/api/v1/events`, this document is the contract.
+This is the consumer integration guide for the Outbound Push surface (introduced in v1.6.0; hardened in v1.6.1). If you are integrating an external system that wants to receive Sentry's `integration_events` as HTTPS POSTs instead of polling `/api/v1/events`, this document is the contract.
 
 The wire envelope is byte-for-byte identical to a single-event response from the polling endpoint, so a consumer that already polls Sentry can keep its event-handling code and add a webhook entry point that calls the same handler.
 

@@ -344,7 +344,7 @@ The hop count must match the number of trusted proxies in the chain exactly. Ove
 
 ### Sideloading the APK
 
-Download the APK from the [GitHub Releases](https://github.com/hightower-systems/sentry-wms/releases) page. **`sentry-wms-v1.5.1.apk`** is the current recommended baseline; v1.6.0 ships no mobile code changes (the dispatcher daemon and admin Webhooks page are server-side surfaces) and the v1.5.1 APK carries the dependency-tree security overrides from #158 and #61. Operators still on v1.4.1 or v1.4.3 should install v1.5.1 to pick up those fixes.
+Download the APK from the [GitHub Releases](https://github.com/hightower-systems/sentry-wms/releases) page. **`sentry-wms-v1.5.1.apk`** is the current recommended baseline; v1.6.0 and v1.6.1 ship no mobile code changes (the dispatcher daemon, admin Webhooks page, and the v1.6.1 webhook security patch are server-side surfaces) and the v1.5.1 APK carries the dependency-tree security overrides from #158 and #61. Operators still on v1.4.1 or v1.4.3 should install v1.5.1 to pick up those fixes.
 
 Install via ADB:
 
