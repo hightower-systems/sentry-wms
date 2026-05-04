@@ -81,6 +81,7 @@ def _fetch_by_hash(token_hash: str) -> Optional[dict]:
                 """
                 SELECT token_id, token_name, token_hash, warehouse_ids,
                        event_types, endpoints, connector_id, status,
+                       source_system, inbound_resources, mapping_override,
                        created_at, rotated_at, expires_at, revoked_at,
                        last_used_at
                   FROM wms_tokens
@@ -102,6 +103,12 @@ def _fetch_by_hash(token_hash: str) -> Optional[dict]:
         "endpoints": list(row.endpoints) if row.endpoints else [],
         "connector_id": row.connector_id,
         "status": row.status,
+        # v1.7.0 Pipe B scope dimensions. source_system is NULL for
+        # outbound-only tokens; inbound_resources defaults to '{}' so
+        # outbound-only tokens still see an empty list (Decision-S).
+        "source_system": row.source_system,
+        "inbound_resources": list(row.inbound_resources) if row.inbound_resources else [],
+        "mapping_override": row.mapping_override,
         "created_at": row.created_at,
         "rotated_at": row.rotated_at,
         "expires_at": row.expires_at,

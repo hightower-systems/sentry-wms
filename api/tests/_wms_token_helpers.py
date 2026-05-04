@@ -45,6 +45,9 @@ def insert_token(
     event_types=None,
     endpoints=None,
     connector_id=None,
+    source_system=None,
+    inbound_resources=None,
+    mapping_override=False,
 ):
     """Insert a wms_tokens row via autocommit so the row is visible to
     the test's own connection AND the decorator's fresh session.
@@ -52,51 +55,51 @@ def insert_token(
     expires_at=None means "use the migration-023 default" (~1 year out).
     Pass an explicit datetime to override (e.g. a past-dated value for
     the expired-token decorator test).
+
+    v1.7.0 Pipe B: source_system / inbound_resources / mapping_override
+    default to None / [] / False so existing v1.5 / v1.6 tests are
+    unchanged. When source_system is supplied, the helper INSERTs the
+    matching inbound_source_systems_allowlist row first (kind='internal_tool')
+    so the FK is satisfied; the row is left in place at test scope and
+    is wiped by the session TRUNCATE in conftest.
     """
     conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = True
     try:
         cur = conn.cursor()
-        if expires_at is None:
+        if source_system is not None:
             cur.execute(
-                """
-                INSERT INTO wms_tokens (
-                    token_name, token_hash, status,
-                    warehouse_ids, event_types, endpoints, connector_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING token_id
-                """,
-                (
-                    name,
-                    sha256_with_pepper(plaintext),
-                    status,
-                    warehouse_ids or [1],
-                    event_types or [],
-                    list(DEFAULT_TEST_ENDPOINTS) if endpoints is None else endpoints,
-                    connector_id,
-                ),
+                "INSERT INTO inbound_source_systems_allowlist "
+                "(source_system, kind) VALUES (%s, 'internal_tool') "
+                "ON CONFLICT DO NOTHING",
+                (source_system,),
             )
-        else:
-            cur.execute(
-                """
-                INSERT INTO wms_tokens (
-                    token_name, token_hash, status,
-                    warehouse_ids, event_types, endpoints, connector_id,
-                    expires_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING token_id
-                """,
-                (
-                    name,
-                    sha256_with_pepper(plaintext),
-                    status,
-                    warehouse_ids or [1],
-                    event_types or [],
-                    list(DEFAULT_TEST_ENDPOINTS) if endpoints is None else endpoints,
-                    connector_id,
-                    expires_at,
-                ),
-            )
+        cols = [
+            "token_name", "token_hash", "status",
+            "warehouse_ids", "event_types", "endpoints", "connector_id",
+            "source_system", "inbound_resources", "mapping_override",
+        ]
+        vals = [
+            name,
+            sha256_with_pepper(plaintext),
+            status,
+            warehouse_ids or [1],
+            event_types or [],
+            list(DEFAULT_TEST_ENDPOINTS) if endpoints is None else endpoints,
+            connector_id,
+            source_system,
+            inbound_resources or [],
+            mapping_override,
+        ]
+        if expires_at is not None:
+            cols.append("expires_at")
+            vals.append(expires_at)
+        placeholders = ", ".join(["%s"] * len(cols))
+        cur.execute(
+            f"INSERT INTO wms_tokens ({', '.join(cols)}) VALUES ({placeholders}) "
+            f"RETURNING token_id",
+            vals,
+        )
         return cur.fetchone()[0]
     finally:
         conn.close()
