@@ -710,18 +710,17 @@ class TestMalformedFilterFailsClosed:
             cleanup()
             cleanup_conn = _conn()
             cleanup_conn.autocommit = True
-            cur = cleanup_conn.cursor()
-            cur.execute(
+            cleanup_conn.cursor().execute(
                 "DELETE FROM integration_events WHERE event_id = ANY(%s)",
                 (emitted,),
             )
-            cur.execute(
-                "DELETE FROM audit_log "
-                "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
-                "  AND details->>'subscription_id' = %s",
-                (sub_id,),
-            )
             cleanup_conn.close()
+            # NOTE: the WEBHOOK_SUBSCRIPTION_AUTO_PAUSE audit_log
+            # row this test wrote is intentionally NOT cleaned up.
+            # The V-025 audit_log_no_delete trigger forbids DELETE
+            # on audit_log; the row is forensic history. Other
+            # tests query audit_log scoped by subscription_id, so
+            # the per-test leak does not interfere across runs.
 
     def test_already_paused_does_not_re_audit(self):
         """A second deliver_one call against the same bad row
@@ -755,18 +754,12 @@ class TestMalformedFilterFailsClosed:
             cleanup()
             cleanup_conn = _conn()
             cleanup_conn.autocommit = True
-            cur = cleanup_conn.cursor()
-            cur.execute(
+            cleanup_conn.cursor().execute(
                 "DELETE FROM integration_events WHERE event_id = ANY(%s)",
                 (emitted,),
             )
-            cur.execute(
-                "DELETE FROM audit_log "
-                "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
-                "  AND details->>'subscription_id' = %s",
-                (sub_id,),
-            )
             cleanup_conn.close()
+            # See sibling test for why the audit row is not deleted.
 
 
 # ---------------------------------------------------------------------

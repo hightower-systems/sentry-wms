@@ -312,16 +312,10 @@ def test_malformed_filter_fails_closed_auto_pauses(caplog):
         assert status == "paused"
         assert pause_reason == "malformed_filter"
     finally:
-        # Audit_log row from the auto-pause; cleanup so the row
-        # does not leak into the next test's view.
-        cleanup_conn = _conn()
-        cleanup_conn.autocommit = True
-        cleanup_conn.cursor().execute(
-            "DELETE FROM audit_log "
-            "WHERE action_type = 'WEBHOOK_SUBSCRIPTION_AUTO_PAUSE' "
-            "  AND details->>'subscription_id' = %s",
-            (sub_id,),
-        )
-        cleanup_conn.close()
+        # The WEBHOOK_SUBSCRIPTION_AUTO_PAUSE audit_log row this
+        # test wrote is intentionally NOT cleaned up: the V-025
+        # audit_log_no_delete trigger forbids DELETE on the
+        # table. Other tests query audit_log scoped by
+        # subscription_id so the per-test leak does not interfere.
         cleanup()
         _delete_events(emitted)
