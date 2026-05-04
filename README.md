@@ -3,7 +3,7 @@
   
   <p><em>Open-source warehouse management system built for barcode scanners</em></p>
 
-  ![Version](https://img.shields.io/badge/version-1.6.0-8e2716)
+  ![Version](https://img.shields.io/badge/version-1.6.1-8e2716)
   ![Tests](https://img.shields.io/badge/tests-1528%20passing-34a853)
   ![License](https://img.shields.io/badge/license-MIT-blue)
   
@@ -276,7 +276,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 
 ## Project Status
 
-**v1.6.0 - Outbound Push release. New `sentry-dispatcher` daemon POSTs every visible event to admin-registered consumer URLs over HMAC-signed HTTPS with a 24-hour dual-accept rotation window, exponential-backoff retries, a 1,000-row dead-letter lane, and dispatch-time SSRF guard with DNS-rebinding mitigation. Admin panel gains a Webhooks page (CRUD, secret rotation, DLQ viewer with replay-one + replay-batch, per-subscription stats, cross-subscription error log) and a wired global search bar covering items / bins / POs / SOs / customers (#163). Five migrations (029-033). New `DISPATCHER_DATABASE_URL` least-privilege role and the dispatcher Compose service. 1528 backend tests passing.**
+**v1.6.1 - Security patch closing 22 findings (V-300 through V-321) from the post-v1.6.0 audit on the new outbound webhook surface. Tombstone-gate URL canonicalization (#218) + PATCH coverage (#219); HMAC-signed cross-worker pubsub envelope (#227); secret-rotation race closed via `FOR SHARE` lock (#225); `SecretMaterial` refuses pickle (#220); single-serialization check raises `SingleSerializationViolation` instead of strippable `assert` (#221); replay-batch ceiling pre-check (#222), TOCTOU lock (#223), aggregate throttle (#224), pruned-event count breakdown (#233); HTTP response-body 64KB cap (#226) + tuple timeouts + wall-clock watchdog (#237); subscription_filter_changed + ceiling_changed pubsub (#229, #230); chunked `cleanup_webhook_deliveries` (#228); empty filter array refusal (#231) + malformed filter fails closed (#232); `webhook_deliveries` DELETE/TRUNCATE audit triggers (#235) + status / pause_reason CHECK constraints (#236); +/-10% retry jitter (#234); api boot validates dispatcher env (#238); consumer secret-handling docs hardening (#239). Three migrations (034-036). New `SENTRY_PUBSUB_HMAC_KEY`, `DISPATCHER_HTTP_CONNECT_TIMEOUT_MS`, `DISPATCHER_HTTP_READ_TIMEOUT_MS`, `DISPATCHER_REPLAY_BATCH_GLOBAL_BUDGET`, `DISPATCHER_REPLAY_BATCH_GLOBAL_WINDOW_S` env vars.**
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -312,6 +312,7 @@ docker compose exec api python -m pytest tests/ -v --tb=short
 | **v1.5.0** | **Outbound Poll release - `integration_events` transactional outbox + deferred `visible_at` trigger + seven event emissions wired through the mobile / admin write paths + `GET /api/v1/events` cursor-paginated polling with consumer groups + `GET /api/v1/snapshot/inventory` for the initial load backed by a `pg_export_snapshot` keeper daemon + X-WMS-Token inbound auth with hash-only `wms_tokens` vault + admin panel CRUD for tokens and consumer groups. Five migrations (020-024) plus 025 to drop the `external_id` DEFAULT. New `SENTRY_TOKEN_PEPPER` env var and new `snapshot-keeper` compose service.** | ✅ **Released** |
 | **v1.5.1** | **Security patch release closing 22 findings (V-200 through V-221) from the post-v1.5.0 audit: endpoint-scope enforcement on `wms_tokens` (V-200), `audit_log` writes on every admin token / consumer-group / connector-registry CRUD (V-208, V-221), strict-typed consumer-group subscription filters (V-204), cross-worker token-cache revocation via Redis pubsub (V-205), `TRUST_PROXY=true + API_BIND_HOST=0.0.0.0` boot guard (V-206), consumer-group recreate replay tombstone (V-207), uniform 401 auth body (V-209), issuance-time scope existence checks (V-210), token-scoped `/events/types` catalog (V-212), transactional migration wrappers (V-213), least-privilege `snapshot-keeper` DB role (V-214), `wms_tokens` DELETE / TRUNCATE forensic trail (#157). Three migrations (026-028). Dependency hygiene: cryptography 44 -> 46, pytest 8 -> 9, eas-cli + minimatch + node-forge mobile-tree overrides, xmldom override, CSP `report-uri` sink (V-109).** | ✅ **Released** |
 | **v1.6.0** | **Outbound Push release - new `sentry-dispatcher` daemon (LISTEN/NOTIFY wake, 8-attempt exponential retry, DLQ on the eighth, head-of-line blocking, graceful shutdown drain, dispatch-time SSRF guard with DNS-rebinding mitigation), HMAC-SHA256 signing with single-serialization invariant + 24-hour dual-accept rotation, admin Webhooks page (CRUD, rotation, DLQ + replay-one + replay-batch, stats, cross-subscription error log with server-owned categorical descriptions), wired global search bar over items / bins / POs / SOs / customers (#163). Five migrations (029-033) plus dedicated least-privilege Postgres role for the dispatcher. New `DISPATCHER_*` env vars and the `sentry-dispatcher` compose service.** | ✅ **Released** |
+| **v1.6.1** | **Security patch closing 22 findings (V-300 through V-321) on the v1.6.0 webhook surface: tombstone canonicalization + PATCH coverage, HMAC-signed cross-worker pubsub, secret-rotation FOR SHARE lock, SecretMaterial pickle refusal, single-serialization raise (assert was strippable under -O), replay-batch ceiling + TOCTOU + aggregate-throttle + pruned-event breakdown, response-body 64KB cap + tuple timeouts + wall-clock watchdog, subscription_filter_changed + ceiling_changed pubsub, chunked cleanup beat, empty-filter and malformed-filter validation, webhook_deliveries audit triggers, status/pause_reason CHECK constraints, +/-10% retry jitter, api-boot env validation, consumer secret-handling docs. Three migrations (034-036). New `SENTRY_PUBSUB_HMAC_KEY`, per-op HTTP timeouts, and aggregate replay-throttle env vars.** | ✅ **Released** |
 | v2.0.0 | First-party ERP + commerce connectors (NetSuite, QuickBooks, Shopify, Fabric) on top of the v1.3 connector framework | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -324,4 +325,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 MIT - see [LICENSE](LICENSE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.6.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.6.1
