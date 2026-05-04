@@ -1934,6 +1934,104 @@ class TestReplayBatch:
         assert resp.status_code == 409
         assert resp.get_json()["error"] == "replay_would_exceed_pending_ceiling"
 
+    def test_pruned_event_breakdown_in_response_and_audit(
+        self, client, auth_headers
+    ):
+        """#233: replay-batch reports
+        ``matched_with_event_data`` + ``matched_without_event_data``
+        so a forensic query can see how many DLQ rows match the
+        webhook_deliveries shape but lost their integration_events
+        row. Pre-#233 those rows silently disappeared from the
+        impact count when an e.* predicate was in play."""
+        created = _create_one(
+            client, auth_headers, display_name="pruned-breakdown"
+        )
+        sub_id = created["subscription_id"]
+
+        # Three dlq deliveries with their integration_events row
+        # intact; two more whose row will be DELETEd to simulate
+        # retention pruning.
+        intact_event_id = self._seed_event(event_type="ship.confirmed")
+        for _ in range(3):
+            self._seed_delivery(sub_id, intact_event_id, "dlq")
+
+        pruned_event_id = self._seed_event(event_type="ship.confirmed")
+        for _ in range(2):
+            self._seed_delivery(sub_id, pruned_event_id, "dlq")
+
+        # webhook_deliveries.event_id is not FK'd to
+        # integration_events, so events can be pruned out from
+        # under terminal deliveries (which is the operational
+        # shape the breakdown surfaces).
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM integration_events WHERE event_id = %s",
+            (pruned_event_id,),
+        )
+        cur.close()
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {
+                    "status": "dlq",
+                    "event_type": "ship.confirmed",
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        assert body["matched_with_event_data"] == 3
+        assert body["matched_without_event_data"] == 2
+        assert body["impact_count"] == 3
+        assert body["replayed_count"] == 3
+        assert "detail" in body
+        assert "could not be re-dispatched" in body["detail"]
+
+        cur = get_raw_connection().cursor()
+        cur.execute(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'WEBHOOK_DELIVERY_REPLAY_BATCH' "
+            "AND details->>'subscription_id' = %s "
+            "ORDER BY log_id DESC LIMIT 1",
+            (sub_id,),
+        )
+        details = cur.fetchone()[0]
+        cur.close()
+        assert details["matched_with_event_data"] == 3
+        assert details["matched_without_event_data"] == 2
+
+    def test_no_pruned_events_omits_detail_field(
+        self, client, auth_headers
+    ):
+        """When every matching row has its integration_events row
+        intact, ``matched_without_event_data`` is 0 and the
+        response does not carry the ``detail`` hint -- there is
+        nothing for the operator to investigate."""
+        created = _create_one(client, auth_headers, display_name="no-pruned")
+        sub_id = created["subscription_id"]
+        event_id = self._seed_event(event_type="ship.confirmed")
+        for _ in range(2):
+            self._seed_delivery(sub_id, event_id, "dlq")
+
+        resp = client.post(
+            f"/api/admin/webhooks/{sub_id}/replay-batch",
+            json={
+                "filter": {
+                    "status": "dlq",
+                    "event_type": "ship.confirmed",
+                }
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+        body = resp.get_json()
+        assert body["matched_with_event_data"] == 2
+        assert body["matched_without_event_data"] == 0
+        assert "detail" not in body
+
     def test_replay_batch_handler_holds_for_update_on_subscription_row(self):
         """#223: the replay-batch handler must hold SELECT FOR
         UPDATE on the subscription row through the throttle SELECT

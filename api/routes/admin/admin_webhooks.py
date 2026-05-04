@@ -1477,22 +1477,38 @@ def _replay_batch_hard_cap() -> int:
     return max(1, value)
 
 
-def _replay_filter_clauses(f) -> tuple[str, dict]:
-    clauses: list[str] = ["d.subscription_id = :sid", "d.status = :status"]
+def _replay_filter_clauses(f) -> tuple[str, dict, str]:
+    """Build the SQL WHERE clauses for replay-batch filtering.
+
+    Returns ``(full_clause, params, d_only_clause)``:
+      * ``full_clause`` includes both ``d.*`` (webhook_deliveries)
+        and ``e.*`` (integration_events) predicates and is used
+        by the impact COUNT and the INSERT-SELECT.
+      * ``d_only_clause`` includes only ``d.*`` predicates so the
+        handler can compute a separate "matched the
+        webhook_deliveries shape but lost the integration_events
+        row" count. The LEFT JOIN means rows whose
+        integration_events row was pruned silently disappear from
+        the full count when an ``e.*`` predicate is in play (#233).
+    """
+    d_clauses: list[str] = ["d.subscription_id = :sid", "d.status = :status"]
+    e_clauses: list[str] = []
     params: dict = {"status": f.status}
     if f.event_type is not None:
-        clauses.append("e.event_type = :event_type")
+        e_clauses.append("e.event_type = :event_type")
         params["event_type"] = f.event_type
     if f.warehouse_id is not None:
-        clauses.append("e.warehouse_id = :warehouse_id")
+        e_clauses.append("e.warehouse_id = :warehouse_id")
         params["warehouse_id"] = f.warehouse_id
     if f.completed_at_from is not None:
-        clauses.append("d.completed_at >= :completed_at_from")
+        d_clauses.append("d.completed_at >= :completed_at_from")
         params["completed_at_from"] = f.completed_at_from
     if f.completed_at_to is not None:
-        clauses.append("d.completed_at <= :completed_at_to")
+        d_clauses.append("d.completed_at <= :completed_at_to")
         params["completed_at_to"] = f.completed_at_to
-    return " AND ".join(clauses), params
+    full_clause = " AND ".join(d_clauses + e_clauses)
+    d_only_clause = " AND ".join(d_clauses)
+    return full_clause, params, d_only_clause
 
 
 @admin_bp.route("/webhooks/<subscription_id>/replay-batch", methods=["POST"])
@@ -1614,9 +1630,19 @@ def replay_batch(validated, subscription_id):
             429,
         )
 
-    filter_clauses, filter_params = _replay_filter_clauses(validated.filter)
+    filter_clauses, filter_params, d_only_clauses = _replay_filter_clauses(
+        validated.filter
+    )
     filter_params["sid"] = subscription_id
 
+    # #233: report a count breakdown so the operator can see how
+    # many DLQ rows match the webhook_deliveries shape but cannot
+    # be re-dispatched because their integration_events row was
+    # pruned. The LEFT JOIN above filters those rows out
+    # silently when an e.* predicate (event_type / warehouse_id)
+    # is in play; without the breakdown a forensic query
+    # ("show me every event Sentry tried to send") gets a smaller
+    # answer than the operator expects.
     impact_row = g.db.execute(
         text(
             f"""
@@ -1628,7 +1654,22 @@ def replay_batch(validated, subscription_id):
         ),
         filter_params,
     ).fetchone()
-    impact = int(impact_row.n or 0)
+    matched_with_event_data = int(impact_row.n or 0)
+    impact = matched_with_event_data
+
+    pruned_row = g.db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS n
+              FROM webhook_deliveries d
+              LEFT JOIN integration_events e ON e.event_id = d.event_id
+             WHERE {d_only_clauses}
+               AND e.event_id IS NULL
+            """
+        ),
+        filter_params,
+    ).fetchone()
+    matched_without_event_data = int(pruned_row.n or 0)
 
     hard_cap = _replay_batch_hard_cap()
     if impact > hard_cap and not validated.acknowledge_large_replay:
@@ -1691,9 +1732,21 @@ def replay_batch(validated, subscription_id):
             409,
         )
 
+    pruned_detail = None
+    if matched_without_event_data > 0:
+        pruned_detail = (
+            f"{matched_without_event_data} webhook_deliveries row(s) "
+            "match the filter on webhook_deliveries but their "
+            "integration_events row is no longer present and could "
+            "not be re-dispatched."
+        )
+
     if impact == 0:
         # Nothing to replay; still write an audit row so a
-        # zero-impact filter is visible in the trail.
+        # zero-impact filter is visible in the trail. The audit
+        # row carries the pruned breakdown too so a forensic
+        # query against audit_log can see why the replay matched
+        # zero rows even when the operator believed otherwise.
         write_audit_log(
             g.db,
             action_type=ACTION_WEBHOOK_DELIVERY_REPLAY_BATCH,
@@ -1705,20 +1758,22 @@ def replay_batch(validated, subscription_id):
                 "subscription_id": subscription_id,
                 "filter": validated.filter.model_dump(mode="json"),
                 "impact_count": 0,
+                "matched_with_event_data": 0,
+                "matched_without_event_data": matched_without_event_data,
                 "acknowledge_large_replay": validated.acknowledge_large_replay,
             },
         )
         g.db.commit()
-        return (
-            jsonify(
-                {
-                    "subscription_id": subscription_id,
-                    "impact_count": 0,
-                    "replayed_count": 0,
-                }
-            ),
-            201,
-        )
+        body = {
+            "subscription_id": subscription_id,
+            "impact_count": 0,
+            "replayed_count": 0,
+            "matched_with_event_data": 0,
+            "matched_without_event_data": matched_without_event_data,
+        }
+        if pruned_detail is not None:
+            body["detail"] = pruned_detail
+        return jsonify(body), 201
 
     # INSERT one new pending row per matching delivery, all in a
     # single statement so the batch lands or fails atomically.
@@ -1748,21 +1803,26 @@ def replay_batch(validated, subscription_id):
             "subscription_id": subscription_id,
             "filter": validated.filter.model_dump(mode="json"),
             "impact_count": impact,
+            # #233: capture the breakdown so the audit trail
+            # answers "what matched but could not be re-dispatched
+            # because the integration_events row was pruned?"
+            "matched_with_event_data": matched_with_event_data,
+            "matched_without_event_data": matched_without_event_data,
             "acknowledge_large_replay": validated.acknowledge_large_replay,
         },
     )
 
     g.db.commit()
-    return (
-        jsonify(
-            {
-                "subscription_id": subscription_id,
-                "impact_count": impact,
-                "replayed_count": impact,
-            }
-        ),
-        201,
-    )
+    body = {
+        "subscription_id": subscription_id,
+        "impact_count": impact,
+        "replayed_count": impact,
+        "matched_with_event_data": matched_with_event_data,
+        "matched_without_event_data": matched_without_event_data,
+    }
+    if pruned_detail is not None:
+        body["detail"] = pruned_detail
+    return jsonify(body), 201
 
 
 _STATS_WINDOW_INTERVAL = {
