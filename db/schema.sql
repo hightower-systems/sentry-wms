@@ -188,7 +188,10 @@ CREATE TABLE sales_orders (
     carrier VARCHAR(100),
     tracking_number VARCHAR(255),
     created_by VARCHAR(100),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
+    -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
+    latest_inbound_id BIGINT
 );
 
 CREATE TABLE sales_order_lines (
@@ -916,6 +919,44 @@ $$;
 CREATE TRIGGER tr_cross_system_mappings_audit_truncate
     AFTER TRUNCATE ON cross_system_mappings
     FOR EACH STATEMENT EXECUTE FUNCTION cross_system_mappings_audit_truncate();
+
+-- ============================================================
+-- INBOUND STAGING TABLES (v1.7.0 Pipe B per-resource history)
+-- ============================================================
+-- Append-only with status flag. Each accepted inbound POST inserts a
+-- fresh row; older rows for the same (source_system, external_id)
+-- flip to 'superseded'. canonical_id resolves to the canonical
+-- table's external_id UUID per the V-216 retrofit. ingested_via_token_id
+-- is BIGINT (wms_tokens.token_id is BIGSERIAL) ON DELETE RESTRICT;
+-- tokens are revoked via revoked_at, not DELETE. Per-resource files
+-- are: 039 sales_orders, 040 items, 041 customers, 042 vendors,
+-- 043 purchase_orders.
+-- ============================================================
+
+CREATE TABLE inbound_sales_orders (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB        NOT NULL,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_sales_orders_idempotency
+    ON inbound_sales_orders (source_system, external_id, external_version);
+
+CREATE INDEX inbound_sales_orders_current
+    ON inbound_sales_orders (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_sales_orders_canonical
+    ON inbound_sales_orders (canonical_id);
 
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
