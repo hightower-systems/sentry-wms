@@ -130,7 +130,10 @@ CREATE TABLE purchase_orders (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     received_at TIMESTAMPTZ,
     created_by VARCHAR(100),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
+    -- Unindexed, no FK; see db/migrations/043_inbound_purchase_orders.sql.
+    latest_inbound_id BIGINT
 );
 
 CREATE TABLE purchase_order_lines (
@@ -1074,6 +1077,31 @@ CREATE INDEX inbound_vendors_current
 
 CREATE INDEX inbound_vendors_canonical
     ON inbound_vendors (canonical_id);
+
+CREATE TABLE inbound_purchase_orders (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB        NOT NULL,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_purchase_orders_idempotency
+    ON inbound_purchase_orders (source_system, external_id, external_version);
+
+CREATE INDEX inbound_purchase_orders_current
+    ON inbound_purchase_orders (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_purchase_orders_canonical
+    ON inbound_purchase_orders (canonical_id);
 
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
