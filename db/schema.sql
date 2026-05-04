@@ -986,6 +986,50 @@ CREATE INDEX inbound_items_current
 CREATE INDEX inbound_items_canonical
     ON inbound_items (canonical_id);
 
+-- v1.7.0 customers (new canonical table; conservative NOT NULL posture
+-- per plan §1.4 -- only canonical_id, created_at, updated_at,
+-- latest_inbound_id NOT NULL until v2.0 has signal). DDL identical
+-- to db/migrations/041_inbound_customers.sql.
+CREATE TABLE customers (
+    canonical_id      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_id       UUID         UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+    customer_name     VARCHAR(200),
+    email             VARCHAR(255),
+    phone             VARCHAR(50),
+    billing_address   TEXT,
+    shipping_address  TEXT,
+    tax_id            VARCHAR(64),
+    is_active         BOOLEAN,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    latest_inbound_id BIGINT       NOT NULL DEFAULT 0
+);
+
+CREATE TABLE inbound_customers (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB        NOT NULL,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_customers_idempotency
+    ON inbound_customers (source_system, external_id, external_version);
+
+CREATE INDEX inbound_customers_current
+    ON inbound_customers (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_customers_canonical
+    ON inbound_customers (canonical_id);
+
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
 -- ============================================================
