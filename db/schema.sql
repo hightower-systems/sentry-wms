@@ -905,7 +905,26 @@ CREATE TABLE webhook_subscriptions (
     CONSTRAINT webhook_subscriptions_pending_ceiling_range
         CHECK (pending_ceiling BETWEEN 100 AND 100000),
     CONSTRAINT webhook_subscriptions_dlq_ceiling_range
-        CHECK (dlq_ceiling BETWEEN 10 AND 10000)
+        CHECK (dlq_ceiling BETWEEN 10 AND 10000),
+    -- #236: bottom-rung enforcement on status + pause_reason.
+    -- Migration 029 left validation to the application layer
+    -- ("Status validation is application side"); migration 036
+    -- adds the column-level CHECKs so a privileged-role error
+    -- or malicious migration cannot write an out-of-band value.
+    -- The malformed_filter value lands here because the
+    -- dispatcher's V-314 auto-pause path writes it.
+    CONSTRAINT webhook_subscriptions_status_enum
+        CHECK (status IN ('active', 'paused', 'revoked')),
+    CONSTRAINT webhook_subscriptions_pause_reason_enum
+        CHECK (
+            pause_reason IS NULL
+            OR pause_reason IN (
+                'manual',
+                'pending_ceiling',
+                'dlq_ceiling',
+                'malformed_filter'
+            )
+        )
 );
 
 CREATE INDEX webhook_subscriptions_status
