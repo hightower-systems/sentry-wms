@@ -1,0 +1,4 @@
+# Placeholder so the mappings/ directory exists in fresh checkouts.
+# Real <source_system>.yaml files land here as connectors register.
+# See db/migrations/037_wms_tokens_inbound_columns.sql for the
+# inbound_source_systems_allowlist row that gates each source_system.
