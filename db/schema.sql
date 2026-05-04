@@ -1103,6 +1103,29 @@ CREATE INDEX inbound_purchase_orders_current
 CREATE INDEX inbound_purchase_orders_canonical
     ON inbound_purchase_orders (canonical_id);
 
+-- v1.7.0 inbound retention beat log. One row per (resource, run);
+-- the Celery beat task itself is Python code and lives outside
+-- migrations. DDL identical to db/migrations/044_inbound_retention_beat.sql.
+CREATE TABLE inbound_cleanup_runs (
+    run_id          BIGSERIAL    PRIMARY KEY,
+    resource        VARCHAR(32)  NOT NULL,
+    started_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    finished_at     TIMESTAMPTZ,
+    rows_nullified  INTEGER      NOT NULL DEFAULT 0,
+    retention_days  INTEGER      NOT NULL,
+    status          VARCHAR(16)  NOT NULL DEFAULT 'running',
+    error_message   TEXT,
+    CHECK (resource IN ('sales_orders','items','customers','vendors','purchase_orders')),
+    CHECK (status   IN ('running','succeeded','failed'))
+);
+
+CREATE INDEX inbound_cleanup_runs_resource_started
+    ON inbound_cleanup_runs (resource, started_at DESC);
+
+CREATE INDEX inbound_cleanup_runs_status_started
+    ON inbound_cleanup_runs (status, started_at DESC)
+    WHERE status = 'failed';
+
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
 -- ============================================================
