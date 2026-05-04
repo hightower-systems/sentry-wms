@@ -222,6 +222,17 @@ When the admin rotates, the new generation 1 plaintext appears in the rotation m
 
 A second rotation within the 24h window overwrites generation 2 and shortens the cutover; the operator runbook documents waiting the full window before re-rotating except in compromise scenarios.
 
+### Handling the secret bytes
+
+The shared secret bytes are sensitive. Treat them as you would any HMAC key: keep them in a secret manager (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, or your platform's equivalent) and load them per-process. Do NOT:
+
+- Commit the plaintext to source control or write it to a `.env` file that ends up in a backup tarball.
+- Print or log the plaintext - structured loggers that capture local variables on exceptions will dump it.
+- Let it sit in process state that might be pickled (Python `pickle`, `joblib`, `multiprocessing`'s default IPC), swapped to disk, captured in an APM error report (`Sentry.io`'s SDK with `capture_locals=True`, Datadog/New Relic equivalents), or read out of a debugger snapshot.
+- Cache it in a long-lived dict that gets serialized for warm-restart hydration. Reload from the secret manager on each process boot.
+
+A leaked secret means an attacker who reaches your webhook endpoint can forge signed deliveries indistinguishable from Sentry's until you rotate. Rotate via the Sentry admin panel and update your secret store within the 24-hour dual-accept window. Sentry's server side mirrors this contract: the dispatcher's `SecretMaterial` wrapper refuses `repr` / `str` / `pickle` so the plaintext cannot escape via the analogous server-side leak surfaces.
+
 ## Subscription pause + DLQ behavior
 
 Two ceilings auto-pause the subscription:
