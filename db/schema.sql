@@ -81,7 +81,10 @@ CREATE TABLE items (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
+    -- Unindexed, no FK; see db/migrations/040_inbound_items.sql.
+    latest_inbound_id BIGINT
 );
 
 CREATE INDEX ix_items_upc ON items(upc);
@@ -957,6 +960,31 @@ CREATE INDEX inbound_sales_orders_current
 
 CREATE INDEX inbound_sales_orders_canonical
     ON inbound_sales_orders (canonical_id);
+
+CREATE TABLE inbound_items (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB        NOT NULL,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_items_idempotency
+    ON inbound_items (source_system, external_id, external_version);
+
+CREATE INDEX inbound_items_current
+    ON inbound_items (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_items_canonical
+    ON inbound_items (canonical_id);
 
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)
