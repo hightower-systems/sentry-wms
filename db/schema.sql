@@ -1117,6 +1117,71 @@ CREATE TRIGGER tr_webhook_secrets_audit_truncate
     FOR EACH STATEMENT EXECUTE FUNCTION webhook_secrets_audit_truncate();
 
 -- ============================================================
+-- WEBHOOK DELIVERIES audit (#235; v1.6.1)
+-- ============================================================
+-- Statement-level DELETE / TRUNCATE forensic instrumentation for
+-- webhook_deliveries, mirroring the migration 032 shape on
+-- webhook_subscriptions / webhook_secrets. cleanup_webhook_deliveries
+-- (#228 chunked beat task) and the cascade in the hard-delete
+-- admin path both DELETE rows here; without these triggers a
+-- compromised cleanup-task role could mass-DELETE the per-attempt
+-- history with no forensic surface. The DDL lives in
+-- db/migrations/035_webhook_deliveries_audit.sql.
+CREATE TABLE webhook_deliveries_audit (
+    audit_id          BIGSERIAL    PRIMARY KEY,
+    event_type        VARCHAR(16)  NOT NULL,
+    rows_affected     INTEGER,
+    sess_user         TEXT         NOT NULL,
+    curr_user         TEXT         NOT NULL,
+    backend_pid       INTEGER      NOT NULL,
+    application_name  TEXT,
+    event_at          TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX webhook_deliveries_audit_event_at
+    ON webhook_deliveries_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION webhook_deliveries_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO webhook_deliveries_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_deliveries_audit_delete
+    AFTER DELETE ON webhook_deliveries
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_deliveries_audit_delete();
+
+CREATE OR REPLACE FUNCTION webhook_deliveries_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO webhook_deliveries_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_webhook_deliveries_audit_truncate
+    AFTER TRUNCATE ON webhook_deliveries
+    FOR EACH STATEMENT EXECUTE FUNCTION webhook_deliveries_audit_truncate();
+
+-- ============================================================
 -- WEBHOOK SUBSCRIPTIONS TOMBSTONES (v1.6.0 URL-reuse gate)
 -- ============================================================
 -- Per-deletion history that backs the URL-reuse acknowledgement
