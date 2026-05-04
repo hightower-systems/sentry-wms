@@ -9,6 +9,14 @@ os.environ.setdefault(
     "SENTRY_PUBSUB_HMAC_KEY",
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 )
+# #238: api container's create_app now runs validate_or_die,
+# which requires REDIS_URL when the dispatcher is enabled. CI
+# sets it to the service-container URL; the test default makes
+# local pytest runs self-contained without forcing operators to
+# set the var explicitly. The wake module's pubsub publish path
+# soft-fails when Redis is unreachable, so a bogus URL here
+# does not break tests that don't exercise the publish surface.
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 _tests_dir = os.path.dirname(os.path.abspath(__file__))
 _api_dir = os.path.join(_tests_dir, "..")
