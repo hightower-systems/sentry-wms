@@ -187,6 +187,23 @@ def create_app():
     from services.webhook_dispatcher import env_validator as _dispatcher_env
     _dispatcher_env.validate_or_die()
 
+    # v1.7.0 Pipe B: load every mapping document under
+    # SENTRY_INBOUND_MAPPINGS_DIR (default db/mappings) at boot. Cross-checks
+    # against inbound_source_systems_allowlist; an allowlisted source_system
+    # without a doc, or a doc without an allowlist row, refuses boot. One
+    # MAPPING_DOCUMENT_LOAD audit_log row per loaded doc establishes "which
+    # mapping was active when this inbound was processed" forensic chain.
+    from services.mapping_loader import boot_load as _mapping_boot_load
+    mappings_dir = os.getenv("SENTRY_INBOUND_MAPPINGS_DIR", "db/mappings")
+    if not os.path.isdir(mappings_dir):
+        # Fresh checkouts may not have the dir; create empty rather than
+        # die so an operator running with no inbound source_systems can
+        # still boot. The cross-check inside boot_load() covers the
+        # allowlist-vs-docs mismatch case loudly.
+        os.makedirs(mappings_dir, exist_ok=True)
+    app.config["SENTRY_INBOUND_MAPPINGS_DIR"] = mappings_dir
+    app.config["MAPPING_REGISTRY"] = _mapping_boot_load(database_url, mappings_dir)
+
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
         "CORS_ORIGINS",

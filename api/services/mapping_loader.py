@@ -36,6 +36,8 @@ DB and keeps the lookup-error path explicit.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +48,9 @@ import yaml
 from jsonpath_ng import parse as _jsonpath_parse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from simpleeval import EvalWithCompoundTypes
+
+
+_LOG = logging.getLogger("services.mapping_loader")
 
 
 # Function whitelist for derived expressions. Anything outside this set
@@ -472,3 +477,121 @@ def _coerce_or_default(field: FieldMapping, value: Any) -> Any:
             )
         return value
     return value
+
+
+# ============================================================
+# boot_load: integration entry point
+# ============================================================
+
+
+def _git_sha_if_available() -> Optional[str]:
+    """Image-bake SHA written by the Dockerfile. Returns None if absent
+    (local dev, fresh checkout). Never shells out at boot."""
+    for path in ("/app/BUILD_VERSION", "BUILD_VERSION"):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                v = fh.read().strip()
+                return v or None
+        except (OSError, FileNotFoundError):
+            continue
+    return None
+
+
+def _allowlisted_source_systems(conn) -> Set[str]:
+    cur = conn.cursor()
+    cur.execute("SELECT source_system FROM inbound_source_systems_allowlist")
+    rows = {r[0] for r in cur.fetchall()}
+    cur.close()
+    return rows
+
+
+def _write_load_audit(conn, loaded: LoadedMappingFile) -> None:
+    """One MAPPING_DOCUMENT_LOAD row per loaded file. entity_id stays 0
+    (audit_log.entity_id is INT NOT NULL; source_system goes in details).
+    The hash-chain trigger fills prev_hash / row_hash; we only insert the
+    payload columns. user_id 'system:mapping_loader' establishes the boot
+    identity convention v1.7 introduces."""
+    details = {
+        "source_system": loaded.document.source_system,
+        "path": loaded.path,
+        "sha256": loaded.sha256,
+        "mapping_version": loaded.document.mapping_version,
+        "version_compare": loaded.document.version_compare,
+        "resource_count": len(loaded.document.resources),
+        "git_sha_if_available": _git_sha_if_available(),
+    }
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO audit_log
+            (action_type, entity_type, entity_id, user_id, details)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (
+            "MAPPING_DOCUMENT_LOAD",
+            "INBOUND_MAPPING",
+            0,
+            "system:mapping_loader",
+            json.dumps(details),
+        ),
+    )
+    cur.close()
+
+
+def boot_load(
+    database_url: str,
+    mappings_dir: str | os.PathLike[str],
+    *,
+    require_allowlisted: bool = True,
+) -> MappingRegistry:
+    """Boot-time entry point. Loads every doc under mappings_dir,
+    cross-checks against inbound_source_systems_allowlist, and writes
+    one MAPPING_DOCUMENT_LOAD audit_log row per loaded doc.
+
+    Fails loudly when an allowlisted source_system has no mapping doc
+    on disk. The reverse (mapping doc whose source_system is not in
+    the allowlist) is also a fail: it would mean a doc is being parsed
+    but the FK on cross_system_mappings would reject any insert anyway.
+
+    Returns a populated MappingRegistry. Caller stores it on
+    Flask app.config['MAPPING_REGISTRY']; handlers read from there.
+    """
+    import psycopg2  # local import keeps unit tests dependency-free
+
+    registry = load_directory(mappings_dir)
+    loaded_sources = {f.document.source_system for f in registry.loaded_files()}
+
+    conn = psycopg2.connect(database_url)
+    try:
+        conn.autocommit = False
+        if require_allowlisted:
+            allowlisted = _allowlisted_source_systems(conn)
+            missing = allowlisted - loaded_sources
+            extra = loaded_sources - allowlisted
+            if missing:
+                raise RuntimeError(
+                    f"mapping doc missing for allowlisted source_system(s): "
+                    f"{sorted(missing)}. Place the YAML at "
+                    f"{Path(mappings_dir)}/<source_system>.yaml or remove the "
+                    f"row from inbound_source_systems_allowlist."
+                )
+            if extra:
+                raise RuntimeError(
+                    f"mapping doc loaded for non-allowlisted source_system(s): "
+                    f"{sorted(extra)}. Add the row to "
+                    f"inbound_source_systems_allowlist or remove the YAML."
+                )
+        for loaded in registry.loaded_files():
+            _write_load_audit(conn, loaded)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    _LOG.info(
+        "mapping_loader: %d document(s) loaded from %s",
+        len(loaded_sources), mappings_dir,
+    )
+    return registry

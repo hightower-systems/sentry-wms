@@ -39,7 +39,20 @@ if not os.path.exists(SEED_PATH):
 ALL_TABLES = [
     "integration_events",
     "snapshot_scans",
+    # v1.7.0 Pipe B inbound staging + cross-system table land before
+    # wms_tokens / inbound_source_systems_allowlist so CASCADE has FK
+    # ordering it can resolve. The allowlist must be wiped clean each
+    # session so the boot_load() cross-check (no allowlisted source
+    # without a matching mapping doc) sees an empty allowlist by
+    # default.
+    "inbound_sales_orders",
+    "inbound_items",
+    "inbound_customers",
+    "inbound_vendors",
+    "inbound_purchase_orders",
+    "cross_system_mappings",
     "wms_tokens",
+    "inbound_source_systems_allowlist",
     "consumer_groups",
     "connectors",
     "sync_state",
