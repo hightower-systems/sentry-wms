@@ -655,6 +655,79 @@ CREATE TABLE consumer_groups_tombstones (
 );
 
 -- ============================================================
+-- INBOUND SOURCE SYSTEMS ALLOWLIST (v1.7.0 Pipe B gate)
+-- ============================================================
+-- Privilege table: a row here is what gates a source_system from
+-- writing inbound. Operator-managed via SQL only in v1.7 (no admin
+-- endpoint; documented in docs/runbooks/inbound-source-systems.md).
+-- Defined ahead of wms_tokens because wms_tokens.source_system FKs
+-- into it. The identical DDL lives in
+-- db/migrations/037_wms_tokens_inbound_columns.sql for deployments
+-- created before v1.7.0.
+-- ============================================================
+CREATE TABLE inbound_source_systems_allowlist (
+    source_system  VARCHAR(64)  PRIMARY KEY,
+    kind           VARCHAR(16)  NOT NULL CHECK (kind IN ('connector','internal_tool','manual_import')),
+    notes          TEXT,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- v1.7.0 forensic audit (V-157 pattern, mirrors wms_tokens_audit).
+CREATE TABLE inbound_source_systems_allowlist_audit (
+    audit_id         BIGSERIAL    PRIMARY KEY,
+    event_type       VARCHAR(16)  NOT NULL,
+    rows_affected    INTEGER,
+    sess_user        TEXT         NOT NULL,
+    curr_user        TEXT         NOT NULL,
+    backend_pid      INTEGER      NOT NULL,
+    application_name TEXT,
+    event_at         TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX inbound_source_systems_allowlist_audit_event_at
+    ON inbound_source_systems_allowlist_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION inbound_source_systems_allowlist_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO inbound_source_systems_allowlist_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_inbound_source_systems_allowlist_audit_delete
+    AFTER DELETE ON inbound_source_systems_allowlist
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION inbound_source_systems_allowlist_audit_delete();
+
+CREATE OR REPLACE FUNCTION inbound_source_systems_allowlist_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO inbound_source_systems_allowlist_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_inbound_source_systems_allowlist_audit_truncate
+    AFTER TRUNCATE ON inbound_source_systems_allowlist
+    FOR EACH STATEMENT EXECUTE FUNCTION inbound_source_systems_allowlist_audit_truncate();
+
+-- ============================================================
 -- WMS TOKENS (v1.5.0 inbound API tokens for X-WMS-Token auth)
 -- ============================================================
 -- Hash-only storage per Decision P. token_hash is
@@ -662,24 +735,39 @@ CREATE TABLE consumer_groups_tombstones (
 -- Scope columns are typed arrays per Decision S. Default expiry is
 -- one year per Decision R.
 --
+-- v1.7.0 adds three columns for Pipe B (inbound):
+--   source_system     -- nullable FK to inbound_source_systems_allowlist
+--                        (PostgreSQL forbids subqueries in CHECK
+--                        constraints; nullable FK is the correct shape
+--                        and naturally exempts outbound-only tokens).
+--   inbound_resources -- TEXT[] scope dimension for inbound resources
+--                        (sales_orders / items / customers / vendors /
+--                        purchase_orders).
+--   mapping_override  -- BOOLEAN capability flag for per-request mapping
+--                        overrides; default false.
+--
 -- The identical DDL lives in db/migrations/023_wms_tokens.sql for
--- deployments created before v1.5.0.
+-- deployments created before v1.5.0; the v1.7 columns are added by
+-- db/migrations/037_wms_tokens_inbound_columns.sql.
 -- ============================================================
 
 CREATE TABLE wms_tokens (
-    token_id       BIGSERIAL     PRIMARY KEY,
-    token_name     VARCHAR(128)  NOT NULL,
-    token_hash     CHAR(64)      UNIQUE NOT NULL,
-    warehouse_ids  BIGINT[]      NOT NULL DEFAULT '{}',
-    event_types    TEXT[]        NOT NULL DEFAULT '{}',
-    endpoints      TEXT[]        NOT NULL DEFAULT '{}',
-    connector_id   VARCHAR(64)   REFERENCES connectors(connector_id),
-    status         VARCHAR(16)   NOT NULL DEFAULT 'active',
-    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    rotated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    expires_at     TIMESTAMPTZ   NOT NULL DEFAULT (NOW() + INTERVAL '1 year'),
-    revoked_at     TIMESTAMPTZ,
-    last_used_at   TIMESTAMPTZ
+    token_id          BIGSERIAL     PRIMARY KEY,
+    token_name        VARCHAR(128)  NOT NULL,
+    token_hash        CHAR(64)      UNIQUE NOT NULL,
+    warehouse_ids     BIGINT[]      NOT NULL DEFAULT '{}',
+    event_types       TEXT[]        NOT NULL DEFAULT '{}',
+    endpoints         TEXT[]        NOT NULL DEFAULT '{}',
+    connector_id      VARCHAR(64)   REFERENCES connectors(connector_id),
+    source_system     VARCHAR(64)   REFERENCES inbound_source_systems_allowlist(source_system),
+    inbound_resources TEXT[]        NOT NULL DEFAULT '{}',
+    mapping_override  BOOLEAN       NOT NULL DEFAULT FALSE,
+    status            VARCHAR(16)   NOT NULL DEFAULT 'active',
+    created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    rotated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    expires_at        TIMESTAMPTZ   NOT NULL DEFAULT (NOW() + INTERVAL '1 year'),
+    revoked_at        TIMESTAMPTZ,
+    last_used_at      TIMESTAMPTZ
 );
 
 CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
