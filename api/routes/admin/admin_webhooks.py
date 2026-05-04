@@ -145,6 +145,47 @@ def _http_webhooks_allowed() -> bool:
     return os.environ.get("SENTRY_ALLOW_HTTP_WEBHOOKS", "").lower() == "true"
 
 
+_EMPTY_FILTER_FIELDS = (
+    "event_types",
+    "warehouse_ids",
+    "aggregate_external_id_allowlist",
+)
+
+
+def _reject_empty_filter_arrays(sub_filter):
+    """#231: refuse ``event_types=[]`` (and the warehouse_ids /
+    aggregate_external_id_allowlist analogs). The dispatcher's
+    truthy gate on each list emits no SQL clause for an empty
+    list, so a subscription created with ``[]`` matches every
+    event -- the inverse of what the shape looks like it asks
+    for. Operators who want "no events" use ``status='paused'``;
+    operators who want "all events" omit the field. Returns a
+    Flask response on rejection or ``None`` on pass.
+
+    Called from both POST and PATCH so the contract is uniform.
+    """
+    if sub_filter is None:
+        return None
+    for field_name in _EMPTY_FILTER_FIELDS:
+        value = getattr(sub_filter, field_name, None)
+        if value is not None and len(value) == 0:
+            response = jsonify(
+                {
+                    "error": "empty_filter_array",
+                    "field": field_name,
+                    "detail": (
+                        f"{field_name}=[] is not supported. Omit the "
+                        "field to match every value, or supply at least "
+                        "one entry to scope the filter. To stop "
+                        "deliveries, set status='paused' instead."
+                    ),
+                }
+            )
+            response.status_code = 400
+            return response
+    return None
+
+
 def _check_url_tombstone(canonical_url: str, acknowledge_url_reuse: bool):
     """Run the URL-reuse tombstone gate against the canonical form
     of the delivery_url. Returns ``(early_response, tombstone_row)``:
@@ -271,6 +312,9 @@ def create_webhook(validated):
         )
 
     sub_filter = validated.subscription_filter
+    early_empty = _reject_empty_filter_arrays(sub_filter)
+    if early_empty is not None:
+        return early_empty
     if sub_filter.event_types:
         unknown = sorted(set(sub_filter.event_types) - _KNOWN_EVENT_TYPES)
         if unknown:
@@ -551,6 +595,9 @@ def update_webhook(validated, subscription_id):
 
     if validated.subscription_filter is not None:
         sub_filter = validated.subscription_filter
+        early_empty = _reject_empty_filter_arrays(sub_filter)
+        if early_empty is not None:
+            return early_empty
         if sub_filter.event_types:
             unknown = sorted(set(sub_filter.event_types) - _KNOWN_EVENT_TYPES)
             if unknown:

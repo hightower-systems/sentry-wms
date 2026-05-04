@@ -8,12 +8,14 @@ recoverable parse error rather than silently passing through to
 a SQL projection that ignores it. This is the strict-typing
 pattern from V-204 #145 applied to outbound webhooks.
 
-Empty list semantics: an explicit empty list (``event_types=[]``)
-means "no filter clause for this key emitted by the dispatcher",
-identical to ``None``. The integration-tests path treats both as
-"matches every event"; the admin-time validation path that lands
-with the webhook CRUD endpoints will reject ``[]`` explicitly so
-an operator does not write what looks like an always-false filter.
+Empty list semantics: ``event_types=[]`` is REJECTED at admin
+time (#231) by ``admin_webhooks._reject_empty_filter_arrays``.
+The dispatcher's ``_build_filter_clauses`` is truthy-gated on each
+list field, so an empty list at dispatch time (legacy row from
+before #231) emits no SQL clause and matches every event -- which
+is the inverse of what an operator typing ``[]`` would expect. The
+admin-time refusal closes that gap at the create / PATCH surface;
+existing rows keep their behavior unchanged.
 """
 
 from typing import List, Optional, Union

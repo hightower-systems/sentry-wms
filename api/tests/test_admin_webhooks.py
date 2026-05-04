@@ -194,6 +194,59 @@ class TestValidationFailures:
         assert body["error"] == "unknown_warehouse_ids"
         assert 9999999 in body["missing"]
 
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "event_types",
+            "warehouse_ids",
+            "aggregate_external_id_allowlist",
+        ],
+    )
+    def test_empty_filter_array_returns_400(
+        self, client, auth_headers, field
+    ):
+        """#231: an explicit empty array (e.g.
+        ``event_types=[]``) silently means "match every event"
+        because the dispatcher's filter clauses are truthy-gated.
+        That inverts what the shape looks like it asks for. The
+        admin endpoint refuses ``[]`` outright; operators who
+        want "no events" use status='paused', operators who want
+        "all events" omit the field."""
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "x",
+                "delivery_url": "https://example.com/x",
+                "subscription_filter": {field: []},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "empty_filter_array"
+        assert body["field"] == field
+        assert "status='paused'" in body["detail"]
+
+    def test_omitted_filter_field_still_accepted(self, client, auth_headers):
+        """A missing field is the documented "match everything"
+        shape and must still be accepted; the empty-array refusal
+        does not collapse the omitted-field path."""
+        resp = client.post(
+            "/api/admin/webhooks",
+            json={
+                "connector_id": "test-conn-webhook",
+                "display_name": "x",
+                "delivery_url": f"https://example.com/{uuid.uuid4()}",
+                "subscription_filter": {
+                    "event_types": ["receipt.completed"]
+                    # warehouse_ids omitted; should accept.
+                },
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201, resp.get_json()
+
     def test_http_url_rejected_without_opt_out(
         self, client, auth_headers, monkeypatch
     ):
@@ -897,6 +950,34 @@ class TestPatchUpdate:
         )
         assert resp.status_code == 400
         assert resp.get_json()["error"] == "unknown_event_types"
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "event_types",
+            "warehouse_ids",
+            "aggregate_external_id_allowlist",
+        ],
+    )
+    def test_patch_empty_filter_array_returns_400(
+        self, client, auth_headers, monkeypatch, field
+    ):
+        """#231: PATCH refuses an explicit empty list with the
+        same shape as POST so a create-then-PATCH workflow cannot
+        sneak past the create-side gate."""
+        self._publishes(monkeypatch)
+        created = _create_one(client, auth_headers)
+        sub_id = created["subscription_id"]
+
+        resp = client.patch(
+            f"/api/admin/webhooks/{sub_id}",
+            json={"subscription_filter": {field: []}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400, resp.get_json()
+        body = resp.get_json()
+        assert body["error"] == "empty_filter_array"
+        assert body["field"] == field
 
     def test_filter_change_publishes_subscription_filter_changed(
         self, client, auth_headers, monkeypatch
