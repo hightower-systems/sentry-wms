@@ -68,6 +68,15 @@ function wireDefaults() {
           'events.types',
           'snapshot.inventory',
         ],
+        // v1.7.0 Pipe B additions: inbound resource keys + the
+        // operator-managed allowlist of source_systems.
+        inbound_resources: [
+          'sales_orders', 'items', 'customers', 'vendors', 'purchase_orders',
+        ],
+        source_systems: [
+          { source_system: 'fabric', kind: 'internal_tool' },
+          { source_system: 'netsuite', kind: 'connector' },
+        ],
       });
     }
     if (path === '/admin/warehouses') {
@@ -152,22 +161,24 @@ describe('Tokens create-modal checkbox scope pickers (#159)', () => {
     );
     await openModal(container);
 
-    // Three "All" buttons -- one per list. Pick them in order:
-    // warehouses, event_types, endpoints.
+    // Four "All" buttons -- one per list. v1.7.0 added inbound_resources
+    // alongside warehouses / event_types / endpoints.
     const allBtns = await waitFor(() => {
       const btns = within(container).getAllByRole('button', { name: /^All$/ });
-      expect(btns.length).toBe(3);
+      expect(btns.length).toBe(4);
       return btns;
     });
 
-    // Click all three All buttons.
     allBtns.forEach((b) => fireEvent.click(b));
 
     // After clicking All on every list, the "N / M selected" counter
-    // should read 2 / 2 (warehouses), 7 / 7 (event_types), 5 / 5 (endpoints).
+    // should read 2 / 2 (warehouses), 7 / 7 (event_types), 5 / 5
+    // (endpoints), 5 / 5 (inbound_resources).
     expect(within(container).getByText('2 / 2 selected')).toBeInTheDocument();
     expect(within(container).getByText('7 / 7 selected')).toBeInTheDocument();
-    expect(within(container).getByText('5 / 5 selected')).toBeInTheDocument();
+    // 5 / 5 appears twice (endpoints + inbound_resources both have 5
+    // options). Use queryAllByText to assert at least one instance.
+    expect(within(container).queryAllByText('5 / 5 selected').length).toBe(2);
   });
 
   it('submits the correct array payload', async () => {
@@ -193,23 +204,27 @@ describe('Tokens create-modal checkbox scope pickers (#159)', () => {
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
     const [path, body] = apiPostMock.mock.calls[0];
     expect(path).toBe('/admin/tokens');
-    expect(body).toEqual({
+    expect(body).toEqual(expect.objectContaining({
       token_name: 'submit-probe',
       warehouse_ids: [1],
       event_types: ['receipt.completed'],
       endpoints: ['events.poll'],
-    });
+    }));
+    // v1.7.0 fields default to outbound-only when no inbound is selected.
+    expect(body.source_system).toBeNull();
+    expect(body.inbound_resources).toEqual([]);
+    expect(body.mapping_override).toBe(false);
   });
 
-  it('short-circuits with an error when no endpoints are checked', async () => {
+  it('short-circuits with an error when no direction is set', async () => {
     const { container } = render(
       <MemoryRouter><Tokens /></MemoryRouter>
     );
     await openModal(container);
     fireEvent.change(within(container).getByPlaceholderText('fabric-prod'), {
-      target: { value: 'no-endpoints' },
+      target: { value: 'no-direction' },
     });
-    // Check a warehouse + event type but NO endpoints.
+    // Check a warehouse + event type but NO endpoints and NO inbound.
     fireEvent.click(within(container).getByRole('checkbox', { name: /APT-LAB/ }));
     fireEvent.click(within(container).getByRole('checkbox', { name: /receipt\.completed/ }));
 
@@ -217,7 +232,9 @@ describe('Tokens create-modal checkbox scope pickers (#159)', () => {
 
     // POST must NOT fire; admin sees an inline error.
     expect(apiPostMock).not.toHaveBeenCalled();
-    expect(within(container).getByText(/endpoints is required/i)).toBeInTheDocument();
+    expect(
+      within(container).getByText(/at least one direction is required/i)
+    ).toBeInTheDocument();
   });
 
   it('advanced toggle reveals free-text inputs and submits from them', async () => {
@@ -252,12 +269,12 @@ describe('Tokens create-modal checkbox scope pickers (#159)', () => {
 
     await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
     const [, body] = apiPostMock.mock.calls[0];
-    expect(body).toEqual({
+    expect(body).toEqual(expect.objectContaining({
       token_name: 'advanced-path',
       warehouse_ids: [2],
       event_types: ['ship.confirmed'],
       endpoints: ['snapshot.inventory', 'events.poll'],
-    });
+    }));
   });
 
   it('toggling advanced on then off hydrates checkboxes from the pasted text', async () => {
@@ -285,5 +302,119 @@ describe('Tokens create-modal checkbox scope pickers (#159)', () => {
     expect(pollCbx.checked).toBe(true);
     expect(ackCbx.checked).toBe(true);
     expect(schemaCbx.checked).toBe(false);
+  });
+
+  // ---- v1.7.0 Pipe B inbound scope inputs ----
+
+  it('renders the source_system dropdown populated from /admin/scope-catalog', async () => {
+    const { container } = render(
+      <MemoryRouter><Tokens /></MemoryRouter>
+    );
+    await openModal(container);
+    const select = within(container).getByLabelText(/source system/i);
+    const options = Array.from(select.querySelectorAll('option')).map(
+      (o) => o.value,
+    );
+    expect(options).toContain('');
+    expect(options).toContain('fabric');
+    expect(options).toContain('netsuite');
+  });
+
+  it('renders inbound_resources checkboxes for each resource key', async () => {
+    const { container } = render(
+      <MemoryRouter><Tokens /></MemoryRouter>
+    );
+    await openModal(container);
+    expect(
+      within(container).getByRole('checkbox', { name: /sales_orders/ })
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByRole('checkbox', { name: /^items$/ })
+    ).toBeInTheDocument();
+    expect(
+      within(container).getByRole('checkbox', { name: /customers/ })
+    ).toBeInTheDocument();
+  });
+
+  it('submits an inbound-only token with source_system + inbound_resources', async () => {
+    const { container } = render(
+      <MemoryRouter><Tokens /></MemoryRouter>
+    );
+    await openModal(container);
+    fireEvent.change(within(container).getByPlaceholderText('fabric-prod'), {
+      target: { value: 'inbound-only' },
+    });
+    // Source system select.
+    fireEvent.change(within(container).getByLabelText(/source system/i), {
+      target: { value: 'fabric' },
+    });
+    // Pick one inbound resource.
+    fireEvent.click(
+      within(container).getByRole('checkbox', { name: /sales_orders/ })
+    );
+    // No outbound endpoints selected -- should still submit because
+    // inbound is set.
+    fireEvent.click(within(container).getByRole('button', { name: /^Create$/ }));
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+    const [, body] = apiPostMock.mock.calls[0];
+    expect(body).toEqual(expect.objectContaining({
+      token_name: 'inbound-only',
+      endpoints: [],
+      source_system: 'fabric',
+      inbound_resources: ['sales_orders'],
+      mapping_override: false,
+    }));
+  });
+
+  it('refuses a half-configured inbound (source_system without inbound_resources)', async () => {
+    const { container } = render(
+      <MemoryRouter><Tokens /></MemoryRouter>
+    );
+    await openModal(container);
+    fireEvent.change(within(container).getByPlaceholderText('fabric-prod'), {
+      target: { value: 'half-configured' },
+    });
+    fireEvent.change(within(container).getByLabelText(/source system/i), {
+      target: { value: 'fabric' },
+    });
+    // Pick an outbound endpoint so we don't trip the
+    // "at least one direction" rule first.
+    fireEvent.click(within(container).getByRole('checkbox', { name: /events\.poll/ }));
+
+    fireEvent.click(within(container).getByRole('button', { name: /^Create$/ }));
+    expect(apiPostMock).not.toHaveBeenCalled();
+    expect(
+      within(container).getByText(
+        /source system and inbound resources must be set together/i
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('mapping_override flag carried in the submit payload', async () => {
+    const { container } = render(
+      <MemoryRouter><Tokens /></MemoryRouter>
+    );
+    await openModal(container);
+    fireEvent.change(within(container).getByPlaceholderText('fabric-prod'), {
+      target: { value: 'override-token' },
+    });
+    fireEvent.change(within(container).getByLabelText(/source system/i), {
+      target: { value: 'fabric' },
+    });
+    fireEvent.click(
+      within(container).getByRole('checkbox', { name: /customers/ })
+    );
+    fireEvent.click(
+      within(container).getByRole('checkbox', {
+        name: /allow mapping_overrides/i,
+      })
+    );
+    fireEvent.click(within(container).getByRole('button', { name: /^Create$/ }));
+
+    await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(1));
+    const [, body] = apiPostMock.mock.calls[0];
+    expect(body.mapping_override).toBe(true);
+    expect(body.inbound_resources).toContain('customers');
   });
 });

@@ -108,6 +108,13 @@ const EMPTY_FORM = {
   warehouse_ids: [],
   event_types: [],
   endpoints: [],
+  // v1.7.0 Pipe B inbound scope dimensions. source_system is a single
+  // select (one allowlist row per token); inbound_resources mirrors
+  // the event_types / endpoints checkbox shape; mapping_override is
+  // a single capability flag.
+  source_system: '',
+  inbound_resources: [],
+  mapping_override: false,
   advancedMode: false,
   advancedWarehouseIds: '',
   advancedEventTypes: '',
@@ -129,7 +136,12 @@ export default function Tokens() {
   // deployments without a cached catalog still get correct
   // checkbox options. Empty defaults render "No options" placeholders
   // rather than blowing up before the fetch returns.
-  const [scopeCatalog, setScopeCatalog] = useState({ event_types: [], endpoints: [] });
+  const [scopeCatalog, setScopeCatalog] = useState({
+    event_types: [],
+    endpoints: [],
+    inbound_resources: [],
+    source_systems: [],
+  });
   const [warehouses, setWarehouses] = useState([]);
 
   useEffect(() => { load(); }, []);
@@ -162,6 +174,8 @@ export default function Tokens() {
       setScopeCatalog({
         event_types: data.event_types || [],
         endpoints: data.endpoints || [],
+        inbound_resources: data.inbound_resources || [],
+        source_systems: data.source_systems || [],
       });
     }
     if (warehousesRes?.ok) {
@@ -226,11 +240,30 @@ export default function Tokens() {
       endpoints = form.endpoints;
     }
 
-    // v1.5.1 V-200 (#140): endpoints is a required non-empty list of
-    // known slugs. The server validates but we short-circuit here so
-    // the admin gets immediate feedback instead of a generic 400.
-    if (endpoints.length === 0) {
-      setCreateError('Endpoints is required. Check at least one or use "All" above.');
+    // v1.7.0 Pipe B: at least one direction must be set. Either
+    // endpoints (outbound, v1.5 shape) OR source_system + inbound_resources
+    // (inbound). Both is valid (connector-framework shape at v1.9).
+    const hasOutbound = endpoints.length > 0;
+    const hasInbound = !!form.source_system && form.inbound_resources.length > 0;
+    if (!hasOutbound && !hasInbound) {
+      setCreateError(
+        'At least one direction is required: either Endpoints (outbound) ' +
+        'or Source system + Inbound resources (inbound).'
+      );
+      return;
+    }
+    if (!!form.source_system !== form.inbound_resources.length > 0) {
+      // XOR: half-configured inbound is rejected by the server too.
+      setCreateError(
+        'Source system and Inbound resources must be set together; ' +
+        'leave both empty for an outbound-only token.'
+      );
+      return;
+    }
+    if (form.mapping_override && form.inbound_resources.length === 0) {
+      setCreateError(
+        'mapping_override capability only applies to inbound tokens.'
+      );
       return;
     }
     const payload = {
@@ -238,6 +271,9 @@ export default function Tokens() {
       warehouse_ids: wh_ids,
       event_types,
       endpoints,
+      source_system: form.source_system || null,
+      inbound_resources: form.inbound_resources,
+      mapping_override: form.mapping_override,
     };
     const res = await api.post('/admin/tokens', payload);
     const body = await res?.json();
@@ -321,6 +357,15 @@ export default function Tokens() {
     { key: 'warehouse_ids', label: 'Warehouses', render: (r) => renderCsv(r.warehouse_ids) },
     { key: 'event_types', label: 'Event types', render: (r) => renderCsv(r.event_types) },
     { key: 'endpoints', label: 'Endpoints', render: (r) => renderCsv(r.endpoints) },
+    {
+      key: 'source_system',
+      label: 'Source',
+      render: (r) =>
+        r.source_system
+          ? <span className="mono" style={{ fontSize: 12 }}>{r.source_system}</span>
+          : <span style={{ color: 'var(--text-secondary)' }}>—</span>,
+    },
+    { key: 'inbound_resources', label: 'Inbound', render: (r) => renderCsv(r.inbound_resources) },
     {
       key: 'expires_at',
       label: 'Expires',
@@ -423,7 +468,61 @@ export default function Tokens() {
                   renderLabel={(s) => <span className="mono">{s}</span>}
                 />
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                  Required. The token can hit only the v1 routes checked here.
+                  Outbound v1 routes. Leave empty for an inbound-only token.
+                </div>
+              </div>
+
+              {/* v1.7.0 Pipe B inbound scope. Source-system dropdown is
+                  populated from inbound_source_systems_allowlist via
+                  /admin/scope-catalog; admins cannot type a value the
+                  FK would reject. */}
+              <div className="form-group" style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <label htmlFor="token-source-system">Source system (inbound)</label>
+                <select
+                  id="token-source-system"
+                  aria-label="Source system"
+                  className="form-input"
+                  value={form.source_system}
+                  onChange={(e) => setForm((f) => ({ ...f, source_system: e.target.value }))}
+                >
+                  <option value="">— None (outbound-only token) —</option>
+                  {scopeCatalog.source_systems.map((s) => (
+                    <option key={s.source_system} value={s.source_system}>
+                      {s.source_system} ({s.kind})
+                    </option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Required for inbound tokens. New entries land via the
+                  operator SQL recipe at docs/runbooks/inbound-source-systems.md.
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Inbound resources</label>
+                <ScopeCheckboxList
+                  options={scopeCatalog.inbound_resources}
+                  value={form.inbound_resources}
+                  onChange={(rs) => setForm((f) => ({ ...f, inbound_resources: rs }))}
+                  keyOf={(s) => s}
+                  renderLabel={(s) => <span className="mono">{s}</span>}
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Inbound resource scope. Required when Source system is set.
+                  Empty selection denies every inbound resource.
+                </div>
+              </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.mapping_override}
+                    onChange={(e) => setForm((f) => ({ ...f, mapping_override: e.target.checked }))}
+                  />
+                  <span>Allow mapping_overrides (capability flag)</span>
+                </label>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Lets the token override mapping rules per request. Use only for
+                  ad-hoc data fixes; audit_log captures every override.
                 </div>
               </div>
             </>
