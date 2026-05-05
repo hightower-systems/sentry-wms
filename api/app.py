@@ -187,6 +187,28 @@ def create_app():
     from services.webhook_dispatcher import env_validator as _dispatcher_env
     _dispatcher_env.validate_or_die()
 
+    # v1.7.0 R6: SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS guards the
+    # source_payload retention beat task. A typo'd or zero value would
+    # silently wipe forensic context; refuse to boot below the 7-day
+    # hard floor (V-201 shape). Default 90 days when unset.
+    _retention_raw = os.getenv("SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS")
+    if _retention_raw is not None and _retention_raw.strip() != "":
+        try:
+            _retention_days = int(_retention_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS={_retention_raw!r} "
+                f"is not an integer. Unset for the default (90), or set to a "
+                f"value >= 7."
+            )
+        if _retention_days < 7:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS={_retention_days} "
+                f"is below the 7-day hard floor. A typo'd or zero value would "
+                f"wipe forensic context; refusing to boot. Set to >= 7 or "
+                f"unset for the 90-day default."
+            )
+
     # v1.7.0 Pipe B: load every mapping document under
     # SENTRY_INBOUND_MAPPINGS_DIR (default db/mappings) at boot. Cross-checks
     # against inbound_source_systems_allowlist; an allowlisted source_system

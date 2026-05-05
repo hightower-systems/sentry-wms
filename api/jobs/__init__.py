@@ -47,6 +47,14 @@ celery_app.conf.beat_schedule = {
         "task": "jobs.cleanup_tasks.cleanup_expired_webhook_secrets",
         "schedule": 3600.0,
     },
+    # v1.7.0 R6: NULL source_payload on inbound rows older than the
+    # configured retention window (default 90 days, hard floor 7).
+    # 24h cadence is enough -- retention is measured in days, not
+    # hours; running more often just churns indexes.
+    "cleanup-inbound-source-payload-daily": {
+        "task": "jobs.cleanup_tasks.cleanup_inbound_source_payload",
+        "schedule": 24 * 3600.0,
+    },
 }
 
 # Auto-discover task modules in the jobs package

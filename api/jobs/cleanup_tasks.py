@@ -10,9 +10,21 @@ v1.6.0 adds two webhook tasks: a 90-day retention sweep on terminal
 ``webhook_deliveries`` rows and an hourly prune of expired
 ``webhook_secrets`` (generation=2 rows whose dual-accept window has
 ended).
+
+v1.7.0 adds the Pipe B inbound source_payload retention task (R6).
+inbound_<resource>.source_payload is the original consumer-shaped JSON
+the canonical row was derived from. After
+SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS (default 90, hard floor
+7 days; V-201 shape) the retention task NULLs out source_payload while
+preserving canonical_payload, dropping the bulk of per-row size while
+keeping the canonical history queryable. One inbound_cleanup_runs row
+per (resource, run) tuple records the start/finish/rows_nullified so
+operators can detect a partial-failure shape (one resource succeeds,
+another aborts on a lock-timeout).
 """
 
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -203,5 +215,182 @@ def cleanup_login_attempts() -> dict:
     except Exception:
         session.rollback()
         raise
+    finally:
+        session.close()
+
+
+# ============================================================
+# v1.7.0 inbound source_payload retention (R6)
+# ============================================================
+
+
+# Hard floor: a typo'd or zero retention would silently wipe forensic
+# context. V-201 shape -- the validator below rejects any value < 7
+# days (the operator must edit a runbook variable to drop it lower,
+# at which point the typo defense isn't the point any more).
+INBOUND_SOURCE_PAYLOAD_RETENTION_FLOOR_DAYS = 7
+INBOUND_SOURCE_PAYLOAD_RETENTION_DEFAULT_DAYS = 90
+
+# Per-resource chunk size + wall-clock cap, mirroring #228 webhook
+# pattern. A beat misfire backlog cannot compound into a multi-hour
+# UPDATE that monopolizes the table; the next 24-hour beat picks up.
+INBOUND_RETENTION_CHUNK_SIZE = 1000
+INBOUND_RETENTION_MAX_RUN_S = 600  # per resource
+
+_INBOUND_TABLES = (
+    "inbound_sales_orders",
+    "inbound_items",
+    "inbound_customers",
+    "inbound_vendors",
+    "inbound_purchase_orders",
+)
+
+
+def get_inbound_retention_days() -> int:
+    """Read SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS with the
+    7-day floor enforced at read time. Boot validation runs separately
+    in app.create_app() so misconfigured deployments fail loud at boot;
+    this helper is the worker-side last-line that ensures even a
+    runtime env tweak cannot push retention below the floor.
+
+    Returns the configured days clamped to [floor, +inf). Invalid /
+    unset values fall back to the default (90)."""
+    raw = os.environ.get("SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS")
+    if raw is None or raw.strip() == "":
+        return INBOUND_SOURCE_PAYLOAD_RETENTION_DEFAULT_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        logger.warning(
+            "SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS=%r is not an integer; "
+            "falling back to default %d",
+            raw, INBOUND_SOURCE_PAYLOAD_RETENTION_DEFAULT_DAYS,
+        )
+        return INBOUND_SOURCE_PAYLOAD_RETENTION_DEFAULT_DAYS
+    if days < INBOUND_SOURCE_PAYLOAD_RETENTION_FLOOR_DAYS:
+        logger.error(
+            "SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS=%d below "
+            "floor %d; clamping. Boot guard should have caught this.",
+            days, INBOUND_SOURCE_PAYLOAD_RETENTION_FLOOR_DAYS,
+        )
+        return INBOUND_SOURCE_PAYLOAD_RETENTION_FLOOR_DAYS
+    return days
+
+
+def _nullify_one_resource(session, table: str, retention_days: int) -> int:
+    """NULL source_payload on rows older than the cutoff. Chunked
+    UPDATEs commit between batches so concurrent inbound POSTs hit at
+    most one chunk's worth of contended rows at a time. Returns the
+    total nullified row count."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    started = time.monotonic()
+    total = 0
+    while True:
+        if time.monotonic() - started > INBOUND_RETENTION_MAX_RUN_S:
+            logger.warning(
+                "inbound retention task hit per-resource wall-clock cap on %s "
+                "after nullifying %d rows; next beat run resumes.", table, total,
+            )
+            break
+        # ctid-based chunking is the standard PostgreSQL pattern for
+        # bounded UPDATEs that can resume between beats. The partial
+        # index on (status, received_at) covers the WHERE selection.
+        result = session.execute(
+            text(
+                f"WITH targets AS ( "
+                f"  SELECT inbound_id FROM {table} "
+                f"   WHERE received_at < :cutoff "
+                f"     AND source_payload IS NOT NULL "
+                f"   ORDER BY inbound_id "
+                f"   LIMIT :chunk "
+                f") "
+                f"UPDATE {table} SET source_payload = NULL "
+                f" WHERE inbound_id IN (SELECT inbound_id FROM targets)"
+            ),
+            {"cutoff": cutoff, "chunk": INBOUND_RETENTION_CHUNK_SIZE},
+        )
+        rowcount = result.rowcount or 0
+        session.commit()
+        total += rowcount
+        if rowcount < INBOUND_RETENTION_CHUNK_SIZE:
+            break
+    return total
+
+
+def _cleanup_inbound_source_payload_impl(session, retention_days: int) -> dict:
+    """Iterate the five staging tables, nullifying old source_payload
+    on each. One inbound_cleanup_runs row per (resource, run) so a
+    partial failure (one resource aborts; others succeed) is visible
+    without inferring it from missing rows."""
+    summary: dict[str, dict] = {}
+    for table in _INBOUND_TABLES:
+        resource = table.removeprefix("inbound_")
+        # log the run start
+        run_row = session.execute(
+            text(
+                "INSERT INTO inbound_cleanup_runs "
+                "  (resource, retention_days, status) "
+                "VALUES (:r, :rd, 'running') RETURNING run_id"
+            ),
+            {"r": resource, "rd": retention_days},
+        ).fetchone()
+        run_id = run_row.run_id
+        session.commit()
+        try:
+            nullified = _nullify_one_resource(session, table, retention_days)
+            session.execute(
+                text(
+                    "UPDATE inbound_cleanup_runs "
+                    "   SET status = 'succeeded', finished_at = NOW(), "
+                    "       rows_nullified = :n "
+                    " WHERE run_id = :rid"
+                ),
+                {"n": nullified, "rid": run_id},
+            )
+            session.commit()
+            summary[resource] = {"nullified": nullified, "status": "succeeded"}
+        except Exception as exc:
+            # Mark this resource as failed but keep iterating: a
+            # lock-timeout on one table should not stop retention on
+            # the other four. Operators investigate via the
+            # inbound_cleanup_runs log.
+            session.rollback()
+            session.execute(
+                text(
+                    "UPDATE inbound_cleanup_runs "
+                    "   SET status = 'failed', finished_at = NOW(), "
+                    "       error_message = :em "
+                    " WHERE run_id = :rid"
+                ),
+                {"em": str(exc)[:500], "rid": run_id},
+            )
+            session.commit()
+            logger.exception(
+                "inbound retention failed for %s; continuing", resource,
+            )
+            summary[resource] = {"status": "failed", "error": str(exc)[:200]}
+    return summary
+
+
+@celery_app.task
+def cleanup_inbound_source_payload() -> dict:
+    """v1.7.0 R6: NULL source_payload on inbound_<resource> rows older
+    than SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS while preserving
+    canonical_payload. Returns the per-resource summary so operators
+    can confirm the task is running.
+
+    Idempotent: a row already nullified is filtered out by
+    `source_payload IS NOT NULL`. Running the task twice in succession
+    has no second-pass effect."""
+    import models.database as db
+    retention_days = get_inbound_retention_days()
+    session = db.SessionLocal()
+    try:
+        summary = _cleanup_inbound_source_payload_impl(session, retention_days)
+        logger.info(
+            "cleanup_inbound_source_payload retention=%dd summary=%s",
+            retention_days, summary,
+        )
+        return {"retention_days": retention_days, "per_resource": summary}
     finally:
         session.close()
