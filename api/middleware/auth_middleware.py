@@ -451,4 +451,11 @@ def require_wms_token(f):
         g.current_user = {"token_id": row["token_id"], "kind": "wms_token"}
         return f(*args, **kwargs)
 
+    # v1.7.0 CI lint marker: the inbound-route lint walks each
+    # @require_wms_token-protected view's wrapper chain looking for
+    # this attribute so a new POST landing without the decorator
+    # surfaces at CI time. functools.wraps copies __qualname__ from
+    # the wrapped function, so the chain alone doesn't reveal the
+    # decorator was applied; an explicit attribute does.
+    wrapper.__wms_token_protected__ = True
     return wrapper
