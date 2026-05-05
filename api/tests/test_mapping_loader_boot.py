@@ -186,3 +186,113 @@ class TestBootLoadCrossCheck:
             DATABASE_URL, tmp_mappings_dir, require_allowlisted=False,
         )
         assert registry.for_source(fresh_source_system) is not None
+
+
+class TestBootLoadCanonicalColumnValidation:
+    """v1.7.0 (#267): boot_load validates that every YAML field's
+    `canonical` name corresponds to a real column on the canonical
+    table. A stale or typo'd doc would otherwise pass boot silently
+    and 500 at the first inbound POST."""
+
+    def test_valid_doc_with_real_columns_boots_and_writes_audit(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        # `email` is a real column on customers; doc passes the new check.
+        _allowlist(fresh_source_system)
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(_basic_doc(fresh_source_system))
+
+        registry = boot_load(DATABASE_URL, tmp_mappings_dir)
+        assert registry.for_source(fresh_source_system) is not None
+
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM audit_log "
+                " WHERE action_type='MAPPING_DOCUMENT_LOAD' "
+                "   AND details->>'source_system' = %s",
+                (fresh_source_system,),
+            )
+            n = cur.fetchone()[0]
+        finally:
+            conn.close()
+        assert n == 1
+
+    def test_unknown_column_fails_boot_no_audit_row(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        """Doc maps customers.address but the table has billing_address /
+        shipping_address. Boot must fail loud, naming the offending
+        field, and write zero audit rows."""
+        _allowlist(fresh_source_system)
+        body = f"""\
+mapping_version: "1.0"
+source_system: "{fresh_source_system}"
+version_compare: "iso_timestamp"
+resources:
+  customers:
+    canonical_type: "customer"
+    fields:
+      - canonical: "address"
+        source_path: "$.address"
+        type: "string"
+"""
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(body)
+
+        with pytest.raises(RuntimeError, match=r"canonical-column validation"):
+            boot_load(DATABASE_URL, tmp_mappings_dir)
+
+        # The error message names the offending field so operators can
+        # locate the typo without grepping. Re-raise to capture the message.
+        try:
+            boot_load(DATABASE_URL, tmp_mappings_dir)
+        except RuntimeError as exc:
+            msg = str(exc)
+        assert "canonical='address'" in msg
+        assert "customers" in msg
+        assert fresh_source_system in msg
+
+        # No audit row written: the validation runs before the audit
+        # INSERT and the whole transaction rolls back on failure.
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM audit_log "
+                " WHERE action_type='MAPPING_DOCUMENT_LOAD' "
+                "   AND details->>'source_system' = %s",
+                (fresh_source_system,),
+            )
+            n = cur.fetchone()[0]
+        finally:
+            conn.close()
+        assert n == 0
+
+    def test_sales_orders_billing_shipping_columns_resolve(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        """Migration 046 added billing_address + shipping_address to
+        sales_orders. Pin the regression so a future schema rollback
+        doesn't pass boot silently."""
+        _allowlist(fresh_source_system)
+        body = f"""\
+mapping_version: "1.0"
+source_system: "{fresh_source_system}"
+version_compare: "iso_timestamp"
+resources:
+  sales_orders:
+    canonical_type: "sales_order"
+    fields:
+      - canonical: "billing_address"
+        source_path: "$.billingAddress"
+        type: "string"
+      - canonical: "shipping_address"
+        source_path: "$.shippingAddress"
+        type: "string"
+"""
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(body)
+        registry = boot_load(DATABASE_URL, tmp_mappings_dir)
+        assert registry.for_source(fresh_source_system) is not None

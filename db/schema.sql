@@ -185,6 +185,12 @@ CREATE TABLE sales_orders (
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
     ship_address VARCHAR(500),
+    -- v1.7.0 (#266): per-order ecommerce ship-to / bill-to. ship_address
+    -- above stays the warehouse-floor field used by pick/pack/ship;
+    -- shipping_address + billing_address are the canonical values
+    -- inbound consumers populate (per-order, not per-customer).
+    billing_address TEXT,
+    shipping_address TEXT,
     order_date TIMESTAMPTZ,
     ship_by_date DATE,
     created_at TIMESTAMPTZ DEFAULT NOW(),

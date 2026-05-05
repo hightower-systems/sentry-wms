@@ -505,6 +505,75 @@ def _allowlisted_source_systems(conn) -> Set[str]:
     return rows
 
 
+# Singular canonical_type (as it appears in mapping docs and on
+# cross_system_mappings) -> the plural canonical table name. Hardcoded
+# rather than imported from inbound_service so this module stays
+# import-loop-free (inbound_service imports from mapping_loader).
+_CANONICAL_TYPE_TO_TABLE = {
+    "sales_order": "sales_orders",
+    "item": "items",
+    "customer": "customers",
+    "vendor": "vendors",
+    "purchase_order": "purchase_orders",
+}
+
+
+def _canonical_columns(conn, table: str) -> Set[str]:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT column_name FROM information_schema.columns "
+        " WHERE table_name = %s",
+        (table,),
+    )
+    cols = {r[0] for r in cur.fetchall()}
+    cur.close()
+    return cols
+
+
+def _validate_canonical_columns(conn, registry: MappingRegistry) -> None:
+    """For every loaded mapping doc, verify each top-level field's
+    `canonical` name corresponds to a real column on the canonical
+    table. line_items field names are stored in the inbound row's
+    canonical_payload JSONB only (v1.7 doesn't sync to *_lines tables);
+    they are deliberately NOT validated against parent-table columns.
+
+    Fails loud at boot rather than 500'ing on the first inbound POST
+    against a stale or typo'd mapping doc."""
+    problems: list[str] = []
+    for loaded in registry.loaded_files():
+        for resource_key, resource in loaded.document.resources.items():
+            table = _CANONICAL_TYPE_TO_TABLE.get(resource.canonical_type)
+            if table is None:
+                # Pydantic already restricts canonical_type to the five
+                # known values; defensive belt-and-braces.
+                problems.append(
+                    f"{loaded.path}: resource {resource_key!r} declares "
+                    f"unknown canonical_type {resource.canonical_type!r}"
+                )
+                continue
+            columns = _canonical_columns(conn, table)
+            if not columns:
+                problems.append(
+                    f"{loaded.path}: canonical table {table!r} has no "
+                    f"columns visible in information_schema (table missing?)"
+                )
+                continue
+            for field in resource.fields:
+                if field.canonical not in columns:
+                    problems.append(
+                        f"{loaded.path}: resource {resource_key!r} field "
+                        f"canonical={field.canonical!r} is not a column on "
+                        f"{table}; columns: {sorted(columns)}"
+                    )
+    if problems:
+        raise RuntimeError(
+            "mapping doc canonical-column validation failed:\n  - "
+            + "\n  - ".join(problems)
+            + "\nFix the mapping doc(s) or the canonical schema and "
+            "restart. (See db/migrations/ for the table definition.)"
+        )
+
+
 def _write_load_audit(conn, loaded: LoadedMappingFile) -> None:
     """One MAPPING_DOCUMENT_LOAD row per loaded file. entity_id stays 0
     (audit_log.entity_id is INT NOT NULL; source_system goes in details).
@@ -581,6 +650,12 @@ def boot_load(
                     f"{sorted(extra)}. Add the row to "
                     f"inbound_source_systems_allowlist or remove the YAML."
                 )
+        # v1.7.0 (#267): every mapping doc field's `canonical` name must
+        # correspond to a real column on the canonical table. A stale or
+        # typo'd mapping doc would otherwise pass boot silently and 500
+        # at the first inbound POST when the INSERT tries to address a
+        # non-existent column.
+        _validate_canonical_columns(conn, registry)
         for loaded in registry.loaded_files():
             _write_load_audit(conn, loaded)
         conn.commit()
