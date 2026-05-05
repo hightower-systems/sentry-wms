@@ -274,28 +274,115 @@ deployments cannot reproduce the exposure.
   per-subscription throttle tracked through `audit_log` so a
   missed-trigger restart cannot reset the timer.
 
-### Forensic triggers and audit_log coverage (v1.5.1, v1.6.0)
-- `wms_tokens_audit`, `webhook_subscriptions_audit`, and
-  `webhook_secrets_audit` capture statement-level DELETE /
-  TRUNCATE on the parent tables with `event_type`,
+### Inbound write surface (v1.7.0)
+- POST `/api/v1/inbound/<resource>` for the five fixed resources
+  (sales_orders, items, customers, vendors, purchase_orders).
+  Idempotent on `(source_system, external_id, external_version)`;
+  re-POST returns 200 without writing.
+- Per-token `source_system` binding plus an `inbound_resources`
+  scope dimension and a `mapping_override` capability flag on
+  `wms_tokens`. Empty `inbound_resources` denies every inbound
+  resource (Decision-S parity with `event_types` / `endpoints`).
+- `inbound_source_systems_allowlist` (operator-managed) is the FK
+  target for both `wms_tokens.source_system` and
+  `cross_system_mappings.source_system`. Admins cannot type a
+  source_system the FK would reject; a typo at issuance returns
+  the labelled `unknown_source_system` error pre-INSERT.
+- Cross-direction guard on `@require_wms_token`: outbound-only
+  tokens hitting `/api/v1/inbound/*` and inbound-only tokens
+  (`inbound_resources` non-empty, `event_types` empty) hitting
+  `/api/v1/events*` / `/api/v1/snapshot/*` return 403
+  `cross_direction_scope_violation`. Per-resource scope misses
+  return 403 `inbound_resource_scope_violation`. Both surface
+  distinctly from the v1.5.1 V-200 `endpoint_scope_violation` so
+  audit and rate-limit dashboards can separate "wrong slug" from
+  "wrong direction" from "wrong resource".
+- Per-key `pg_try_advisory_xact_lock(hashtext(source_system || ':' || external_id))`
+  prevents concurrent in-flight upserts for the same external
+  entity from racing. Lock is per-transaction, released on
+  commit or rollback. Concurrency contention surfaces as 409
+  `lock_held` with `Retry-After: 1`.
+- Mapping documents are loaded from `db/mappings/*.yaml` at boot
+  (no hot reload in v1.7); strict-typed Pydantic with
+  `extra="forbid"` at every level (V-204 alignment); the loader
+  refuses startup on missing `version_compare`. Boot also enforces
+  bidirectional consistency between
+  `inbound_source_systems_allowlist` and the YAML files on disk
+  (an allowlisted source without a matching doc, or a doc whose
+  source isn't allowlisted, refuses boot). One
+  `MAPPING_DOCUMENT_LOAD` audit_log row per loaded doc carries
+  `source_system`, `path`, `sha256`, `mapping_version`,
+  `version_compare`, `resource_count`, and the image-bake git SHA
+  when present.
+- Derived expressions in mapping docs run through a `simpleeval`
+  whitelist restricted to `{int, float, str, len, abs, min, max,
+  round}` with arithmetic + string concat + comparison operators
+  only. No attribute access beyond `source.x.y` over a wrapped
+  AttrDict, no `__import__`, no `eval`/`exec`, no subscripts
+  beyond `dict[key]`. R9 regression net (`test_mapping_loader.py`
+  `TestDerivedExpressions::test_eval_rejection_*`) covers
+  dunder-import, `eval()`, attribute-walk, and bare `open` calls.
+- Required-true `cross_system_lookup` misses return 409
+  `cross_system_lookup_miss` with the missing
+  `(source_system, source_type, source_id)` tuple in the body.
+  No auto-stub creation; that would be silent data invention.
+- Body size cap via `SENTRY_INBOUND_MAX_BODY_KB` (range
+  [16, 4096]; default 256). Boot refuses any
+  `SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS` below the 7-day
+  hard floor (R6 / V-201 shape) so a typo'd or zero retention
+  value cannot wipe forensic context silently.
+- `inbound_<resource>` rows reference `wms_tokens(token_id)` via
+  `ON DELETE RESTRICT`. Tokens are revoked via `revoked_at`, not
+  DELETE; a hard-delete recipe lives at
+  `docs/runbooks/wms-tokens-hard-delete.md` (post-release).
+- Forensic triggers (V-157 pattern) on
+  `inbound_source_systems_allowlist` and `cross_system_mappings`
+  capture statement-level DELETE / TRUNCATE with the same
+  `who / when / how-many / from-where` shape as `wms_tokens_audit`.
+- `audit_log` writes one `INBOUND_<RESOURCE>` row per accepted
+  POST with `source_system`, `external_id`, declared `field_set`,
+  and `override_fields` populated; idempotent re-POST writes zero
+  audit rows. The v1.4 hash chain extends across every new write.
+- CI lints (`test_inbound_ci_lints.py`): no bare-name
+  `eval`/`exec`/`compile`/`__import__` in `mapping_loader.py`
+  (AST walk); every `/api/v1/inbound/<resource>` POST route's
+  wrapper carries the `__wms_token_protected__` marker
+  `require_wms_token` stamps; every committed
+  `db/mappings/*.yaml` declares `version_compare` from the
+  whitelist.
+- DRAFT canonical model: every successful response carries
+  `X-Sentry-Canonical-Model: DRAFT-v1`. The schema may break at
+  v2.0 once NetSuite drives the canonical lock. Operator
+  integration guide at `docs/api/inbound.md` (post-release) and
+  the OpenAPI spec at `docs/api/inbound-openapi.yaml` mark
+  every field accordingly.
+
+### Forensic triggers and audit_log coverage (v1.5.1, v1.6.0, v1.7.0)
+- `wms_tokens_audit`, `webhook_subscriptions_audit`,
+  `webhook_secrets_audit`, `inbound_source_systems_allowlist_audit`,
+  and `cross_system_mappings_audit` capture statement-level
+  DELETE / TRUNCATE on the parent tables with `event_type`,
   `rows_affected`, `sess_user`, `curr_user`, `backend_pid`,
   `application_name`, `event_at (clock_timestamp)`. A mystery
   emptying is immediately bindable to a specific role + backend.
 - `audit_log` writes at every admin mutation site for tokens
   (`TOKEN_ISSUE`, `TOKEN_ROTATE`, `TOKEN_REVOKE`, `TOKEN_DELETE`),
   consumer-groups + connector-registry (`CONNECTOR_REGISTRY_CREATE`,
-  `CONSUMER_GROUP_CREATE` / `_UPDATE` / `_DELETE`), and the v1.6
+  `CONSUMER_GROUP_CREATE` / `_UPDATE` / `_DELETE`), the v1.6
   webhooks surface (`WEBHOOK_SUBSCRIPTION_CREATE` / `_UPDATE` /
   `_DELETE_SOFT` / `_DELETE_HARD`, `WEBHOOK_SECRET_ROTATE`,
-  `WEBHOOK_DELIVERY_REPLAY_SINGLE` / `_BATCH`). The v1.4 hash
-  chain (`prev_hash || payload`) extends across every new write;
+  `WEBHOOK_DELIVERY_REPLAY_SINGLE` / `_BATCH`), and the v1.7
+  inbound surface (`INBOUND_SALES_ORDER` / `_ITEM` / `_CUSTOMER` /
+  `_VENDOR` / `_PURCHASE_ORDER` on accept; `MAPPING_DOCUMENT_LOAD`
+  per loaded doc at boot). The v1.4 hash chain
+  (`prev_hash || payload`) extends across every new write;
   `verify_audit_log_chain()` still passes with the additions.
 - Plaintext secret material (token plaintexts, webhook HMAC
   plaintexts) is never written to `audit_log.details` on any
   path. Secret-rotation rows record only that a rotation
   occurred and whether a prior primary was demoted.
 
-### Boot guards on dangerous combinations (v1.5.1, v1.6.0)
+### Boot guards on dangerous combinations (v1.5.1, v1.6.0, v1.7.0)
 - `TRUST_PROXY=true + API_BIND_HOST=0.0.0.0` refuses boot;
   `SENTRY_ALLOW_OPEN_BIND=1` is the explicit operator override
   with a CRITICAL log on every boot.
@@ -309,6 +396,15 @@ deployments cannot reproduce the exposure.
   `DISPATCHER_HTTP_TIMEOUT_MS`, `DISPATCHER_FALLBACK_POLL_MS`,
   `DISPATCHER_SHUTDOWN_DRAIN_S`, `DISPATCHER_MAX_CONCURRENT_POSTS`,
   `DISPATCHER_MAX_PENDING_HARD_CAP`, `DISPATCHER_MAX_DLQ_HARD_CAP`.
+- `SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS` below the 7-day
+  hard floor refuses boot (R6 / V-201 shape). A typo'd or zero
+  retention window would silently wipe forensic context on the
+  first beat run; failing loud at `docker compose up` is the fix.
+- The v1.7.0 mapping loader's boot cross-check refuses startup
+  when an `inbound_source_systems_allowlist` row has no matching
+  `db/mappings/<source_system>.yaml` (or vice versa). The
+  RuntimeError message names the offending source_system and the
+  expected file path.
 
 ### CSP report sink (v1.5.1)
 - `report-uri /api/csp-report` directive on every CSP-protected
