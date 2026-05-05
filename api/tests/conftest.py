@@ -1,7 +1,50 @@
 import os
 import sys
 
-os.environ.setdefault("DATABASE_URL", "postgresql://sentry:sentry@localhost:5432/sentry")
+# v1.7.0 test-DB isolation gate. Pre-v1.7.0 conftest connected to the
+# application database via DATABASE_URL and TRUNCATEd 39 tables at
+# session start. v1.7.0 added operator-managed state
+# (inbound_source_systems_allowlist, cross_system_mappings) which made
+# that wipe a real footgun: running pytest against a stack with real
+# state irrevocably destroyed it.
+#
+# Refuse to proceed unless TEST_DATABASE_URL is set AND distinct from
+# DATABASE_URL. The test process then overrides DATABASE_URL with the
+# test value so create_app()'s SessionLocal resolves to the test DB.
+_TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+_REAL_DATABASE_URL = os.environ.get("DATABASE_URL")
+if not _TEST_DATABASE_URL:
+    raise RuntimeError(
+        "TEST_DATABASE_URL is required. The test conftest TRUNCATEs 39 "
+        "tables at session start; running against the application DB "
+        "would destroy operator state. Set TEST_DATABASE_URL to a "
+        "dedicated database, e.g. "
+        "postgresql://sentry:sentry@localhost:5432/sentry_test "
+        "(see docs/deployment.md). The default docker-compose stack "
+        "creates the sentry_test database in the db init."
+    )
+if _REAL_DATABASE_URL and _TEST_DATABASE_URL == _REAL_DATABASE_URL:
+    raise RuntimeError(
+        "TEST_DATABASE_URL must NOT equal DATABASE_URL. Use a separate "
+        "test database. Refusing to TRUNCATE the application DB."
+    )
+# All downstream code reads DATABASE_URL; route it at the test DB so
+# create_app() / SessionLocal / direct psycopg2.connect(DATABASE_URL)
+# calls all land on the test DB regardless of how the caller resolves
+# the var.
+os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+
+# v1.7.0: route the session app fixture's mapping-loader at an empty
+# isolated dir so operator-created mapping docs in the working
+# directory's db/mappings/ (e.g., gate_test.yaml from the pre-merge
+# gate flow) don't leak into the test session and trip boot_load's
+# allowlist cross-check. Tests that need to register a mapping doc
+# do so directly via app.config["MAPPING_REGISTRY"] = ... in their
+# fixtures.
+import tempfile as _tempfile
+_TEST_MAPPINGS_DIR = _tempfile.mkdtemp(prefix="sentry-test-mappings-")
+os.environ.setdefault("SENTRY_INBOUND_MAPPINGS_DIR", _TEST_MAPPINGS_DIR)
+
 os.environ.setdefault("JWT_SECRET", "NEVER_USE_THIS_IN_PRODUCTION_32!")
 os.environ.setdefault("SENTRY_ENCRYPTION_KEY", "t5hPIEVn_O41qfiMqAiPEnwzQh68o3Es46YfSOBvEK8=")
 os.environ.setdefault("SENTRY_TOKEN_PEPPER", "NEVER_USE_THIS_PEPPER_IN_PRODUCTION")

@@ -42,6 +42,35 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 The overlay replaces the nginx admin with the Vite dev-server on port 3000
 and mounts `./api` and `./admin` into their containers for live reload.
 
+### Test database (v1.7.0+)
+
+The pytest suite TRUNCATEs ~40 tables at session start. To keep that
+wipe from destroying the application database, the conftest hard-fails
+unless `TEST_DATABASE_URL` is set to a separate database AND distinct
+from `DATABASE_URL`.
+
+The default docker-compose stack creates an empty `sentry_test`
+database during the postgres image's first-init (see
+`db/create-test-db.sql`). Run the suite with:
+
+```bash
+docker exec \
+  -e TEST_DATABASE_URL=postgresql://sentry:sentry@db:5432/sentry_test \
+  sentry-api pytest tests/
+```
+
+If you migrated from a pre-v1.7.0 stack, the existing postgres volume
+will not have the test database; run `docker compose down -v && docker
+compose up -d` to re-init from scratch, or create the test database
+manually:
+
+```bash
+docker exec sentry-db psql -U sentry -d postgres \
+  -c "CREATE DATABASE sentry_test;"
+docker exec -i sentry-db psql -U sentry -d sentry_test \
+  < db/schema.sql
+```
+
 ### Admin Login
 
 Fresh installs seed the admin user as `admin` / `admin` with `must_change_password=true`. Auth middleware blocks every endpoint except change-password and logout until you set a new password from the first-login screen.

@@ -177,9 +177,23 @@ jobs:
           PGPASSWORD: sentry
         run: psql -h localhost -U sentry -d sentry -f db/seed-apartment-lab.sql
 
+      - name: Create + schema-load test database
+        # v1.7.0 test-DB isolation: the conftest TRUNCATEs 39 tables at
+        # session start. Routing it at a dedicated `sentry_test`
+        # database keeps the application DB intact when pytest runs
+        # against a real stack.
+        env:
+          PGPASSWORD: sentry
+        run: |
+          psql -h localhost -U sentry -d sentry -c "CREATE DATABASE sentry_test;"
+          psql -h localhost -U sentry -d sentry_test -f db/schema.sql
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry
+          # v1.7.0: dedicated test DB. conftest hard-fails when this is
+          # missing or equal to DATABASE_URL.
+          TEST_DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry_test
           JWT_SECRET: test-secret
           # v1.6.0 D3 #175: wake.WakeOrchestrator pubsub tests
           # need REDIS_URL pointing at the service container above.
