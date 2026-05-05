@@ -296,3 +296,137 @@ resources:
         path.write_text(body)
         registry = boot_load(DATABASE_URL, tmp_mappings_dir)
         assert registry.for_source(fresh_source_system) is not None
+
+
+class TestBootLoadDerivedExpressionValidation:
+    """v1.7.0 (#272): boot_load statically rejects eval-shaped derived
+    expressions so a malicious doc cannot sit dormant in a loaded
+    registry waiting for the gated branch to fire on a real inbound
+    POST. Mirrors the apply-time rejection -- single-sourced via
+    `_validate_expression_shape`."""
+
+    def _doc_with_derived(
+        self, source_system: str, expression: str, when_present: str | None = None
+    ) -> str:
+        when_block = (
+            f'          when_present: "{when_present}"\n' if when_present else ""
+        )
+        return f"""\
+mapping_version: "1.0"
+source_system: "{source_system}"
+version_compare: "iso_timestamp"
+resources:
+  customers:
+    canonical_type: "customer"
+    fields:
+      - canonical: "email"
+        type: "string"
+        derived:
+          expression: '{expression}'
+{when_block}"""
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '__import__("os").system("echo pwn")',
+            'eval("1+1")',
+            'exec("x=1")',
+            'open("/etc/passwd")',
+            'compile("1", "x", "eval")',
+            '().__class__.__bases__',
+            'source.dollars.__class__',
+        ],
+    )
+    def test_eval_shaped_expression_fails_boot(
+        self, tmp_mappings_dir, fresh_source_system, expression
+    ):
+        _allowlist(fresh_source_system)
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(self._doc_with_derived(fresh_source_system, expression))
+
+        with pytest.raises(
+            RuntimeError, match=r"derived-expression validation failed"
+        ):
+            boot_load(DATABASE_URL, tmp_mappings_dir)
+
+    def test_error_message_names_doc_resource_field_and_expression(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        _allowlist(fresh_source_system)
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        expression = 'eval("1+1")'
+        path.write_text(self._doc_with_derived(fresh_source_system, expression))
+
+        try:
+            boot_load(DATABASE_URL, tmp_mappings_dir)
+        except RuntimeError as exc:
+            msg = str(exc)
+        assert "customers" in msg
+        assert "canonical='email'" in msg
+        assert expression in msg
+        assert fresh_source_system in msg
+
+    def test_dormant_when_present_branch_still_rejected(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        """A `when_present`-gated expression that the smoke-test payload
+        never triggers is exactly the case boot validation has to catch.
+        Even when no payload reaches the eval branch, boot rejects."""
+        _allowlist(fresh_source_system)
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(
+            self._doc_with_derived(
+                fresh_source_system,
+                '__import__("os").system("rm -rf /")',
+                when_present="$.never_present_in_payload",
+            )
+        )
+        with pytest.raises(
+            RuntimeError, match=r"derived-expression validation failed"
+        ):
+            boot_load(DATABASE_URL, tmp_mappings_dir)
+
+    def test_no_audit_row_on_rejection(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        """Boot validation runs before audit INSERT; rejection rolls
+        back the txn so no MAPPING_DOCUMENT_LOAD row leaks for a doc
+        that failed validation."""
+        _allowlist(fresh_source_system)
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(
+            self._doc_with_derived(fresh_source_system, 'eval("1+1")')
+        )
+        with pytest.raises(RuntimeError):
+            boot_load(DATABASE_URL, tmp_mappings_dir)
+
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM audit_log "
+                " WHERE action_type='MAPPING_DOCUMENT_LOAD' "
+                "   AND details->>'source_system' = %s",
+                (fresh_source_system,),
+            )
+            n = cur.fetchone()[0]
+        finally:
+            conn.close()
+        assert n == 0
+
+    def test_benign_derived_expression_boots(
+        self, tmp_mappings_dir, fresh_source_system
+    ):
+        """Whitelisted names + arithmetic + 'source.<path>' attribute
+        access pass cleanly. Pin so the validator doesn't regress to
+        rejecting legitimate expressions."""
+        _allowlist(fresh_source_system)
+        path = tmp_mappings_dir / f"{fresh_source_system}.yaml"
+        path.write_text(
+            self._doc_with_derived(
+                fresh_source_system,
+                "round(source.dollars * 100)",
+            )
+        )
+        registry = boot_load(DATABASE_URL, tmp_mappings_dir)
+        assert registry.for_source(fresh_source_system) is not None

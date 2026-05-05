@@ -35,6 +35,7 @@ DB and keeps the lookup-error path explicit.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import logging
@@ -66,6 +67,59 @@ _DERIVED_FUNCTIONS = {
     "max": max,
     "round": round,
 }
+
+
+def _validate_expression_shape(expression: str) -> None:
+    """Static AST walk that rejects eval-shaped derived expressions.
+
+    Single-sourced helper called from both `_eval_derived` (apply-time)
+    and `boot_load` (boot-time). Mirrors the security-relevant subset of
+    simpleeval's runtime checks against an `ast.parse`-based tree, so a
+    malicious expression in a never-reached branch (gated `when_present`,
+    short-circuit, etc.) cannot sit dormant in a loaded doc.
+
+    Rejects:
+    - SyntaxError: expression does not parse.
+    - `Name` outside `{'source'} U _DERIVED_FUNCTIONS`: blocks bare
+      `eval`, `exec`, `__import__`, `open`, `compile`, `globals`, etc.
+    - `Attribute` whose attr starts with `_`: mirrors simpleeval's
+      `DISALLOW_PREFIXES` default; blocks `().__class__.__bases__`-style
+      sandbox breaks.
+    - `Call` whose func is not an `ast.Name` in `_DERIVED_FUNCTIONS`:
+      blocks method calls and chained dunder reach.
+
+    Raises ValueError with a one-line reason on rejection.
+    """
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"unparseable expression: {exc.msg}") from exc
+
+    allowed_names = {"source"} | set(_DERIVED_FUNCTIONS.keys())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id not in allowed_names:
+                raise ValueError(
+                    f"forbidden name {node.id!r} "
+                    f"(allowed: 'source' and {sorted(_DERIVED_FUNCTIONS.keys())})"
+                )
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("_"):
+                raise ValueError(
+                    f"forbidden attribute {node.attr!r} "
+                    "(underscore-prefixed attributes are disallowed)"
+                )
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if not (isinstance(func, ast.Name) and func.id in _DERIVED_FUNCTIONS):
+                func_repr = (
+                    ast.unparse(func) if hasattr(ast, "unparse")
+                    else type(func).__name__
+                )
+                raise ValueError(
+                    f"forbidden call target {func_repr!r} "
+                    f"(allowed callables: {sorted(_DERIVED_FUNCTIONS.keys())})"
+                )
 
 
 CANONICAL_RESOURCE_TYPES = {
@@ -308,6 +362,11 @@ def _eval_derived(
             # Falls back to the field's literal source_path resolution
             # (handled by the caller).
             return _SENTINEL_FALLBACK
+    # v1.7.0 #272: static-validate before simpleeval evaluates so the
+    # rejection is single-sourced with boot_load's check. simpleeval's
+    # runtime-only rejection misses expressions that don't reach the
+    # forbidden node on this particular payload.
+    _validate_expression_shape(expr.expression)
     # Build a per-call `source` dict scoped to whatever paths the expression
     # references via `source.x.y`. We pass the source_payload as `source`
     # so the expression author writes `source.financials.totalDollars * 100`.
@@ -574,6 +633,53 @@ def _validate_canonical_columns(conn, registry: MappingRegistry) -> None:
         )
 
 
+def _validate_derived_expressions(registry: MappingRegistry) -> None:
+    """v1.7.0 #272: walk every derived expression in every loaded doc
+    and statically reject eval-shaped expressions before any inbound
+    POST can reach them. Aggregates problems and raises once with all
+    of them, mirroring `_validate_canonical_columns` (#267) error shape.
+
+    Catches the case where a malicious expression is gated by a
+    `when_present` clause (or sits in a resource never exercised by
+    smoke testing) and would otherwise stay dormant in a loaded doc.
+    """
+    problems: list[str] = []
+    for loaded in registry.loaded_files():
+        for resource_key, resource in loaded.document.resources.items():
+            for field in resource.fields:
+                if field.derived is None:
+                    continue
+                try:
+                    _validate_expression_shape(field.derived.expression)
+                except ValueError as exc:
+                    problems.append(
+                        f"{loaded.path}: resource {resource_key!r} field "
+                        f"canonical={field.canonical!r} expression="
+                        f"{field.derived.expression!r}: {exc}"
+                    )
+            if resource.line_items is not None:
+                for field in resource.line_items.fields:
+                    if field.derived is None:
+                        continue
+                    try:
+                        _validate_expression_shape(field.derived.expression)
+                    except ValueError as exc:
+                        problems.append(
+                            f"{loaded.path}: resource {resource_key!r} "
+                            f"line_items field canonical={field.canonical!r} "
+                            f"expression={field.derived.expression!r}: {exc}"
+                        )
+    if problems:
+        raise RuntimeError(
+            "mapping doc derived-expression validation failed:\n  - "
+            + "\n  - ".join(problems)
+            + "\nFix the mapping doc(s) and restart. Derived expressions "
+            "may reference 'source.<path>' and the whitelisted callables "
+            f"{sorted(_DERIVED_FUNCTIONS.keys())}; attribute names "
+            "starting with '_' and arbitrary call targets are rejected."
+        )
+
+
 def _write_load_audit(conn, loaded: LoadedMappingFile) -> None:
     """One MAPPING_DOCUMENT_LOAD row per loaded file. entity_id stays 0
     (audit_log.entity_id is INT NOT NULL; source_system goes in details).
@@ -656,6 +762,11 @@ def boot_load(
         # at the first inbound POST when the INSERT tries to address a
         # non-existent column.
         _validate_canonical_columns(conn, registry)
+        # v1.7.0 (#272): every derived expression must pass the static
+        # eval-shape validator at boot, not just when an inbound POST
+        # happens to evaluate it. Catches malicious expressions sitting
+        # in gated / never-exercised branches.
+        _validate_derived_expressions(registry)
         for loaded in registry.loaded_files():
             _write_load_audit(conn, loaded)
         conn.commit()
