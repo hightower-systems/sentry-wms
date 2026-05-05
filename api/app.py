@@ -209,6 +209,30 @@ def create_app():
                 f"unset for the 90-day default."
             )
 
+    # v1.7.0 #273: SENTRY_INBOUND_MAX_BODY_KB declares the per-request
+    # body-size cap on inbound POSTs. Pre-#273 get_max_body_kb() silently
+    # clamped to [16, 4096] and fell back to 256 on parse failure -- a
+    # typo'd value (e.g. 42096 vs 4096) silently degraded with no visible
+    # signal. Match the retention-days guard shape: refuse to boot on
+    # parse failure or out-of-range values.
+    _max_body_raw = os.getenv("SENTRY_INBOUND_MAX_BODY_KB")
+    if _max_body_raw is not None and _max_body_raw.strip() != "":
+        try:
+            _max_body_kb = int(_max_body_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_MAX_BODY_KB={_max_body_raw!r} is not an "
+                f"integer. Unset for the default (256), or set to a value "
+                f"in [16, 4096]."
+            )
+        if _max_body_kb < 16 or _max_body_kb > 4096:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_MAX_BODY_KB={_max_body_kb} is outside the "
+                f"[16, 4096] range. A typo'd value would silently degrade "
+                f"the body-size cap; refusing to boot. Set to a value in "
+                f"[16, 4096] or unset for the 256 KB default."
+            )
+
     # v1.7.0 Pipe B: load every mapping document under
     # SENTRY_INBOUND_MAPPINGS_DIR (default db/mappings) at boot. Cross-checks
     # against inbound_source_systems_allowlist; an allowlisted source_system
