@@ -85,7 +85,8 @@ class TestInboundPurchaseOrdersShape:
         assert rows["external_version"] == ("character varying", "NO")
         assert rows["canonical_id"] == ("uuid", "NO")
         assert rows["canonical_payload"] == ("jsonb", "NO")
-        assert rows["source_payload"] == ("jsonb", "NO")
+        # mig 045 dropped NOT NULL on source_payload (R6 retention task).
+        assert rows["source_payload"] == ("jsonb", "YES")
         assert rows["status"] == ("character varying", "NO")
         assert rows["ingested_via_token_id"] == ("bigint", "NO")
 

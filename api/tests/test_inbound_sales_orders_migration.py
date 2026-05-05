@@ -93,7 +93,9 @@ class TestInboundSalesOrdersShape:
         assert rows["external_version"] == ("character varying", "NO")
         assert rows["canonical_id"] == ("uuid", "NO")
         assert rows["canonical_payload"] == ("jsonb", "NO")
-        assert rows["source_payload"] == ("jsonb", "NO")
+        # mig 045 dropped NOT NULL on source_payload so the v1.7.0 R6
+        # retention task can null the column past the configured window.
+        assert rows["source_payload"] == ("jsonb", "YES")
         assert rows["received_at"][0].startswith("timestamp")
         assert rows["status"] == ("character varying", "NO")
         assert rows["superseded_at"][0].startswith("timestamp")
