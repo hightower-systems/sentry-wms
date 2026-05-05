@@ -196,3 +196,4 @@ def register_inbound_resource(resource_key: str, endpoint_suffix: str) -> None:
 
 register_inbound_resource("sales_orders", "sales_orders")
 register_inbound_resource("items", "items")
+register_inbound_resource("customers", "customers")
