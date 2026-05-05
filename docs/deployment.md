@@ -13,11 +13,15 @@
 git clone https://github.com/hightower-systems/sentry-wms.git
 cd sentry-wms
 cp .env.example .env
-# Generate the three required secrets and paste them into .env:
-#   JWT_SECRET            -- openssl rand -hex 32
-#   SENTRY_ENCRYPTION_KEY -- python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-#   REDIS_PASSWORD        -- python -c "import secrets; print(secrets.token_hex(32))"
-# docker compose will refuse to start if any of these are missing.
+# Generate the five required secrets and paste them into .env:
+#   JWT_SECRET                -- openssl rand -hex 32
+#   SENTRY_ENCRYPTION_KEY     -- python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   SENTRY_TOKEN_PEPPER       -- python -c "import secrets; print(secrets.token_hex(32))"
+#   SENTRY_PUBSUB_HMAC_KEY    -- python -c "import secrets; print(secrets.token_hex(32))"
+#   REDIS_PASSWORD            -- python -c "import secrets; print(secrets.token_hex(32))"
+# docker compose refuses to interpolate when any of these are missing,
+# and the api / dispatcher containers refuse to boot on weak / placeholder
+# values (V-201). Use the generators above for production deploys.
 docker compose up -d
 ```
 
@@ -99,6 +103,16 @@ JWT_SECRET=$(openssl rand -hex 32)
 
 # Connector credential vault (Fernet, base64, 32 bytes)
 SENTRY_ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
+# X-WMS-Token pepper (v1.5.0 #128). SHA256(pepper || plaintext) is the
+# stored hash; rotating the pepper invalidates every issued token.
+# Boot guard rejects short / whitespace / placeholder values (V-201).
+SENTRY_TOKEN_PEPPER=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Cross-worker pubsub HMAC (v1.6.1 #227 / #238). Signs the
+# webhook_subscription_events Redis channel envelope; required when the
+# dispatcher is enabled (default). Generate with:
+SENTRY_PUBSUB_HMAC_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
 # Redis broker password (Celery)
 REDIS_PASSWORD=$(python -c "import secrets; print(secrets.token_hex(32))")
