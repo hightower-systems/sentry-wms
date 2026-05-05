@@ -47,6 +47,7 @@ const NAV = [
     items: [
       { to: '/users', label: 'Users' },
       { to: '/api-tokens', label: 'API tokens' },
+      { to: '/inbound', label: 'Inbound activity' },
       { to: '/consumer-groups', label: 'Consumer groups' },
       { to: '/webhooks', label: 'Webhooks' },
       { to: '/audit-log', label: 'Audit log' },
