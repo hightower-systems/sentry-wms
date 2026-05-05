@@ -385,8 +385,15 @@ CREATE TABLE inventory_adjustments (
 -- AUDIT LOG (Every action tracked)
 -- ============================================================
 
+-- v1.7.0 #271: log_id sequence is owned by audit_log.log_id but the
+-- column has no DEFAULT, so concurrent transactions cannot pre-allocate
+-- log_ids out of trigger-execution order. The chain trigger assigns
+-- NEW.log_id := nextval(...) inside its lock-protected critical section.
+-- See db/migrations/047_audit_log_chain_serialization.sql.
+CREATE SEQUENCE audit_log_log_id_seq;
+
 CREATE TABLE audit_log (
-    log_id BIGSERIAL PRIMARY KEY,
+    log_id BIGINT PRIMARY KEY NOT NULL,
     action_type VARCHAR(50) NOT NULL,      -- 'RECEIVE', 'PUTAWAY', 'PICK', 'PACK', 'SHIP', 'TRANSFER', 'ADJUST', 'COUNT'
     entity_type VARCHAR(50) NOT NULL,      -- 'PO', 'SO', 'ITEM', 'BIN', 'INVENTORY'
     entity_id INT NOT NULL,
@@ -412,12 +419,43 @@ CREATE INDEX ix_audit_log_entity ON audit_log(entity_type, entity_id);
 -- for deployments that were created before V-025 shipped.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- v1.7.0 #271: chain serialization sentinel + LOCK TABLE EXCLUSIVE on
+-- the chain trigger's critical section. The chain trigger:
+--   1. Acquires LOCK TABLE EXCLUSIVE on audit_log_chain_head.
+--   2. Calls nextval('audit_log_log_id_seq') for NEW.log_id (so log_id
+--      ordering matches trigger-execution ordering -- otherwise concurrent
+--      transactions pre-allocate log_ids out of trigger-execution order
+--      and the strict-by-log_id chain forks).
+--   3. Reads sentinel.row_hash, computes NEW.row_hash, updates sentinel.
+-- Under READ COMMITTED + EXCLUSIVE table lock, the next waiter sees the
+-- prior holder's committed UPDATE on unblock; the lock + the explicit
+-- log_id allocation together yield strict-by-log_id chain integrity.
+-- See db/migrations/047_audit_log_chain_serialization.sql for the
+-- iteration history (advisory lock + FOR UPDATE were tried first, both
+-- insufficient).
+CREATE TABLE audit_log_chain_head (
+    singleton  BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    row_hash   BYTEA NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO audit_log_chain_head (singleton, row_hash)
+VALUES (TRUE, '\x00'::bytea);
+
 CREATE OR REPLACE FUNCTION audit_log_chain_hash() RETURNS TRIGGER AS $$
 DECLARE
     prev BYTEA;
     payload TEXT;
 BEGIN
-    SELECT row_hash INTO prev FROM audit_log ORDER BY log_id DESC LIMIT 1;
+    -- v1.7.0 #271: serialize the entire critical section (log_id
+    -- allocation + prev_hash read + row_hash compute + sentinel
+    -- update). EXCLUSIVE table lock blocks other writers; nextval
+    -- inside the lock guarantees log_id-order matches trigger-
+    -- execution-order so the strict-by-log_id chain holds.
+    LOCK TABLE audit_log_chain_head IN EXCLUSIVE MODE;
+    NEW.log_id := nextval('audit_log_log_id_seq');
+    SELECT row_hash INTO prev FROM audit_log_chain_head
+     WHERE singleton = TRUE;
     NEW.prev_hash := COALESCE(prev, '\x00'::bytea);
     payload := COALESCE(NEW.action_type, '') || '|' ||
                COALESCE(NEW.entity_type, '') || '|' ||
@@ -427,6 +465,9 @@ BEGIN
                COALESCE(NEW.details::text, '') || '|' ||
                COALESCE(NEW.created_at::text, NOW()::text);
     NEW.row_hash := digest(NEW.prev_hash || payload::bytea, 'sha256');
+    UPDATE audit_log_chain_head
+       SET row_hash = NEW.row_hash, updated_at = NOW()
+     WHERE singleton = TRUE;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

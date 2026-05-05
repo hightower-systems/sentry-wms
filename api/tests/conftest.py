@@ -136,6 +136,16 @@ def _seed_database():
     conn.autocommit = True
     cur = conn.cursor()
     cur.execute("TRUNCATE " + ", ".join(ALL_TABLES) + " RESTART IDENTITY CASCADE")
+    # v1.7.0 #271: audit_log_chain_head is a sentinel holding the
+    # latest committed row_hash. TRUNCATE on audit_log doesn't cascade
+    # to it (no FK; intentional -- the sentinel is the chain anchor,
+    # not table-bound state). Reset to genesis so verify_audit_log_chain
+    # walks from '\x00' on a fresh test session.
+    cur.execute(
+        "UPDATE audit_log_chain_head SET row_hash = '\\x00'::bytea, "
+        "                                updated_at = NOW() "
+        " WHERE singleton = TRUE"
+    )
     with open(SEED_PATH) as f:
         cur.execute(f.read())
     # The seed SQL inserts the admin user with a placeholder password_hash
