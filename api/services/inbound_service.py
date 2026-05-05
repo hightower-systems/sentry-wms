@@ -225,15 +225,29 @@ def handle_inbound(
     """
     cfg = get_config(resource_key)
 
-    # mapping_overrides capability gate: declined regardless of body
-    # contents when the token doesn't carry the flag.
+    # v1.7.0 (#269): mapping_overrides is disabled until v1.7.1 resolves
+    # the source-path-remap vs canonical-value-replacement semantics
+    # ambiguity (see #270). Reject the request regardless of token
+    # capability so neither shape becomes the de-facto contract by
+    # accident. The capability column on wms_tokens stays so the v1.7.1
+    # decision lands without a migration.
     overrides = body.get("mapping_overrides")
-    if overrides is not None and not token.get("mapping_override"):
+    if overrides is not None:
         return HandlerError(
             status_code=403,
-            body={"error_kind": "mapping_override_capability_required",
-                  "message": "Token does not carry the mapping_override capability."},
+            body={
+                "error_kind": "feature_not_available_in_v1_7_0",
+                "detail": (
+                    "mapping_overrides is deferred to v1.7.1 pending "
+                    "semantics decision (#270)."
+                ),
+            },
         )
+    # Belt-and-braces: even with overrides=None, force the rest of the
+    # handler to behave as if the capability is absent. Future v1.7.x
+    # shouldn't accidentally reintroduce the value-replacement path
+    # without revisiting the gate.
+    overrides = None
 
     source_system: str = token["source_system"]
     external_id: str = body["external_id"]

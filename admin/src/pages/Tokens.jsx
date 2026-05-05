@@ -521,8 +521,8 @@ export default function Tokens() {
                   <span>Allow mapping_overrides (capability flag)</span>
                 </label>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                  Lets the token override mapping rules per request. Use only for
-                  ad-hoc data fixes; audit_log captures every override.
+                  Reserved for v1.7.1. Granting this capability has no effect in
+                  v1.7.0; requests with mapping_overrides return 403 regardless.
                 </div>
               </div>
             </>

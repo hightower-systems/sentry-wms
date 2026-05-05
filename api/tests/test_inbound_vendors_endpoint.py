@@ -171,10 +171,13 @@ class TestVendorsEndpoint:
         assert contact_name is None
         assert tax_id is None
 
-    def test_mapping_override_capability_required(self, client, app, scenario):
-        """A token without the mapping_override capability flag carrying a
-        body with mapping_overrides returns 403; the audit chain stays
-        clean (no row written for a refused override)."""
+    def test_mapping_overrides_disabled_without_capability(
+        self, client, app, scenario
+    ):
+        """v1.7.0 (#269): mapping_overrides is disabled regardless of
+        token capability. A request that includes the field in the body
+        gets 403 feature_not_available_in_v1_7_0. No canonical / inbound
+        / audit row written."""
         ss = scenario["ss"]
         _load(app, ss, _VENDORS_MAPPING.format(ss=ss))
         _insert_token_via_test_conn(ss, "vend-noov", mapping_override=False)
@@ -185,10 +188,9 @@ class TestVendorsEndpoint:
             "mapping_overrides": {"contact_name": "ad-hoc"},
         })
         assert resp.status_code == 403
-        assert resp.get_json() == {
-            "error_kind": "mapping_override_capability_required",
-            "message": "Token does not carry the mapping_override capability.",
-        }
+        body = resp.get_json()
+        assert body["error_kind"] == "feature_not_available_in_v1_7_0"
+        assert "mapping_overrides" in body["detail"]
         assert resp.headers["X-Sentry-Canonical-Model"] == "DRAFT-v1"
 
         # No vendor row created, no inbound_vendors row, no audit row.
@@ -200,13 +202,14 @@ class TestVendorsEndpoint:
         )[0][0]
         assert n_vendor == 0
 
-    def test_mapping_override_applied_when_token_has_capability(
+    def test_mapping_overrides_disabled_even_with_capability(
         self, client, app, scenario
     ):
-        """A token with the mapping_override capability flag carrying an
-        override body MUST apply: override fields appear in the canonical
-        write, and the audit_log details carry override_fields populated
-        with the override's keys."""
+        """v1.7.0 (#269): the disable applies regardless of the token's
+        mapping_override capability flag. Granting the column-level
+        capability does not re-enable the feature in v1.7.0; v1.7.1
+        will resolve the source-path-remap vs value-replacement
+        ambiguity (#270)."""
         ss = scenario["ss"]
         _load(app, ss, _VENDORS_MAPPING.format(ss=ss))
         _insert_token_via_test_conn(ss, "vend-ov", mapping_override=True)
@@ -216,24 +219,14 @@ class TestVendorsEndpoint:
             "source_payload": {"name": "ACME"},
             "mapping_overrides": {"contact_name": "Jane Doe"},
         })
-        assert resp.status_code == 201
+        assert resp.status_code == 403
         body = resp.get_json()
-        rows = _query(
-            "SELECT vendor_name, contact_name FROM vendors WHERE external_id = %s",
-            (body["canonical_id"],),
-        )
-        assert rows
-        name, contact = rows[0]
-        assert name == "ACME"
-        assert contact == "Jane Doe"
-
-        rows = _query(
-            "SELECT details FROM audit_log "
-            " WHERE entity_type='INBOUND_VENDOR' AND entity_id = %s",
-            (body["inbound_id"],),
-        )
-        assert len(rows) == 1
-        details = rows[0][0]
-        assert "vendor_name" in details["field_set"]
-        assert "contact_name" in details["field_set"]
-        assert details["override_fields"] == ["contact_name"]
+        assert body["error_kind"] == "feature_not_available_in_v1_7_0"
+        # No canonical, inbound, or audit row written for a rejected request.
+        n_vendor = _query(
+            "SELECT COUNT(*) FROM vendors WHERE external_id = (SELECT canonical_id "
+            " FROM cross_system_mappings WHERE source_system = %s "
+            "   AND source_id = 'V-OV')",
+            (ss,),
+        )[0][0]
+        assert n_vendor == 0
