@@ -356,9 +356,19 @@ def handle_inbound(
         )
 
     # ----- Step 5 + 6: canonical upsert + cross_system_mappings -----
+    # write_field_set is the union of base mapping fields and any
+    # override fields. Filtering by union keeps the field-set isolation
+    # contract on subsequent writers (only declared fields written) while
+    # letting mapping_override capability tokens carry override-only
+    # columns through to the canonical row.
+    write_field_set = (
+        document.field_set(resource_key) | set(overrides.keys())
+        if overrides
+        else document.field_set(resource_key)
+    )
     is_new, canonical_id = _upsert_canonical(
         db, cfg, source_system, external_id, canonical_payload,
-        document.field_set(resource_key),
+        write_field_set,
     )
 
     # ----- Step 7: insert inbound row + supersede -----
