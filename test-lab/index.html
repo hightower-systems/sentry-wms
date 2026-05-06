@@ -1,0 +1,1148 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/test-lab/">
+      
+      
+        <link rel="prev" href="../connectors/">
+      
+      
+        <link rel="next" href="../contributing/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Test Lab - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#test-lab-setup" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Test Lab
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Started
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Getting Started">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-start-fresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Start Fresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-log-in-to-admin-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Log In to Admin Panel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-install-the-mobile-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Install the Mobile App
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-flow-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Flow Walkthrough
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test Flow Walkthrough">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-receive-a-purchase-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Receive a Purchase Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-put-away-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Put Away Items
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-create-a-sales-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Create a Sales Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-pick-walk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Pick Walk
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-pack-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Pack Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-ship" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6: Ship
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-7-cycle-count" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7: Cycle Count
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-8-transfer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8: Transfer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#demo-seed-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Demo Seed Data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resetting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resetting
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting Started
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Getting Started">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-start-fresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Start Fresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-log-in-to-admin-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Log In to Admin Panel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-install-the-mobile-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Install the Mobile App
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-flow-walkthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test Flow Walkthrough
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test Flow Walkthrough">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-receive-a-purchase-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Receive a Purchase Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-put-away-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Put Away Items
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-create-a-sales-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Create a Sales Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-pick-walk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Pick Walk
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-pack-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5: Pack Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-ship" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6: Ship
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-7-cycle-count" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7: Cycle Count
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-8-transfer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8: Transfer
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#demo-seed-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Demo Seed Data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resetting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resetting
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="test-lab-setup">Test Lab Setup</h1>
+<p>How to set up a small-scale test environment to exercise all warehouse flows end to end.</p>
+<h2 id="hardware">Hardware</h2>
+<ul>
+<li><strong>Scanner</strong> - Chainway C6000 (or any Android device with Expo Go for dev testing)</li>
+<li><strong>Label printer</strong> - Zebra ZD421 or similar (optional -- you can print barcodes on paper)</li>
+<li><strong>Barcode labels</strong> - item UPCs, bin barcodes, PO/SO barcodes</li>
+</ul>
+<h2 id="network">Network</h2>
+<ul>
+<li>All devices on the same local network (WiFi)</li>
+<li>API server running on a machine with a known IP address</li>
+<li>Mobile app connects to <code>http://&lt;server-ip&gt;:5000</code></li>
+</ul>
+<h2 id="getting-started">Getting Started</h2>
+<h3 id="1-start-fresh">1. Start Fresh</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd</span><span class="w"> </span>sentry-wms
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>down<span class="w"> </span>-v
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>This resets the database and loads demo data (20 items, 16 bins, 5 POs, 20 SOs).</p>
+<h3 id="2-log-in-to-admin-panel">2. Log In to Admin Panel</h3>
+<p>Open <code>http://&lt;server-ip&gt;:8080</code> in a browser. Fresh installs seed the admin user as <code>admin</code> / <code>admin</code>; you are forced to change the password on first login.</p>
+<p>If you set <code>ADMIN_PASSWORD</code> in your <code>.env</code>, the seed uses that value instead and skips the forced-change flow -- <code>docker compose logs db | grep "Admin password"</code> prints it for you.</p>
+<h3 id="3-install-the-mobile-app">3. Install the Mobile App</h3>
+<p>Either sideload the APK via <code>adb install</code> or use Expo Go for development:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">cd</span><span class="w"> </span>mobile
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>npm<span class="w"> </span>install
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>npx<span class="w"> </span>expo<span class="w"> </span>start<span class="w"> </span>--clear
+</code></pre></div>
+<p>On first launch, enter the server URL (<code>http://&lt;server-ip&gt;:5000</code>) and log in.</p>
+<hr />
+<h2 id="test-flow-walkthrough">Test Flow Walkthrough</h2>
+<h3 id="step-1-receive-a-purchase-order">Step 1: Receive a Purchase Order</h3>
+<ol>
+<li>In the admin panel, go to Settings and create a PO (or use one of the 5 demo POs)</li>
+<li>On the mobile app, tap <strong>RECEIVE</strong></li>
+<li>Scan the PO barcode (or type the PO number)</li>
+<li>The PO loads with expected line items</li>
+<li>Scan each item barcode to receive it -- quantity increments per scan in Turbo mode</li>
+<li>Select a staging bin if prompted</li>
+<li>Submit the receipt</li>
+</ol>
+<p>Verify in the admin panel: PO status updates to PARTIAL or RECEIVED.</p>
+<h3 id="step-2-put-away-items">Step 2: Put Away Items</h3>
+<ol>
+<li>On mobile, tap <strong>PUT-AWAY</strong></li>
+<li>The pending items list shows everything in staging bins</li>
+<li>Tap an item or scan its barcode</li>
+<li>The app suggests a preferred bin (or default bin)</li>
+<li>Scan the destination bin barcode to confirm</li>
+<li>Enter quantity and confirm</li>
+</ol>
+<p>Verify: item moves from staging to the storage bin in the Inventory page.</p>
+<h3 id="step-3-create-a-sales-order">Step 3: Create a Sales Order</h3>
+<ol>
+<li>In the admin panel, go to Settings and create an SO with line items</li>
+<li>Or use one of the 20 demo SOs</li>
+</ol>
+<h3 id="step-4-pick-walk">Step 4: Pick Walk</h3>
+<ol>
+<li>On mobile, tap <strong>PICK</strong></li>
+<li>Scan SO barcodes to add orders to the wave (the app validates each one)</li>
+<li>Tap "Create Batch" to start the pick walk</li>
+<li>The app shows the first pick task with bin location, item, and quantity</li>
+<li>Walk to the bin, scan the item barcode to confirm</li>
+<li>Continue until all tasks are complete</li>
+<li>Submit the batch</li>
+</ol>
+<p>Verify: SO status changes to PICKED.</p>
+<h3 id="step-5-pack-verification">Step 5: Pack Verification</h3>
+<ol>
+<li>On mobile, tap <strong>PACK</strong></li>
+<li>Scan the SO barcode to load the order</li>
+<li>Scan each item barcode to verify it matches the pick list</li>
+<li>The progress bar shows verified vs total items</li>
+<li>When all items are verified, tap Complete</li>
+</ol>
+<p>Verify: SO status changes to PACKED.</p>
+<h3 id="step-6-ship">Step 6: Ship</h3>
+<ol>
+<li>On mobile, tap <strong>SHIP</strong></li>
+<li>Scan the SO barcode</li>
+<li>Select a carrier and enter a tracking number</li>
+<li>Tap Ship</li>
+</ol>
+<p>Verify: SO status changes to SHIPPED. Fulfillment records appear in the admin panel.</p>
+<h3 id="step-7-cycle-count">Step 7: Cycle Count</h3>
+<ol>
+<li>In the admin panel, go to Cycle Counts and create a count for one or more bins</li>
+<li>On mobile, tap <strong>COUNT</strong></li>
+<li>Scan the bin barcode to load the count</li>
+<li>Enter the physical quantity for each item</li>
+<li>Submit the count</li>
+<li>If variances exist, approve or reject adjustments in the admin panel under Cycle Count Approvals</li>
+</ol>
+<h3 id="step-8-transfer">Step 8: Transfer</h3>
+<ol>
+<li>On mobile, tap <strong>TRANSFER</strong></li>
+<li>Scan the item barcode</li>
+<li>Scan the source bin (FROM)</li>
+<li>Scan the destination bin (TO)</li>
+<li>Enter quantity and confirm</li>
+</ol>
+<hr />
+<h2 id="demo-seed-data">Demo Seed Data</h2>
+<p>The default seed (<code>db/seed-apartment-lab.sql</code>) includes:</p>
+<ul>
+<li>1 warehouse (APT-LAB) with 6 zones and 16 bins</li>
+<li>20 items (fly fishing catalog, TST-001 through TST-020)</li>
+<li>5 purchase orders with varying line counts</li>
+<li>20 sales orders covering single-item, multi-item, contention, and edge cases</li>
+<li>Inventory pre-loaded in storage bins</li>
+</ul>
+<p>Set <code>SKIP_SEED=true</code> to start with an empty warehouse and only the admin user.</p>
+<h2 id="resetting">Resetting</h2>
+<p>To wipe everything and start over:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>down<span class="w"> </span>-v
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>The <code>-v</code> flag removes the PostgreSQL data volume. A fresh seed runs automatically on next startup.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

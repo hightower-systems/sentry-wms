@@ -1,0 +1,1849 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/deployment/">
+      
+      
+        <link rel="prev" href="../api-reference/">
+      
+      
+        <link rel="next" href="../admin-panel/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Deployment - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#deployment-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Deployment
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#development-docker-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Development (Docker Compose)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Development (Docker Compose)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-database-v170" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test database (v1.7.0+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-login" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Login
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#demo-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Demo Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrading
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Production">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#production-docker-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production Docker Compose
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required migration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#infrastructure-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Infrastructure Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#content-security-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Content-Security-Policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rate limiting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-hosted-fonts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-hosted fonts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lan-development-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LAN development access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-proxy-https" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse Proxy (HTTPS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reverse Proxy (HTTPS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trust_proxy-required-behind-a-reverse-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TRUST_PROXY (required behind a reverse proxy)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="TRUST_PROXY (required behind a reverse proxy)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-to-set-it-and-how-to-apply-the-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to set it, and how to apply the change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#caddy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caddy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#traefik-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traefik (v2+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aws-alb-and-other-tls-terminating-load-balancers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS ALB and other TLS-terminating load balancers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-hop-deployments-cdn-in-front-of-a-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-hop deployments (CDN in front of a proxy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inbound-v170" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inbound (v1.7.0)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inbound (v1.7.0)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuring-an-inbound-source_system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring an inbound source_system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boot-validators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Boot validators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load testing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mobile-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mobile App
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mobile App">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sideloading-the-apk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sideloading the APK
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#first-launch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Launch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broadcast-intent-scanning-chainway-c6000" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broadcast Intent Scanning (Chainway C6000)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expo-go-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expo Go (Development)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#development-docker-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Development (Docker Compose)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Development (Docker Compose)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-database-v170" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test database (v1.7.0+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-login" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Login
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#demo-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Demo Data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrading
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Production">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#production-docker-compose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production Docker Compose
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-migration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required migration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#infrastructure-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Infrastructure Notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#content-security-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Content-Security-Policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rate limiting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-hosted-fonts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-hosted fonts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lan-development-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LAN development access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reverse-proxy-https" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reverse Proxy (HTTPS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reverse Proxy (HTTPS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trust_proxy-required-behind-a-reverse-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TRUST_PROXY (required behind a reverse proxy)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="TRUST_PROXY (required behind a reverse proxy)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-to-set-it-and-how-to-apply-the-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to set it, and how to apply the change
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nginx" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nginx
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#caddy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Caddy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#traefik-v2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traefik (v2+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#aws-alb-and-other-tls-terminating-load-balancers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS ALB and other TLS-terminating load balancers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-hop-deployments-cdn-in-front-of-a-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-hop deployments (CDN in front of a proxy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inbound-v170" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inbound (v1.7.0)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inbound (v1.7.0)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuring-an-inbound-source_system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring an inbound source_system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boot-validators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Boot validators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load testing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mobile-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mobile App
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mobile App">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sideloading-the-apk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sideloading the APK
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#first-launch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Launch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broadcast-intent-scanning-chainway-c6000" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broadcast Intent Scanning (Chainway C6000)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#expo-go-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expo Go (Development)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="deployment-guide">Deployment Guide</h1>
+<h2 id="development-docker-compose">Development (Docker Compose)</h2>
+<h3 id="prerequisites">Prerequisites</h3>
+<ul>
+<li>Docker and Docker Compose</li>
+<li>Node.js 18+ (for mobile app development)</li>
+</ul>
+<h3 id="setup">Setup</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/hightower-systems/sentry-wms.git
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>sentry-wms
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cp<span class="w"> </span>.env.example<span class="w"> </span>.env
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Generate the five required secrets and paste them into .env:</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1">#   JWT_SECRET                -- openssl rand -hex 32</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1">#   SENTRY_ENCRYPTION_KEY     -- python -c &quot;from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())&quot;</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1">#   SENTRY_TOKEN_PEPPER       -- python -c &quot;import secrets; print(secrets.token_hex(32))&quot;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1">#   SENTRY_PUBSUB_HMAC_KEY    -- python -c &quot;import secrets; print(secrets.token_hex(32))&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1">#   REDIS_PASSWORD            -- python -c &quot;import secrets; print(secrets.token_hex(32))&quot;</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># docker compose refuses to interpolate when any of these are missing,</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># and the api / dispatcher containers refuse to boot on weak / placeholder</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># values (V-201). Use the generators above for production deploys.</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>This starts five containers:</p>
+<ul>
+<li><strong>sentry-db</strong> -- PostgreSQL 16 on port 5432 (bound to localhost only)</li>
+<li><strong>sentry-api</strong> -- Flask API on port 5000</li>
+<li><strong>sentry-redis</strong> -- Redis 7 (broker for Celery, no host port)</li>
+<li><strong>sentry-celery</strong> -- Celery worker for connector sync tasks</li>
+<li><strong>sentry-admin</strong> -- React admin panel served by nginx on port 8080</li>
+</ul>
+<p>For local development with Vite dev-server and hot reload:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker-compose.yml<span class="w"> </span>-f<span class="w"> </span>docker-compose.dev.yml<span class="w"> </span>up
+</code></pre></div>
+<p>The overlay replaces the nginx admin with the Vite dev-server on port 3000
+and mounts <code>./api</code> and <code>./admin</code> into their containers for live reload.</p>
+<h3 id="test-database-v170">Test database (v1.7.0+)</h3>
+<p>The pytest suite TRUNCATEs ~40 tables at session start. To keep that
+wipe from destroying the application database, the conftest hard-fails
+unless <code>TEST_DATABASE_URL</code> is set to a separate database AND distinct
+from <code>DATABASE_URL</code>.</p>
+<p>The default docker-compose stack creates an empty <code>sentry_test</code>
+database during the postgres image's first-init (see
+<code>db/create-test-db.sql</code>). Run the suite with:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">TEST_DATABASE_URL</span><span class="o">=</span>postgresql://sentry:sentry@db:5432/sentry_test<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>sentry-api<span class="w"> </span>pytest<span class="w"> </span>tests/
+</code></pre></div>
+<p>If you migrated from a pre-v1.7.0 stack, the existing postgres volume
+will not have the test database; run <code>docker compose down -v &amp;&amp; docker
+compose up -d</code> to re-init from scratch, or create the test database
+manually:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>sentry-db<span class="w"> </span>psql<span class="w"> </span>-U<span class="w"> </span>sentry<span class="w"> </span>-d<span class="w"> </span>postgres<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-c<span class="w"> </span><span class="s2">&quot;CREATE DATABASE sentry_test;&quot;</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-i<span class="w"> </span>sentry-db<span class="w"> </span>psql<span class="w"> </span>-U<span class="w"> </span>sentry<span class="w"> </span>-d<span class="w"> </span>sentry_test<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>&lt;<span class="w"> </span>db/schema.sql
+</code></pre></div>
+<h3 id="admin-login">Admin Login</h3>
+<p>Fresh installs seed the admin user as <code>admin</code> / <code>admin</code> with <code>must_change_password=true</code>. Auth middleware blocks every endpoint except change-password and logout until you set a new password from the first-login screen.</p>
+<p>To skip the forced change (CI, deterministic dev environments), set <code>ADMIN_PASSWORD</code> in your <code>.env</code>. The seed uses that value directly and prints it on startup:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>logs<span class="w"> </span>db<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s2">&quot;Admin password&quot;</span>
+</code></pre></div>
+<h3 id="demo-data">Demo Data</h3>
+<p>The default seed includes 1 warehouse, 6 zones, 16 bins, 20 items, 5 POs, and 20 SOs for testing. To start with a clean system:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">SKIP_SEED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<h3 id="running-tests">Running Tests</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>docker<span class="w"> </span>compose<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>api<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests/<span class="w"> </span>-x<span class="w"> </span>-q
+</code></pre></div>
+<p>647 backend tests using transaction-rollback isolation (54 skipped inside the
+api container for infrastructure-config assertions; run on the host with
+<code>python -m pytest tests/</code> to get full coverage).</p>
+<hr />
+<h2 id="upgrading">Upgrading</h2>
+<p>When upgrading Sentry WMS, you MUST rebuild Docker images after pulling new code. Python or JavaScript dependencies may have changed, and cached images will not include new dependencies.</p>
+<p>Correct upgrade procedure:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>git<span class="w"> </span>pull
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>down
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>docker<span class="w"> </span>compose<span class="w"> </span>build
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>If you see <code>ModuleNotFoundError</code> or similar errors after upgrading, you skipped the build step.</p>
+<p>Starting in v1.4.2, <code>sentry-api</code> detects this condition at startup: if the Docker image's baked-in version does not match the source code version, the container logs a clear upgrade-procedure message and exits with code 2 rather than crashing a worker with a dependency error.</p>
+<hr />
+<h2 id="production">Production</h2>
+<h3 id="required-environment-variables">Required Environment Variables</h3>
+<p>All of the following are required. <code>docker compose</code> refuses to start if any are missing:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Application auth</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nv">JWT_SECRET</span><span class="o">=</span><span class="k">$(</span>openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">32</span><span class="k">)</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Connector credential vault (Fernet, base64, 32 bytes)</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="nv">SENTRY_ENCRYPTION_KEY</span><span class="o">=</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())&quot;</span><span class="k">)</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1"># X-WMS-Token pepper (v1.5.0 #128). SHA256(pepper || plaintext) is the</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># stored hash; rotating the pepper invalidates every issued token.</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># Boot guard rejects short / whitespace / placeholder values (V-201).</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="nv">SENTRY_TOKEN_PEPPER</span><span class="o">=</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import secrets; print(secrets.token_hex(32))&quot;</span><span class="k">)</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="c1"># Cross-worker pubsub HMAC (v1.6.1 #227 / #238). Signs the</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="c1"># webhook_subscription_events Redis channel envelope; required when the</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># dispatcher is enabled (default). Generate with:</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="nv">SENTRY_PUBSUB_HMAC_KEY</span><span class="o">=</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import secrets; print(secrets.token_hex(32))&quot;</span><span class="k">)</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="c1"># Inbound staging-row forensic retention (v1.7.0 R6). Default 90 days.</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="c1"># The retention beat task NULLs source_payload past this many days</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="c1"># rather than DELETing rows so cross_system_mappings + canonical FKs</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="c1"># stay intact. Hard floor 7 days enforced at boot (V-201 shape):</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="c1"># typo&#39;d or zero values refuse to start the api.</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="nv">SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS</span><span class="o">=</span><span class="m">90</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="c1"># Inbound per-request body cap (v1.7.0 #273). Default 256 KB; valid</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="c1"># range [16, 4096]. Boot guard refuses out-of-range or unparseable</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="c1"># values rather than silently clamping (pre-#273 a typo like 42096</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a><span class="c1"># silently degraded to 4096 with no signal).</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="nv">SENTRY_INBOUND_MAX_BODY_KB</span><span class="o">=</span><span class="m">256</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a><span class="c1"># Inbound mapping-document directory (v1.7.0 #279). Default</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a><span class="c1"># /db/mappings (absolute, matches the docker-compose ./db:/db volume</span>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="c1"># mount). The mapping_loader reads &lt;source_system&gt;.yaml files from</span>
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a><span class="c1"># this directory at boot. Override only when running outside docker.</span>
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a><span class="nv">SENTRY_INBOUND_MAPPINGS_DIR</span><span class="o">=</span>/db/mappings
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a><span class="c1"># Redis broker password (Celery)</span>
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a><span class="nv">REDIS_PASSWORD</span><span class="o">=</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import secrets; print(secrets.token_hex(32))&quot;</span><span class="k">)</span>
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a><span class="c1"># Database</span>
+<a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a><span class="nv">DATABASE_URL</span><span class="o">=</span>postgresql://user:pass@db:5432/sentry
+<a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a><span class="nv">POSTGRES_USER</span><span class="o">=</span>your-db-user
+<a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a><span class="nv">POSTGRES_PASSWORD</span><span class="o">=</span>your-db-password
+<a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a>
+<a id="__codelineno-8-44" name="__codelineno-8-44" href="#__codelineno-8-44"></a><span class="c1"># Allowed browser origins for the admin panel / mobile</span>
+<a id="__codelineno-8-45" name="__codelineno-8-45" href="#__codelineno-8-45"></a><span class="nv">CORS_ORIGINS</span><span class="o">=</span>https://your-admin-domain.com
+</code></pre></div>
+<p><code>SENTRY_ENCRYPTION_KEY</code> in particular is load-bearing: rotating it
+requires decrypting every row of <code>connector_credentials</code> with the old
+key and re-encrypting with the new one. Treat it like a master key.
+The app does not auto-generate a replacement -- missing values raise
+<code>RuntimeError</code> at startup.</p>
+<h3 id="production-docker-compose">Production Docker Compose</h3>
+<p>Use <code>docker-compose.prod.yml</code> which has no source volume mounts:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker-compose.prod.yml<span class="w"> </span>up<span class="w"> </span>-d
+</code></pre></div>
+<p>Key differences from the dev compose:</p>
+<ul>
+<li>No <code>./api:/app</code>, <code>./db:/db</code>, or <code>./admin:/app</code> volume mounts</li>
+<li><code>SKIP_SEED=true</code> by default</li>
+<li>Every secret required via env var (no defaults); hard-fail on missing</li>
+<li><code>FLASK_ENV=production</code> hardcoded</li>
+<li>Redis requires <code>--requirepass $REDIS_PASSWORD</code>; Celery broker URL uses
+  the authenticated form</li>
+<li>Admin container is a multi-stage nginx build serving the compiled Vite
+  bundle; Vite dev-server is unavailable in production</li>
+</ul>
+<h3 id="required-migration">Required migration</h3>
+<p>Before running v1.3.0+ against an existing v1.2 database, apply migration
+<code>db/migrations/016_audit_log_tamper_resistance.sql</code>. It adds the
+<code>prev_hash</code> / <code>row_hash</code> columns on <code>audit_log</code>, installs the hash-chain
+trigger and the <code>BEFORE UPDATE / BEFORE DELETE</code> guards, and exposes
+<code>verify_audit_log_chain()</code> for periodic integrity checks. v1.4.0 adds
+migrations <code>017_sync_state_running_since.sql</code> and
+<code>018_sync_state_run_id.sql</code> for the stale-running sync recovery (V-012)
+and sync_state race fix (V-102).</p>
+<h3 id="infrastructure-notes">Infrastructure Notes</h3>
+<ul>
+<li>PostgreSQL port is bound to <code>127.0.0.1:5432</code> only (not exposed to the network)</li>
+<li>API and admin ports default to <code>127.0.0.1</code> (see LAN development access below)</li>
+<li>API runs Gunicorn with 4 workers (not the Flask dev server)</li>
+<li>Container runs as non-root user <code>appuser</code></li>
+<li><code>debug=False</code> is hardcoded in <code>app.py</code></li>
+</ul>
+<h3 id="content-security-policy">Content-Security-Policy</h3>
+<p>A strict CSP header is set by the API and mirrored by nginx in the admin
+container. <code>default-src 'self'</code>, <code>script-src 'self'</code> with per-build SRI
+hashes, <code>style-src 'self' 'unsafe-inline'</code>, <code>img-src 'self' data:</code>,
+<code>font-src 'self'</code>, <code>connect-src 'self'</code>. If you override <code>CORS_ORIGINS</code>
+you do not need to edit the CSP -- <code>connect-src 'self'</code> is same-origin
+only and browser requests to the API go through the admin origin.</p>
+<h3 id="rate-limiting">Rate limiting</h3>
+<p>Flask-Limiter is enabled by default, backed by the same Redis broker as
+Celery. Global default is <code>300/minute</code> per client; sensitive endpoints
+(auth, sync-reset, connector test-connection) have tighter per-route
+quotas. The limiter reads from the <code>REDIS_PASSWORD</code>-authenticated
+broker URL; set <code>RATELIMIT_STORAGE_URI</code> explicitly if you want a
+separate Redis instance.</p>
+<h3 id="self-hosted-fonts">Self-hosted fonts</h3>
+<p>Instrument Sans and JetBrains Mono ship inside <code>admin/public/fonts/</code>
+under the SIL Open Font License. No third-party font requests are made
+at runtime -- relevant if you have strict egress controls on the
+warehouse network.</p>
+<h3 id="lan-development-access">LAN development access</h3>
+<p>The API and admin ports are parametrized via <code>API_BIND_HOST</code> and
+<code>ADMIN_BIND_HOST</code>. Both default to <code>127.0.0.1</code>, which is the
+correct posture for production deployments behind a reverse proxy
+and for any cloud-hosted install (V-040). For LAN development
+where a phone or handheld scanner on the same network needs to
+reach the API directly, override either or both in your local
+<code>.env</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>API_BIND_HOST=0.0.0.0
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>ADMIN_BIND_HOST=0.0.0.0
+</code></pre></div>
+<p><code>.env</code> is gitignored, so the override stays on the dev machine
+and does not ship to production.</p>
+<h3 id="reverse-proxy-https">Reverse Proxy (HTTPS)</h3>
+<p>The API serves HTTP only. For HTTPS, put a reverse proxy in front:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Browser / mobile app --&gt; HTTPS --&gt; nginx / Caddy / Traefik / ALB --&gt; HTTP --&gt; gunicorn:5000
+</code></pre></div>
+<h4 id="trust_proxy-required-behind-a-reverse-proxy">TRUST_PROXY (required behind a reverse proxy)</h4>
+<p>When Sentry runs behind a reverse proxy, set <code>TRUST_PROXY=true</code> in the API's environment:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>TRUST_PROXY=true
+</code></pre></div>
+<p>The Flask app wraps <code>app.wsgi_app</code> in Werkzeug's <code>ProxyFix</code> when this flag is set, so <code>request.scheme</code>, <code>request.host</code>, and <code>request.is_secure</code> reflect the headers the proxy forwards (<code>X-Forwarded-Proto</code>, <code>X-Forwarded-Host</code>, <code>X-Forwarded-For</code>) instead of the internal <code>http://127.0.0.1:5000</code> hop. Without this, cookies issued at login are scoped to the internal hostname, the browser never resubmits them to the public hostname, and every CSRF-protected <code>POST</code> / <code>PUT</code> / <code>PATCH</code> / <code>DELETE</code> returns <code>403 CSRF token missing or invalid</code> (#107).</p>
+<blockquote>
+<p><strong>Security warning.</strong> Only enable <code>TRUST_PROXY</code> when Sentry actually runs behind a reverse proxy on a network the proxy controls. If the app is reachable directly (no proxy in front, or a proxy that forwards from the public internet without stripping inbound <code>X-Forwarded-*</code> headers), any client can forge its own scheme, hostname, and client IP by sending those headers. <code>TRUST_PROXY</code> is opt-in for exactly this reason. The default-off deployment is safe against header forgery.</p>
+</blockquote>
+<h5 id="where-to-set-it-and-how-to-apply-the-change">Where to set it, and how to apply the change</h5>
+<p><code>TRUST_PROXY</code> goes in the <code>.env</code> file at the <strong>repo root</strong> (next to <code>docker-compose.yml</code>), NOT <code>api/.env</code>. <code>docker-compose.yml</code> reads <code>.env</code> from the Compose project directory; <code>api/.env</code> is only picked up by a direct <code>flask run</code> from inside the <code>api/</code> folder and is not consulted by the containerised deployment.</p>
+<p>After editing <code>.env</code>, the <code>api</code> container must be <strong>recreated</strong>, not just restarted, for the new value to take effect. Compose picks up <code>.env</code> changes when it creates a container, not when it starts one. A common footgun:</p>
+<ul>
+<li><code>docker compose up -d</code> -- recreates the container when the config has changed, which is what picks up the new <code>.env</code> value.</li>
+<li><code>docker compose restart api</code> -- keeps the existing container and just bounces the process inside it, which does NOT re-read <code>.env</code>.</li>
+</ul>
+<h5 id="verification">Verification</h5>
+<p>Two checks confirm <code>TRUST_PROXY</code> actually reached the Flask app after <code>docker compose up -d</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># 1. Compose forwarded the env var into the container.</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>docker<span class="w"> </span>compose<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>api<span class="w"> </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>TRUST_PROXY
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># Expected: TRUST_PROXY=true</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1"># 2. Flask read it at startup and wired ProxyFix.</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>docker<span class="w"> </span>compose<span class="w"> </span>logs<span class="w"> </span>api<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>ProxyFix
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="c1"># Expected: &quot;ProxyFix active: trusting X-Forwarded-* headers (TRUST_PROXY=true)&quot;</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># One line per gunicorn worker (4 lines on the default worker count).</span>
+</code></pre></div>
+<p>Or, from an authenticated admin session, hit the system-info endpoint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Log in first to get a bearer token (TOKEN=...), then:</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>https://sentry.yourcompany.com/api/admin/system-info
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># {&quot;proxy_fix_active&quot;:true}</span>
+</code></pre></div>
+<p>A response with <code>"proxy_fix_active": false</code> behind a reverse proxy means <code>TRUST_PROXY</code> did not reach the container. Check <code>docker-compose.yml</code> (v1.4.4 shipped without the Compose-side wiring; v1.4.5 added it; #136) and confirm you ran <code>up -d</code>, not <code>restart</code>, after changing <code>.env</code>.</p>
+<blockquote>
+<p><strong>v1.5.1 note (V-215).</strong> The unauthenticated <code>/api/health</code> endpoint no longer reports <code>proxy_fix_active</code>. Exposing proxy deployment state to anonymous callers helped an attacker shape their approach (e.g. deciding whether <code>X-Forwarded-For</code> spoofing would stick). The field moved to the admin-only <code>/api/admin/system-info</code>; the anonymous <code>/api/health</code> now returns <code>{status, service}</code> only.</p>
+</blockquote>
+<h4 id="nginx">nginx</h4>
+<p>Minimum config. Each header has a specific job; the comments explain why each one is required:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">server</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">    </span><span class="kn">listen</span><span class="w"> </span><span class="mi">443</span><span class="w"> </span><span class="s">ssl</span><span class="p">;</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="kn">server_name</span><span class="w"> </span><span class="s">sentry.yourcompany.com</span><span class="p">;</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="kn">ssl_certificate</span><span class="w">     </span><span class="s">/etc/ssl/certs/your-cert.pem</span><span class="p">;</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">    </span><span class="kn">ssl_certificate_key</span><span class="w"> </span><span class="s">/etc/ssl/private/your-key.pem</span><span class="p">;</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">    </span><span class="kn">location</span><span class="w"> </span><span class="s">/</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">        </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://127.0.0.1:5000</span><span class="p">;</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="w">        </span><span class="c1"># Public hostname the browser used. ProxyFix rewrites</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="w">        </span><span class="c1"># request.host from this so cookies scope to the public</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="w">        </span><span class="c1"># hostname instead of 127.0.0.1.</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Host</span><span class="w">              </span><span class="nv">$host</span><span class="p">;</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-Host</span><span class="w">  </span><span class="nv">$host</span><span class="p">;</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="w">        </span><span class="c1"># Scheme the browser used. ProxyFix rewrites request.scheme</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="w">        </span><span class="c1"># and request.is_secure from this so the Secure cookie flag</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="w">        </span><span class="c1"># and HSTS header emit correctly.</span>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>
+<a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="w">        </span><span class="c1"># Real client IP for audit logs and rate limiting.</span>
+<a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a><span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Real-IP</span><span class="w">         </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a><span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-For</span><span class="w">   </span><span class="nv">$proxy_add_x_forwarded_for</span><span class="p">;</span>
+<a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a><span class="p">}</span>
+</code></pre></div>
+<h4 id="caddy">Caddy</h4>
+<p>Caddy's <code>reverse_proxy</code> directive sets all the required <code>X-Forwarded-*</code> headers automatically:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>sentry.yourcompany.com {
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    reverse_proxy 127.0.0.1:5000
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>}
+</code></pre></div>
+<h4 id="traefik-v2">Traefik (v2+)</h4>
+<p>Traefik sets the forwarded headers by default for any service reached through a router. A minimum dynamic-config snippet:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">http</span><span class="p">:</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">routers</span><span class="p">:</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span><span class="nt">sentry</span><span class="p">:</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">      </span><span class="nt">rule</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Host(`sentry.yourcompany.com`)&quot;</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">      </span><span class="nt">entryPoints</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">websecure</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">      </span><span class="nt">tls</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">      </span><span class="nt">service</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sentry-api</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">    </span><span class="nt">sentry-api</span><span class="p">:</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">      </span><span class="nt">loadBalancer</span><span class="p">:</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="w">        </span><span class="nt">servers</span><span class="p">:</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;http://127.0.0.1:5000&quot;</span>
+</code></pre></div>
+<h4 id="aws-alb-and-other-tls-terminating-load-balancers">AWS ALB and other TLS-terminating load balancers</h4>
+<p>ALB, GCP HTTPS Load Balancer, Azure Application Gateway, Cloudflare Tunnels, Fly.io, Render, and most other managed edges all send <code>X-Forwarded-Proto</code> and <code>X-Forwarded-For</code>. <code>TRUST_PROXY=true</code> works the same way for all of them.</p>
+<h4 id="multi-hop-deployments-cdn-in-front-of-a-proxy">Multi-hop deployments (CDN in front of a proxy)</h4>
+<p>The default ProxyFix config trusts <strong>one</strong> proxy hop. When Sentry sits behind multiple TLS-terminating proxies (e.g. Cloudflare CDN -&gt; nginx -&gt; Sentry, or ALB -&gt; nginx -&gt; Sentry), increase the hop count in <code>api/app.py</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">app</span><span class="o">.</span><span class="n">wsgi_app</span> <span class="o">=</span> <span class="n">ProxyFix</span><span class="p">(</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>    <span class="n">app</span><span class="o">.</span><span class="n">wsgi_app</span><span class="p">,</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="n">x_for</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>    <span class="c1"># one entry each from CDN and nginx</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">x_proto</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">x_host</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">x_prefix</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="p">)</span>
+</code></pre></div>
+<p>The hop count must match the number of trusted proxies in the chain exactly. Over-counting accepts forged headers from the innermost proxy's client (a request originator can prepend fake <code>X-Forwarded-*</code> entries that a too-permissive ProxyFix will trust); under-counting scopes cookies to the wrong hop. Upstream Werkzeug documents this at <a href="https://werkzeug.palletsprojects.com/en/latest/middleware/proxy_fix/">https://werkzeug.palletsprojects.com/en/latest/middleware/proxy_fix/</a>.</p>
+<hr />
+<h2 id="inbound-v170">Inbound (v1.7.0)</h2>
+<p>The v1.7.0 release adds a Pipe B inbound API. External systems POST canonical-shaped resource updates to <code>/api/v1/inbound/{sales_orders,items,customers,vendors,purchase_orders}</code> instead of (or alongside) running a <code>connector</code> against Sentry. Per-source mapping documents translate source-system payloads into Sentry's canonical model. This section covers the operator setup; see <a href="https://github.com/hightower-systems/sentry-wms/blob/main/api/services/mapping_loader.py"><code>api/services/mapping_loader.py</code></a>, the <a href="../api/inbound-openapi.yaml">inbound OpenAPI</a>, and the v1.7.0 release notes for the API contract.</p>
+<h3 id="configuring-an-inbound-source_system">Configuring an inbound source_system</h3>
+<p>For every source system you intend to ingest from, four pieces have to exist before the api will accept inbound POSTs:</p>
+<ol>
+<li><strong>Allowlist row</strong> in <code>inbound_source_systems_allowlist</code>. Boot fails loud when an allowlisted source has no mapping doc OR a doc has no allowlist row.</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="k">INSERT</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">inbound_source_systems_allowlist</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">            </span><span class="p">(</span><span class="n">source_system</span><span class="p">,</span><span class="w"> </span><span class="n">kind</span><span class="p">)</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">     </span><span class="k">VALUES</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;your-source-system&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;connector&#39;</span><span class="p">);</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">                       </span><span class="c1">-- &#39;connector&#39; | &#39;internal_tool&#39; | &#39;manual_import&#39;</span>
+</code></pre></div>
+<ol>
+<li>
+<p><strong>Mapping document YAML</strong> at <code>db/mappings/&lt;source_system&gt;.yaml</code>. Filename stem must equal the <code>source_system</code> field inside the doc. Start from the annotated template at <code>db/mappings/example-template.yaml.template</code> (the <code>.template</code> suffix excludes the template itself from the boot loader). The template covers all five resources with every required canonical column marked <code>required: true</code> plus comments naming the schema constraint, every supported <code>type:</code> (string / integer / decimal / boolean / uuid / iso_timestamp / enum), and <code>cross_system_lookup</code> examples on <code>sales_orders.customer_id</code> and <code>purchase_orders.vendor_id</code>.</p>
+</li>
+<li>
+<p><strong>WMS token</strong> issued via the admin panel's API tokens page with:</p>
+<ul>
+<li><code>source_system</code> = your-source-system</li>
+<li><code>inbound_resources</code> containing the resources the token can write to (subset of: sales_orders, items, customers, vendors, purchase_orders)</li>
+<li>The <code>mapping_override</code> capability checkbox is reserved for v1.7.1; the v1.7.0 handler rejects requests with <code>mapping_overrides</code> regardless of the flag.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>docker compose restart api</code></strong> so <code>boot_load()</code> picks up the new mapping doc. There is no hot-reload. Each restart writes a fresh <code>MAPPING_DOCUMENT_LOAD</code> audit_log row carrying the file's sha256 so investigators can correlate which mapping doc was active when a given inbound POST was processed.</p>
+</li>
+</ol>
+<h3 id="boot-validators">Boot validators</h3>
+<p>Three boot guards refuse to start the api on misconfiguration:</p>
+<ul>
+<li><strong>Canonical-column shape (#267)</strong>: every mapping doc field's <code>canonical:</code> name must correspond to a real column on the canonical table. A typo or stale field name fails boot loud with the file path, resource block, and offending field. No more 500-on-first-POST surprises.</li>
+<li><strong>Eval-shape derived expressions (#272)</strong>: static AST walker rejects derived expressions whose AST contains forbidden names (<code>__import__</code>, <code>eval</code>, <code>exec</code>, <code>open</code>, <code>compile</code>, etc.), attribute walks not rooted at <code>source</code>, or call targets outside the function whitelist (<code>int</code>, <code>float</code>, <code>str</code>, <code>len</code>, <code>abs</code>, <code>min</code>, <code>max</code>, <code>round</code>). A malicious expression in a <code>when_present</code>-gated branch that smoke testing never triggers cannot sit dormant.</li>
+<li><strong><code>SENTRY_INBOUND_MAX_BODY_KB</code> range (#273)</strong>: refuses to boot on parse failure or values outside <code>[16, 4096]</code>. Pre-fix the helper silently clamped to the boundaries and silently fell back to 256 on parse failure; a typo (e.g. <code>42096</code> vs <code>4096</code>) silently degraded with no signal at deploy time.</li>
+</ul>
+<h3 id="load-testing">Load testing</h3>
+<p>The k6 script at <code>tools/loadtest/inbound_v1_7.js</code> drives all five inbound endpoints with realistic payloads under concurrent load. See <a href="../loadtest/"><code>docs/loadtest.md</code></a> for the operator runbook (k6 install, ramp profiles, expected baselines, threshold-trip triage). Operator-run, not CI-default.</p>
+<hr />
+<h2 id="mobile-app">Mobile App</h2>
+<h3 id="sideloading-the-apk">Sideloading the APK</h3>
+<p>Download the APK from the <a href="https://github.com/hightower-systems/sentry-wms/releases">GitHub Releases</a> page. <strong><code>sentry-wms-v1.5.1.apk</code></strong> is the current recommended baseline; v1.6.0, v1.6.1, and v1.7.0 ship no mobile code changes (the dispatcher daemon, admin Webhooks page, the v1.6.1 webhook security patch, and the v1.7.0 inbound API are server-side surfaces) and the v1.5.1 APK carries the dependency-tree security overrides from #158 and #61. Operators still on v1.4.1 or v1.4.3 should install v1.5.1 to pick up those fixes.</p>
+<p>Install via ADB:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>adb<span class="w"> </span>install<span class="w"> </span>sentry-wms-v1.5.1.apk
+</code></pre></div>
+<p>Or transfer the APK to the device and open it from the file manager.</p>
+<h3 id="first-launch">First Launch</h3>
+<p>On first launch, the app prompts for the API server URL:</p>
+<ol>
+<li>Enter your server's IP and port (e.g., <code>http://10.0.0.150:5000</code>)</li>
+<li>The app runs a health check before accepting the URL</li>
+<li>Log in with your admin credentials</li>
+<li>Select a warehouse (shown as a blocking modal after login)</li>
+</ol>
+<p>The server URL can be changed later from Settings in the user dropdown menu.</p>
+<h3 id="broadcast-intent-scanning-chainway-c6000">Broadcast Intent Scanning (Chainway C6000)</h3>
+<p>For hardware scanners that use Android broadcast intents instead of keyboard wedge:</p>
+<ol>
+<li>Open Settings from the user dropdown</li>
+<li>Switch scan mode from KEYBOARD to INTENT</li>
+<li>Configure the intent action and extra key for your device</li>
+</ol>
+<p>Default values for Chainway C6000:</p>
+<ul>
+<li>Intent action: <code>com.android.scanner.BARCODE_READ</code></li>
+<li>Extra key: <code>barcode_string</code></li>
+</ul>
+<h3 id="expo-go-development">Expo Go (Development)</h3>
+<p>For development testing without building an APK:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nb">cd</span><span class="w"> </span>mobile
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>npm<span class="w"> </span>install
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>npx<span class="w"> </span>expo<span class="w"> </span>start<span class="w"> </span>--clear
+</code></pre></div>
+<p>Scan the QR code with Expo Go on your device. Set the API URL to your dev machine's IP.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,894 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/runbooks/webhook-pending-ceiling/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Webhook pending-ceiling auto-pause runbook - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#webhook-pending-ceiling-auto-pause-runbook" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Webhook pending-ceiling auto-pause runbook
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-pending-ceiling-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the pending ceiling is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-the-pending-ceiling-fires" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When the pending ceiling fires
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-hard-case-head-event-is-unprocessable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The hard case: head event is unprocessable
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Procedure
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Procedure">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-confirm-the-pause-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Confirm the pause shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-read-the-error-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Read the error log
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-identify-the-head-event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Identify the head event
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-inspect-the-in-progress-rows-for-the-head-event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Inspect the in-progress rows for the head event
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-decide-and-execute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Decide and execute
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-resume-the-subscription" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Resume the subscription
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-capture-the-postmortem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Capture the postmortem
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tuning-the-ceiling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning the ceiling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recovery-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="webhook-pending-ceiling-auto-pause-runbook">Webhook pending-ceiling auto-pause runbook</h1>
+<p>Audience: operators responding to a subscription that auto-paused with <code>pause_reason='pending_ceiling'</code>.</p>
+<p>Scope: how the pending ceiling differs from the DLQ ceiling, the decision tree for "subscription auto-paused due to pending ceiling, head event is unprocessable," the unblock procedure, and how to tune the per-subscription ceiling vs the deployment hard cap.</p>
+<h2 id="what-the-pending-ceiling-is">What the pending ceiling is</h2>
+<p>Every webhook subscription has a <code>pending_ceiling</code> (default 10,000). When the count of <code>webhook_deliveries</code> rows in <code>pending</code> or <code>in_flight</code> for the subscription reaches the ceiling, the dispatcher flips the subscription to <code>paused</code> with <code>pause_reason='pending_ceiling'</code> atomically with the ceiling-th INSERT.</p>
+<p>The pending ceiling is distinct from the DLQ ceiling. DLQ ceiling fires when the count of <em>terminal</em> <code>dlq</code> rows reaches 1,000 (default); pending ceiling fires when the count of <em>in-progress</em> rows reaches 10,000. Both auto-pause; the difference is what the ceiling is counting and what the operator's job is afterwards.</p>
+<h2 id="when-the-pending-ceiling-fires">When the pending ceiling fires</h2>
+<p>In a healthy steady state, the pending count for a subscription stays under ~50 (one in-flight POST + a thin queue of pending rows the dispatcher has not yet picked up). The pending ceiling at 10,000 represents:</p>
+<ul>
+<li>A consumer that is up but extremely slow (say, 1 event/sec sustained while emit rate is 5 events/sec) will reach the ceiling in ~33 minutes once the queue starts growing.</li>
+<li>A consumer that has gone down completely will not reach the pending ceiling on its own; it will reach the DLQ ceiling first because every event eventually exhausts its 8 retries and lands in DLQ. The pending ceiling fires when the <em>retry</em> schedule itself produces enough pending rows to pile up: a consumer that 5xxs every request inserts a fresh <code>pending</code> row at each of attempts 1-8, so a sustained burst of failures produces ~8 pending rows per event.</li>
+<li>A consumer that succeeds on attempt 1 most of the time but the dispatcher cannot keep up (low <code>DISPATCHER_MAX_CONCURRENT_POSTS</code>, slow DB, contention with another service) will see pending grow without DLQ growth.</li>
+</ul>
+<p>The pending ceiling is therefore a "the dispatcher is falling behind for some reason" signal. The DLQ ceiling is a "the consumer cannot accept these events" signal. Different incidents.</p>
+<h2 id="the-hard-case-head-event-is-unprocessable">The hard case: head event is unprocessable</h2>
+<p>By design, the dispatcher processes events per subscription in cursor order. If the head event of the queue is unprocessable (a 4xx the consumer will never accept, a malformed payload from a bug in <code>emit_event</code>, a poison-pill event the consumer's verifier hates), the dispatcher exhausts its 8 retries on it, lands it in DLQ, advances the cursor, and moves on.</p>
+<p>The pending ceiling can fire BEFORE that DLQ landing if the emit rate is high enough that fresh events accumulate while the head retries. In that case the operator opens the DLQ viewer and sees... nothing. The DLQ is empty. Every pending row is on the same head event.</p>
+<p>That is the "head event is unprocessable" scenario this runbook is named for. The decision tree:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Subscription auto-paused with pause_reason=&#39;pending_ceiling&#39;.
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>DLQ is empty or near-empty.
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>Step 1: Identify the head event.
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  └── SELECT event_id, MIN(scheduled_at) FROM webhook_deliveries
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        WHERE subscription_id = ?
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>          AND status IN (&#39;pending&#39;, &#39;in_flight&#39;)
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        GROUP BY event_id
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        ORDER BY MIN(scheduled_at) ASC
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        LIMIT 1;
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>Step 2: Inspect why the head event keeps failing.
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>  ├── Pull the source from integration_events; confirm the payload is
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>  │   the shape the consumer expects.
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>  ├── Read the in-progress row&#39;s error_kind / error_detail (catalog
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>  │   short_message). The pattern across the 8 attempts tells the
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>  │   shape of the failure.
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>  ├── If error_kind is &#39;tls&#39; or &#39;connection&#39;: the consumer is down
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>  │   or unreachable. This is the wrong runbook; pause stays, wait
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>  │   for consumer recovery, then resume.
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>  └── If error_kind is &#39;4xx&#39; or &#39;5xx&#39;: the consumer is up but
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>      rejecting this specific event.
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>Step 3: Choose one of three options:
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>  ├── Drop the head event.
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>  │     Manually flip the head&#39;s pending rows to &#39;dlq&#39; so the
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>  │     cursor advances on resume. Use sparingly; this is the
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>  │     operator&#39;s &quot;I have decided this event is not recoverable&quot;
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>  │     button. Document in audit_log via a structured comment if
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>  │     your deployment uses one.
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>  │
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>  ├── Fix the head event.
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>  │     If the issue is in the emitted payload (a bug in event
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>  │     production), apply a code fix, then issue a replay-one
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>  │     against the head event. Be aware that simply replaying
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>  │     will hit the same failure mode if the underlying event
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>  │     row is unchanged; a code fix alone does not retroactively
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>  │     repair the integration_events row. The fix is usually
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>  │     either consumer-side (so a fresh re-dispatch works) or a
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>  │     manual UPDATE on the integration_events row by a
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>  │     warehouse-engineer who knows what shape the consumer
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>  │     wants.
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>  │
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>  └── Replay-batch the rest of the queue.
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>        This option only makes sense AFTER you have either dropped
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>        or fixed the head. With the head out of the way, the cursor
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>        advances naturally as the dispatcher works through the
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>        backlog. Replay-batch is for re-dispatching the DLQ rows
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a>        that may have piled up alongside, NOT for the pending
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a>        backlog (which the dispatcher will handle on resume).
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a>
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a>Step 4: Resume the subscription.
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a>  └── Admin panel /webhooks → per-row Resume action. Dispatcher
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a>      publishes a &#39;resumed&#39; event on webhook_subscription_events,
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a>      every worker re-evaluates the subscription, and dispatch
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>      starts from the new head of the queue.
+</code></pre></div>
+<h2 id="procedure">Procedure</h2>
+<p>Expected wall time: 15-45 minutes depending on whether you need a code fix or just a head-event drop.</p>
+<h3 id="1-confirm-the-pause-shape">1. Confirm the pause shape</h3>
+<p>Open admin panel <code>/webhooks</code>. The affected subscription shows a <code>paused</code> badge and <code>pause_reason</code> of <code>pending_ceiling</code>. The pending count column shows ~10,000 (or whatever the per-subscription ceiling is set to).</p>
+<p>If <code>pause_reason</code> is <code>dlq_ceiling</code> instead, you are on the wrong runbook; use <a href="../webhook-dlq-triage/">the DLQ triage runbook</a>.</p>
+<p>If <code>pause_reason</code> is <code>manual</code>, the subscription was paused by an admin via the PATCH endpoint, not by a ceiling auto-trigger; resume manually after confirming with whoever paused it.</p>
+<h3 id="2-read-the-error-log">2. Read the error log</h3>
+<p>Open <code>/webhooks</code> → <code>View errors</code> and filter to the affected subscription. The error log shows failed and DLQ rows with the catalog <code>short_message</code>. If the log is mostly empty for this subscription, the queue is stuck on its head event (no terminal failures yet); proceed to step 3.</p>
+<p>If the log is mostly full of one error_kind, the consumer is rejecting a class of events and the right runbook is <a href="../webhook-dlq-triage/">DLQ triage</a>, not this one.</p>
+<h3 id="3-identify-the-head-event">3. Identify the head event</h3>
+<p>Use the SQL in step 1 of the decision tree above. The result is the <code>event_id</code> blocking the queue. Pull the source from <code>integration_events</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="n">event_id</span><span class="p">,</span><span class="w"> </span><span class="n">event_type</span><span class="p">,</span><span class="w"> </span><span class="n">event_timestamp</span><span class="p">,</span><span class="w"> </span><span class="n">aggregate_external_id</span><span class="p">,</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">       </span><span class="n">warehouse_id</span><span class="p">,</span><span class="w"> </span><span class="n">source_txn_id</span><span class="p">,</span><span class="w"> </span><span class="n">payload</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="k">FROM</span><span class="w"> </span><span class="n">integration_events</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">the</span><span class="o">-</span><span class="n">id</span><span class="o">&gt;</span><span class="p">;</span>
+</code></pre></div>
+<p>If the payload looks malformed or unexpected, you have an emit-side bug; that gets fixed via a code change in whichever handler emitted it (<code>api/services/picking_service.py</code>, <code>api/routes/receiving.py</code>, etc.) and a manual UPDATE on the row to repair the bad shape. That is a separate ticket beyond this runbook.</p>
+<h3 id="4-inspect-the-in-progress-rows-for-the-head-event">4. Inspect the in-progress rows for the head event</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="n">delivery_id</span><span class="p">,</span><span class="w"> </span><span class="n">attempt_number</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">error_kind</span><span class="p">,</span><span class="w"> </span><span class="n">error_detail</span><span class="p">,</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">       </span><span class="n">scheduled_at</span><span class="p">,</span><span class="w"> </span><span class="n">attempted_at</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="k">FROM</span><span class="w"> </span><span class="n">webhook_deliveries</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">subscription_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&lt;sid&gt;&#39;</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">   </span><span class="k">AND</span><span class="w"> </span><span class="n">event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">the</span><span class="o">-</span><span class="n">id</span><span class="o">&gt;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">attempt_number</span><span class="w"> </span><span class="k">ASC</span><span class="p">;</span>
+</code></pre></div>
+<p>In a clean head-stuck scenario, you see 8 rows: 7 in <code>failed</code>, 1 in <code>pending</code> with <code>attempt_number=8</code> and a future <code>scheduled_at</code>. If you see 8 in <code>failed</code> and one in <code>dlq</code>, the head terminated but the queue's accumulated mass kept the pending count above the ceiling; resume on the next retry-slot tick (see step 6).</p>
+<h3 id="5-decide-and-execute">5. Decide and execute</h3>
+<p>Per the decision tree, pick one of:</p>
+<p><strong>Option A: Drop the head.</strong></p>
+<p>This is operator override, not a normal operation. Do this only when you are certain the event is not recoverable (consumer's verifier permanently rejects this shape; the event is duplicate of an earlier-applied one; the event refers to data that no longer exists). Manually:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">webhook_deliveries</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">   </span><span class="k">SET</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;dlq&#39;</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">       </span><span class="n">completed_at</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">NOW</span><span class="p">(),</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">       </span><span class="n">error_kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">COALESCE</span><span class="p">(</span><span class="n">error_kind</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;unknown&#39;</span><span class="p">),</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">       </span><span class="n">error_detail</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;operator drop: pending-ceiling head unblock (incident &lt;ticket-ref&gt;)&#39;</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">subscription_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&lt;sid&gt;&#39;</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">   </span><span class="k">AND</span><span class="w"> </span><span class="n">event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&lt;</span><span class="n">the</span><span class="o">-</span><span class="n">id</span><span class="o">&gt;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">   </span><span class="k">AND</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="k">IN</span><span class="w"> </span><span class="p">(</span><span class="s1">&#39;pending&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;in_flight&#39;</span><span class="p">);</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="k">UPDATE</span><span class="w"> </span><span class="n">webhook_subscriptions</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">   </span><span class="k">SET</span><span class="w"> </span><span class="n">last_delivered_event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GREATEST</span><span class="p">(</span><span class="n">last_delivered_event_id</span><span class="p">,</span><span class="w"> </span><span class="o">&lt;</span><span class="n">the</span><span class="o">-</span><span class="n">id</span><span class="o">&gt;</span><span class="p">)</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">subscription_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&lt;sid&gt;&#39;</span><span class="p">;</span>
+</code></pre></div>
+<p>The cursor advance on the second UPDATE is critical: without it, the dispatcher will pick up the same head event on resume and the queue stays stuck.</p>
+<p><strong>Option B: Fix and replay.</strong></p>
+<p>If the issue is a payload shape mismatch you can repair, UPDATE the <code>integration_events</code> row with the corrected payload, then either let the existing pending row's next retry slot fire, or issue a replay-one to insert a fresh attempt-1 row that will dispatch immediately on resume.</p>
+<p>The audit row written for the manual UPDATE is your responsibility (no automatic audit_log write for direct DB UPDATEs); leave a structured comment with the ticket ref.</p>
+<p><strong>Option C: Wait it out.</strong></p>
+<p>If the consumer is recovering on its own and you expect the pending events to drain naturally, you can resume without dropping the head. The dispatcher will work through the queue at the rate the consumer accepts. The pending count will drop below the ceiling as in-flight rows terminate; the pause does not auto-clear, so step 6 (manual resume) is still required.</p>
+<h3 id="6-resume-the-subscription">6. Resume the subscription</h3>
+<p>Admin panel <code>/webhooks</code> → per-row <code>Resume</code> action. The dispatcher publishes <code>resumed</code> on <code>webhook_subscription_events</code>; every worker re-evaluates the subscription and dispatches resume within sub-second on the Redis-pubsub path (60s on the fallback refresh).</p>
+<p>Watch the pending count over the next 5 minutes:</p>
+<ul>
+<li>If it drops steadily, the queue is draining and you are clear.</li>
+<li>If it bounces back to ceiling within the same retry slot, the head event you thought you fixed is still failing. Pause again and re-investigate.</li>
+</ul>
+<h3 id="7-capture-the-postmortem">7. Capture the postmortem</h3>
+<p>Pending-ceiling fires are typically interesting incidents (a consumer suddenly slowed down, a payload bug shipped without coverage, the dispatcher fell behind for a tracked reason). Worth a writeup in whatever your team uses for postmortem records. Useful queries for the writeup:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1">-- Time the ceiling fired, plus the audit row capturing the auto-pause.</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">SELECT</span><span class="w"> </span><span class="n">log_id</span><span class="p">,</span><span class="w"> </span><span class="n">action_type</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">details</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="k">FROM</span><span class="w"> </span><span class="n">audit_log</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">action_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;WEBHOOK_SUBSCRIPTION_UPDATE&#39;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">   </span><span class="k">AND</span><span class="w"> </span><span class="n">details</span><span class="o">-&gt;&gt;</span><span class="s1">&#39;subscription_id&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;&lt;sid&gt;&#39;</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">   </span><span class="k">AND</span><span class="w"> </span><span class="n">details</span><span class="o">-&gt;</span><span class="s1">&#39;diff&#39;</span><span class="o">-&gt;</span><span class="s1">&#39;status&#39;</span><span class="o">-&gt;&gt;</span><span class="s1">&#39;after&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;paused&#39;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">log_id</span><span class="w"> </span><span class="k">DESC</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="c1">-- Pending count over time around the incident (run with hour</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c1">-- granularity from your Postgres history extension if you have one).</span>
+</code></pre></div>
+<h2 id="tuning-the-ceiling">Tuning the ceiling</h2>
+<p><code>pending_ceiling</code> is per-subscription and constrained by the deployment-wide <code>DISPATCHER_MAX_PENDING_HARD_CAP</code> (default 50,000; env-var-only so an admin who can pause cannot also disable the safety ceiling). Per-subscription override is lower-bound only: you can shrink to 100, never grow above the hard cap.</p>
+<p>When to lower below 10,000:</p>
+<ul>
+<li>Low-volume consumers where 10,000 pending represents months of backlog. Lower so the auto-pause fires before the operator forgets the subscription exists.</li>
+<li>Consumers with a strict latency contract where a sustained queue is itself a failure mode worth pausing on.</li>
+</ul>
+<p>When to raise (up to the hard cap):</p>
+<ul>
+<li>High-volume consumers where 10,000 represents minutes of backlog and you want a longer head-stuck investigation window before auto-pause kicks in.</li>
+<li>Burst-tolerant consumers that can clear a 50,000-deep queue in under an hour.</li>
+</ul>
+<p><code>DISPATCHER_MAX_PENDING_HARD_CAP</code> lives in the dispatcher's environment block in <code>docker-compose.yml</code>. Changing it requires <code>docker compose up -d</code> (not <code>restart</code>) to re-read the env. Document the change in your deployment journal; the hard cap is the operator-controlled safety ceiling and increases should be deliberate.</p>
+<h2 id="recovery-checklist">Recovery checklist</h2>
+<ul>
+<li>[ ] Subscription resumed.</li>
+<li>[ ] Pending count back to steady-state range (under ~50 for a healthy consumer).</li>
+<li>[ ] Head event handled (dropped, fixed, or naturally drained).</li>
+<li>[ ] Audit log captures the resume.</li>
+<li>[ ] No new auto-pause within the next hour.</li>
+<li>[ ] Postmortem record captures the cause and any tuning changes made.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3763 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/api-reference/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../deployment/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>API Reference - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#connector-integration-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connector / integration surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error Responses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#standard-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standard errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-errors-v120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation errors (v1.2.0+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Auth">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiauthlogin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/auth/login
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiauthme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/auth/me
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiauthrefresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/auth/refresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiauthchange-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/auth/change-password
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receiving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receiving
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Receiving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apireceivingpobarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/receiving/po/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apireceivingreceive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/receiving/receive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apireceivingcancel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/receiving/cancel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#put-away" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Put-Away
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Put-Away">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiputawaypendingwarehouse_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/putaway/pending/{warehouse_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiputawaysuggestitem_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/putaway/suggest/{item_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiputawayconfirm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/putaway/confirm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiputawayupdate-preferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/putaway/update-preferred
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#picking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Picking
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Picking">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apipickingactive-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/picking/active-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingwave-validate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/wave-validate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingwave-create" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/wave-create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingcreate-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/create-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apipickingbatchbatch_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/picking/batch/{batch_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apipickingbatchbatch_idnext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/picking/batch/{batch_id}/next
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingconfirm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/confirm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingshort" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/short
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingcomplete-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/complete-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingcancel-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/cancel-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#packing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Packing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apipackingorderbarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/packing/order/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipackingverify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/packing/verify
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipackingcomplete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/packing/complete
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shipping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shipping
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shipping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apishippingorderbarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/shipping/order/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apishippingfulfill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/shipping/fulfill
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiinventorycycle-countcreate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/inventory/cycle-count/create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiinventorycycle-countcount_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/inventory/cycle-count/{count_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiinventorycycle-countsubmit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/inventory/cycle-count/submit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transfers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Transfers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apitransfersmove" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/transfers/move
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warehouses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warehouses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Warehouses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiwarehouseslist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/warehouses/list
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lookups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lookups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lookups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupitembarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/item/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupbinbarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/bin/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupsobarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/so/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupitemsearchqquery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/item/search?q={query}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupbinsearchqquery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/bin/search?q={query}
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Endpoints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Endpoints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#admin-warehouses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Warehouses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Zones
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Bins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Items
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Inventory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-preferred-bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Preferred Bins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-purchase-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Purchase Orders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-sales-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Sales Orders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Users
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Import
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Dashboard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-adjustments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Adjustments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-cycle-counts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Cycle Counts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-inter-warehouse-transfers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Inter-Warehouse Transfers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-short-picks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Short Picks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-audit-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Audit Log
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-connectors-v130" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Connectors (v1.3.0+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#connector-integration-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connector / integration surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error Responses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#standard-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standard errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-errors-v120" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation errors (v1.2.0+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Auth">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiauthlogin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/auth/login
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiauthme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/auth/me
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiauthrefresh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/auth/refresh
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiauthchange-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/auth/change-password
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receiving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receiving
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Receiving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apireceivingpobarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/receiving/po/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apireceivingreceive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/receiving/receive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apireceivingcancel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/receiving/cancel
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#put-away" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Put-Away
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Put-Away">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiputawaypendingwarehouse_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/putaway/pending/{warehouse_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiputawaysuggestitem_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/putaway/suggest/{item_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiputawayconfirm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/putaway/confirm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiputawayupdate-preferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/putaway/update-preferred
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#picking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Picking
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Picking">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apipickingactive-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/picking/active-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingwave-validate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/wave-validate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingwave-create" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/wave-create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingcreate-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/create-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apipickingbatchbatch_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/picking/batch/{batch_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apipickingbatchbatch_idnext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/picking/batch/{batch_id}/next
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingconfirm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/confirm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingshort" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/short
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingcomplete-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/complete-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipickingcancel-batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/picking/cancel-batch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#packing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Packing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apipackingorderbarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/packing/order/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipackingverify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/packing/verify
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apipackingcomplete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/packing/complete
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shipping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shipping
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shipping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apishippingorderbarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/shipping/order/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apishippingfulfill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/shipping/fulfill
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiinventorycycle-countcreate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/inventory/cycle-count/create
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiinventorycycle-countcount_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/inventory/cycle-count/{count_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiinventorycycle-countsubmit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/inventory/cycle-count/submit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transfers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Transfers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apitransfersmove" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/transfers/move
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warehouses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warehouses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Warehouses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiwarehouseslist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/warehouses/list
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lookups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lookups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lookups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupitembarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/item/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupbinbarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/bin/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupsobarcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/so/{barcode}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupitemsearchqquery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/item/search?q={query}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apilookupbinsearchqquery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/lookup/bin/search?q={query}
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Endpoints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Endpoints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#admin-warehouses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Warehouses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-zones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Zones
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Bins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Items
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Inventory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-preferred-bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Preferred Bins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-purchase-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Purchase Orders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-sales-orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Sales Orders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-users" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Users
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Import
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-dashboard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Dashboard
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-adjustments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Adjustments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-cycle-counts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Cycle Counts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-inter-warehouse-transfers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Inter-Warehouse Transfers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-short-picks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Short Picks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-audit-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Audit Log
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-connectors-v130" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin - Connectors (v1.3.0+)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-reference">API Reference</h1>
+<p>This document covers the warehouse-floor and admin REST surface (every route prefixed with <code>/api/</code>, mostly used by the mobile app and the admin panel). The integration / connector surface lives elsewhere -- see the section below.</p>
+<h2 id="connector-integration-surface">Connector / integration surface</h2>
+<p>These v1 surfaces have their own machine-readable specs and runbooks rather than being repeated in this document:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Routes</th>
+<th>Auth</th>
+<th>Spec</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Outbound polling (v1.5.0)</td>
+<td><code>GET /api/v1/events</code>, <code>GET /api/v1/events/ack</code>, <code>GET /api/v1/events/types</code>, <code>GET /api/v1/events/schema</code>, <code>GET /api/v1/snapshot/inventory</code></td>
+<td><code>X-WMS-Token</code></td>
+<td><a href="../events/">events catalog</a></td>
+</tr>
+<tr>
+<td>Outbound webhooks (v1.6.0)</td>
+<td><code>/api/admin/webhooks/*</code> (CRUD + DLQ + replay)</td>
+<td>cookie + CSRF</td>
+<td><a href="../api/webhooks/">webhooks API</a></td>
+</tr>
+<tr>
+<td>Inbound writes (v1.7.0)</td>
+<td><code>POST /api/v1/inbound/{sales_orders,items,customers,vendors,purchase_orders}</code>, <code>GET /api/v1/inbound/mapping-schema</code></td>
+<td><code>X-WMS-Token</code></td>
+<td><a href="../api/inbound-openapi.yaml">inbound OpenAPI</a>, <a href="../api/mapping-document-schema.json">mapping JSON Schema</a></td>
+</tr>
+<tr>
+<td>Admin inbound observability (v1.7.0)</td>
+<td><code>GET /api/admin/inbound/activity</code>, <code>GET /api/admin/inbound/activity/{resource}/{inbound_id}</code></td>
+<td>cookie + CSRF</td>
+<td>inbound is read-only after acceptance; no mutation endpoints</td>
+</tr>
+</tbody>
+</table>
+<p>Tokens are managed through the admin panel's API tokens page. Both <code>X-WMS-Token</code> issuance and the cross-direction scope rules (a token cannot reach both inbound and outbound surfaces unless explicitly opted into both) are documented in <a href="https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+<hr />
+<p>All endpoints are prefixed with <code>/api</code>. The API supports two authentication paths:</p>
+<p><strong>Bearer token (mobile, CLI, any programmatic caller):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Authorization: Bearer &lt;token&gt;
+</code></pre></div>
+<p><strong>HttpOnly cookie + CSRF (admin panel browser sessions):</strong></p>
+<p>The admin panel's JWT lives in an HttpOnly cookie set at login. Browser requests on mutating methods (POST, PUT, PATCH, DELETE) must include the CSRF double-submit header:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Cookie: sentry_auth=&lt;jwt&gt;
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>X-CSRF-Token: &lt;csrf-token&gt;
+</code></pre></div>
+<p>The CSRF token is returned by <code>POST /api/auth/login</code> alongside the user payload and is also readable by the admin panel via a non-HttpOnly companion cookie. Bearer-token callers never need CSRF. Both paths resolve to the same server-side auth middleware; individual endpoint docs below use bearer examples for brevity.</p>
+<hr />
+<h2 id="error-responses">Error Responses</h2>
+<h3 id="standard-errors">Standard errors</h3>
+<p>Most endpoints return errors in a simple format:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Human-readable error message&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="p">}</span>
+</code></pre></div>
+<p>Common status codes: 400 (bad request), 401 (unauthorized), 403 (forbidden), 404 (not found), 409 (conflict), 429 (rate limited).</p>
+<h3 id="validation-errors-v120">Validation errors (v1.2.0+)</h3>
+<p>All endpoints that accept a JSON body validate the request against a pydantic schema before processing. Invalid requests return a <code>400</code> response with a structured <code>validation_error</code> format:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;validation_error&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;details&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;missing&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">&quot;loc&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;po_id&quot;</span><span class="p">],</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">&quot;msg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Field required&quot;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;greater_than&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">      </span><span class="nt">&quot;loc&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;items&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;quantity&quot;</span><span class="p">],</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">      </span><span class="nt">&quot;msg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Input should be greater than 0&quot;</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Fields in each detail entry:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type</code></td>
+<td>string</td>
+<td>Pydantic error type identifier (e.g. <code>missing</code>, <code>string_too_short</code>, <code>greater_than</code>, <code>value_error</code>)</td>
+</tr>
+<tr>
+<td><code>loc</code></td>
+<td>array</td>
+<td>Path to the field that failed validation. Top-level fields are <code>["field_name"]</code>. Nested fields include the index or key, e.g. <code>["items", 0, "quantity"]</code></td>
+</tr>
+<tr>
+<td><code>msg</code></td>
+<td>string</td>
+<td>Human-readable error message suitable for display to the user</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example - sending an invalid request:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/receiving/receive<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;po_id&quot;: -1}&#39;</span>
+</code></pre></div>
+<p><strong>Response (400):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;validation_error&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&quot;details&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;greater_than&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">&quot;loc&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;po_id&quot;</span><span class="p">],</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="nt">&quot;msg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Input should be greater than 0&quot;</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">      </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;missing&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">      </span><span class="nt">&quot;loc&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;items&quot;</span><span class="p">],</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">      </span><span class="nt">&quot;msg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Field required&quot;</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>How to handle in client code:</strong></p>
+<ul>
+<li>Check <code>response.error === "validation_error"</code> to distinguish from standard errors</li>
+<li>Extract the first detail's <code>msg</code> for a user-friendly message: <code>response.details[0].msg</code></li>
+<li>Use <code>loc</code> to highlight the specific field in a form, if applicable</li>
+</ul>
+<hr />
+<h2 id="auth">Auth</h2>
+<h3 id="post-apiauthlogin">POST /api/auth/login</h3>
+<p>Authenticate and receive a JWT token. Rate limited per-username and per-IP (5 attempts, 15 min lockout).</p>
+<ul>
+<li><strong>Auth required:</strong> No</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>username</td>
+<td>string</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>password</td>
+<td>string</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eyJhbGci...&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">&quot;user&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">&quot;user_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">&quot;username&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="nt">&quot;full_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Admin User&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ADMIN&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="nt">&quot;warehouse_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="nt">&quot;warehouse_ids&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">    </span><span class="nt">&quot;allowed_functions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;receive&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;putaway&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;pick&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;pack&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;ship&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;count&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;transfer&quot;</span><span class="p">],</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">    </span><span class="nt">&quot;is_active&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Errors:</strong> 400 (missing fields), 401 (invalid credentials), 429 (account locked)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/auth/login<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;username&quot;: &quot;admin&quot;, &quot;password&quot;: &quot;yourpassword&quot;}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apiauthme">GET /api/auth/me</h3>
+<p>Get current user profile with allowed mobile functions.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">&quot;user_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">&quot;username&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">&quot;full_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Admin User&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ADMIN&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">&quot;warehouse_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">&quot;allowed_functions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;receive&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;putaway&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;pick&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;pack&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;ship&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;count&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;transfer&quot;</span><span class="p">],</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="nt">&quot;require_packing&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>curl<span class="w"> </span>http://localhost:5000/api/auth/me<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apiauthrefresh">POST /api/auth/refresh</h3>
+<p>Refresh an existing JWT token. Re-validates the user is active before issuing a new token.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">&quot;token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eyJhbGci...&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p><strong>Errors:</strong> 401 (account disabled or deleted)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/auth/refresh<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apiauthchange-password">POST /api/auth/change-password</h3>
+<p>Change the authenticated user's password. Password must be at least 8 characters with at least one letter and one digit.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>current_password</td>
+<td>string</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>new_password</td>
+<td>string</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Password changed&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p><strong>Errors:</strong> 400 (weak password), 403 (current password incorrect)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/auth/change-password<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;current_password&quot;: &quot;oldpass&quot;, &quot;new_password&quot;: &quot;newpass123&quot;}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="receiving">Receiving</h2>
+<h3 id="get-apireceivingpobarcode">GET /api/receiving/po/{barcode}</h3>
+<p>Look up a purchase order by barcode or PO number.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">&quot;purchase_order&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">&quot;po_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nt">&quot;po_number&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PO-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="nt">&quot;vendor_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Test Vendor&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;OPEN&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">    </span><span class="nt">&quot;warehouse_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">  </span><span class="nt">&quot;lines&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="w">      </span><span class="nt">&quot;po_line_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="w">      </span><span class="nt">&quot;item_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="w">      </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TST-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="w">      </span><span class="nt">&quot;item_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Test Item&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">      </span><span class="nt">&quot;upc&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;100000000001&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="w">      </span><span class="nt">&quot;quantity_ordered&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="w">      </span><span class="nt">&quot;quantity_received&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="w">      </span><span class="nt">&quot;quantity_remaining&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PENDING&quot;</span>
+<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Errors:</strong> 400 (PO closed), 403 (warehouse access), 404 (not found)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>curl<span class="w"> </span>http://localhost:5000/api/receiving/po/PO-001<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apireceivingreceive">POST /api/receiving/receive</h3>
+<p>Record receipt of items from a PO into specified bins. Validates bin belongs to PO's warehouse.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>po_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>items</td>
+<td>array</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>items[].item_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>items[].quantity</td>
+<td>integer</td>
+<td>yes (&gt; 0)</td>
+</tr>
+<tr>
+<td>items[].bin_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>items[].lot_number</td>
+<td>string</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Receipt submitted successfully&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">&quot;receipt_ids&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">],</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">  </span><span class="nt">&quot;po_status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PARTIAL&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">  </span><span class="nt">&quot;warnings&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Errors:</strong> 400 (invalid data, over-receipt blocked), 403 (warehouse access), 404 (PO/bin not found)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/receiving/receive<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;po_id&quot;: 1, &quot;items&quot;: [{&quot;item_id&quot;: 1, &quot;quantity&quot;: 10, &quot;bin_id&quot;: 1}]}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apireceivingcancel">POST /api/receiving/cancel</h3>
+<p>Reverse receipts by receipt IDs. Undoes inventory additions and updates PO line quantities.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>receipt_ids</td>
+<td>array of integers</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Cancelled 2 receipt(s)&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;reversed&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/receiving/cancel<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;receipt_ids&quot;: [1, 2]}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="put-away">Put-Away</h2>
+<h3 id="get-apiputawaypendingwarehouse_id">GET /api/putaway/pending/{warehouse_id}</h3>
+<p>List items in staging bins awaiting put-away.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="p">{</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">&quot;pending_items&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">      </span><span class="nt">&quot;inventory_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">      </span><span class="nt">&quot;item_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">      </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TST-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">      </span><span class="nt">&quot;item_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Test Item&quot;</span><span class="p">,</span>
+<a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">      </span><span class="nt">&quot;quantity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="w">      </span><span class="nt">&quot;bin_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="w">      </span><span class="nt">&quot;bin_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;STAGE-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="w">      </span><span class="nt">&quot;lot_number&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>curl<span class="w"> </span>http://localhost:5000/api/putaway/pending/1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apiputawaysuggestitem_id">GET /api/putaway/suggest/{item_id}</h3>
+<p>Get suggested bin for put-away. Checks preferred bins first, then default bin. Scoped to user's allowed warehouses.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="p">{</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">&quot;item_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">  </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TST-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">  </span><span class="nt">&quot;item_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Test Item&quot;</span><span class="p">,</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="w">  </span><span class="nt">&quot;preferred_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="w">    </span><span class="nt">&quot;bin_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="w">    </span><span class="nt">&quot;bin_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;A-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="w">    </span><span class="nt">&quot;bin_barcode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;BIN-A-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="w">    </span><span class="nt">&quot;zone_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Storage A&quot;</span><span class="p">,</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="w">    </span><span class="nt">&quot;priority&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="w">  </span><span class="nt">&quot;suggested_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s2">&quot;...same as preferred_bin...&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>curl<span class="w"> </span>http://localhost:5000/api/putaway/suggest/1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apiputawayconfirm">POST /api/putaway/confirm</h3>
+<p>Confirm put-away transfer from staging to storage bin. Creates a bin_transfers record.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>item_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>from_bin_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>to_bin_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>quantity</td>
+<td>integer</td>
+<td>yes (&gt; 0)</td>
+</tr>
+<tr>
+<td>lot_number</td>
+<td>string</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="p">{</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="w">  </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Put-away confirmed&quot;</span><span class="p">,</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">  </span><span class="nt">&quot;transfer_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">  </span><span class="nt">&quot;item&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TST-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="w">  </span><span class="nt">&quot;from_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;STAGE-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="w">  </span><span class="nt">&quot;to_bin&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;A-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="w">  </span><span class="nt">&quot;quantity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/putaway/confirm<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;item_id&quot;: 1, &quot;from_bin_id&quot;: 1, &quot;to_bin_id&quot;: 3, &quot;quantity&quot;: 10}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apiputawayupdate-preferred">POST /api/putaway/update-preferred</h3>
+<p>Set or update the preferred bin for an item.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>item_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>bin_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>set_as_primary</td>
+<td>boolean</td>
+<td>no (default: true)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="p">{</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="w">  </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Preferred bin for TST-001 set to A-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="w">  </span><span class="nt">&quot;item_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">  </span><span class="nt">&quot;bin_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">  </span><span class="nt">&quot;bin_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;A-01-01&quot;</span>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/putaway/update-preferred<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;item_id&quot;: 1, &quot;bin_id&quot;: 3}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="picking">Picking</h2>
+<h3 id="get-apipickingactive-batch">GET /api/picking/active-batch</h3>
+<p>Get the current user's active pick batch.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="p">{</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="w">  </span><span class="nt">&quot;active&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="w">  </span><span class="nt">&quot;batch_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span><span class="nt">&quot;total_picks&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="w">  </span><span class="nt">&quot;completed_picks&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a><span class="w">  </span><span class="nt">&quot;total_orders&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="w">  </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-14T12:00:00&quot;</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>curl<span class="w"> </span>http://localhost:5000/api/picking/active-batch<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingwave-validate">POST /api/picking/wave-validate</h3>
+<p>Validate a single SO barcode before adding to a wave batch.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>so_barcode</code> (string), <code>warehouse_id</code> (integer)</p>
+<p><strong>Errors:</strong> 400 (invalid SO), 404 (not found), 409 (already in active batch)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/wave-validate<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;so_barcode&quot;: &quot;SO-001&quot;, &quot;warehouse_id&quot;: 1}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingwave-create">POST /api/picking/wave-create</h3>
+<p>Create a wave pick batch from SO IDs. Combines identical items across orders for efficient picking.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>so_ids</code> (array of integers), <code>warehouse_id</code> (integer)</p>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="p">{</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">  </span><span class="nt">&quot;batch_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">  </span><span class="nt">&quot;batch_status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;IN_PROGRESS&quot;</span><span class="p">,</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="w">  </span><span class="nt">&quot;total_orders&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="w">  </span><span class="nt">&quot;total_picks&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/wave-create<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;so_ids&quot;: [1, 2, 3], &quot;warehouse_id&quot;: 1}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingcreate-batch">POST /api/picking/create-batch</h3>
+<p>Create a pick batch from SO identifiers (numbers or barcodes).</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>so_identifiers</code> (array of strings), <code>warehouse_id</code> (integer)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/create-batch<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;so_identifiers&quot;: [&quot;SO-001&quot;, &quot;SO-002&quot;], &quot;warehouse_id&quot;: 1}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apipickingbatchbatch_id">GET /api/picking/batch/{batch_id}</h3>
+<p>Get batch details with all pick tasks.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>curl<span class="w"> </span>http://localhost:5000/api/picking/batch/1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apipickingbatchbatch_idnext">GET /api/picking/batch/{batch_id}/next</h3>
+<p>Get the next pending pick task. Returns <code>{"message": "All tasks complete"}</code> when done.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>curl<span class="w"> </span>http://localhost:5000/api/picking/batch/1/next<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingconfirm">POST /api/picking/confirm</h3>
+<p>Confirm a pick task. Validates scanned barcode matches the item.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pick_task_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>scanned_barcode</td>
+<td>string</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>quantity_picked</td>
+<td>integer</td>
+<td>yes (&gt; 0)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Errors:</strong> 400 (barcode mismatch, invalid quantity)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/confirm<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;pick_task_id&quot;: 1, &quot;scanned_barcode&quot;: &quot;100000000001&quot;, &quot;quantity_picked&quot;: 2}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingshort">POST /api/picking/short</h3>
+<p>Report a short pick.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>pick_task_id</code> (integer), <code>quantity_available</code> (integer, default 0)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/short<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;pick_task_id&quot;: 1, &quot;quantity_available&quot;: 0}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingcomplete-batch">POST /api/picking/complete-batch</h3>
+<p>Mark a batch as complete. All tasks must be picked, shorted, or skipped.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>batch_id</code> (integer)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/complete-batch<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;batch_id&quot;: 1}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipickingcancel-batch">POST /api/picking/cancel-batch</h3>
+<p>Cancel a batch. Releases allocated inventory and resets SO statuses to OPEN.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>batch_id</code> (integer)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/picking/cancel-batch<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;batch_id&quot;: 1}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="packing">Packing</h2>
+<h3 id="get-apipackingorderbarcode">GET /api/packing/order/{barcode}</h3>
+<p>Load an order for packing. Must be in PICKED status.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="p">{</span>
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a><span class="w">  </span><span class="nt">&quot;sales_order&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;so_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;so_number&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;SO-001&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PICKED&quot;</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a><span class="w">  </span><span class="nt">&quot;lines&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-40-4" name="__codelineno-40-4" href="#__codelineno-40-4"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-40-5" name="__codelineno-40-5" href="#__codelineno-40-5"></a><span class="w">      </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TST-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-40-6" name="__codelineno-40-6" href="#__codelineno-40-6"></a><span class="w">      </span><span class="nt">&quot;quantity_picked&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-40-7" name="__codelineno-40-7" href="#__codelineno-40-7"></a><span class="w">      </span><span class="nt">&quot;quantity_packed&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-40-8" name="__codelineno-40-8" href="#__codelineno-40-8"></a><span class="w">      </span><span class="nt">&quot;pack_verified&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-40-9" name="__codelineno-40-9" href="#__codelineno-40-9"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-40-10" name="__codelineno-40-10" href="#__codelineno-40-10"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-40-11" name="__codelineno-40-11" href="#__codelineno-40-11"></a><span class="w">  </span><span class="nt">&quot;calculated_weight_lbs&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-40-12" name="__codelineno-40-12" href="#__codelineno-40-12"></a><span class="w">  </span><span class="nt">&quot;total_items&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-40-13" name="__codelineno-40-13" href="#__codelineno-40-13"></a><span class="w">  </span><span class="nt">&quot;items_verified&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-40-14" name="__codelineno-40-14" href="#__codelineno-40-14"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Errors:</strong> 400 (not PICKED), 404 (not found)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>curl<span class="w"> </span>http://localhost:5000/api/packing/order/SO-001<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipackingverify">POST /api/packing/verify</h3>
+<p>Scan and verify an item during packing.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>so_id</code> (integer), <code>scanned_barcode</code> (string), <code>quantity</code> (integer, default 1)</p>
+<p><strong>Errors:</strong> 400 (over-pack), 404 (item not on order)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/packing/verify<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;so_id&quot;: 1, &quot;scanned_barcode&quot;: &quot;100000000001&quot;}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apipackingcomplete">POST /api/packing/complete</h3>
+<p>Mark an order as fully packed. All lines must be verified.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>so_id</code> (integer)</p>
+<p><strong>Errors:</strong> 400 (not all items verified)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/packing/complete<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;so_id&quot;: 1}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="shipping">Shipping</h2>
+<h3 id="get-apishippingorderbarcode">GET /api/shipping/order/{barcode}</h3>
+<p>Load an order for shipping. Respects the <code>require_packing_before_shipping</code> setting.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a>curl<span class="w"> </span>http://localhost:5000/api/shipping/order/SO-001<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apishippingfulfill">POST /api/shipping/fulfill</h3>
+<p>Record a shipment. Creates fulfillment records and updates SO to SHIPPED.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>so_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>tracking_number</td>
+<td>string</td>
+<td>yes (max 255)</td>
+</tr>
+<tr>
+<td>carrier</td>
+<td>string</td>
+<td>yes (max 100)</td>
+</tr>
+<tr>
+<td>ship_method</td>
+<td>string</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a><span class="p">{</span>
+<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a><span class="w">  </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Shipment fulfilled&quot;</span><span class="p">,</span>
+<a id="__codelineno-45-3" name="__codelineno-45-3" href="#__codelineno-45-3"></a><span class="w">  </span><span class="nt">&quot;fulfillment_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-45-4" name="__codelineno-45-4" href="#__codelineno-45-4"></a><span class="w">  </span><span class="nt">&quot;so_number&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;SO-001&quot;</span><span class="p">,</span>
+<a id="__codelineno-45-5" name="__codelineno-45-5" href="#__codelineno-45-5"></a><span class="w">  </span><span class="nt">&quot;tracking_number&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1Z999AA10123456784&quot;</span><span class="p">,</span>
+<a id="__codelineno-45-6" name="__codelineno-45-6" href="#__codelineno-45-6"></a><span class="w">  </span><span class="nt">&quot;carrier&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;UPS&quot;</span><span class="p">,</span>
+<a id="__codelineno-45-7" name="__codelineno-45-7" href="#__codelineno-45-7"></a><span class="w">  </span><span class="nt">&quot;lines_shipped&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-45-8" name="__codelineno-45-8" href="#__codelineno-45-8"></a><span class="w">  </span><span class="nt">&quot;total_quantity&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-45-9" name="__codelineno-45-9" href="#__codelineno-45-9"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-46-1" name="__codelineno-46-1" href="#__codelineno-46-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/shipping/fulfill<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-46-2" name="__codelineno-46-2" href="#__codelineno-46-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-46-3" name="__codelineno-46-3" href="#__codelineno-46-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-46-4" name="__codelineno-46-4" href="#__codelineno-46-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;so_id&quot;: 1, &quot;tracking_number&quot;: &quot;1Z999AA10123456784&quot;, &quot;carrier&quot;: &quot;UPS&quot;}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="inventory">Inventory</h2>
+<h3 id="post-apiinventorycycle-countcreate">POST /api/inventory/cycle-count/create</h3>
+<p>Create cycle counts for one or more bins. Snapshots current inventory as expected quantities.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong> <code>warehouse_id</code> (integer), <code>bin_ids</code> (array of integers)</p>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="p">{</span>
+<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a><span class="w">  </span><span class="nt">&quot;counts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-47-3" name="__codelineno-47-3" href="#__codelineno-47-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-47-4" name="__codelineno-47-4" href="#__codelineno-47-4"></a><span class="w">      </span><span class="nt">&quot;count_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-47-5" name="__codelineno-47-5" href="#__codelineno-47-5"></a><span class="w">      </span><span class="nt">&quot;bin_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-47-6" name="__codelineno-47-6" href="#__codelineno-47-6"></a><span class="w">      </span><span class="nt">&quot;bin_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;A-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-47-7" name="__codelineno-47-7" href="#__codelineno-47-7"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PENDING&quot;</span><span class="p">,</span>
+<a id="__codelineno-47-8" name="__codelineno-47-8" href="#__codelineno-47-8"></a><span class="w">      </span><span class="nt">&quot;lines&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-47-9" name="__codelineno-47-9" href="#__codelineno-47-9"></a><span class="w">      </span><span class="nt">&quot;assigned_to&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
+<a id="__codelineno-47-10" name="__codelineno-47-10" href="#__codelineno-47-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-47-11" name="__codelineno-47-11" href="#__codelineno-47-11"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-47-12" name="__codelineno-47-12" href="#__codelineno-47-12"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/inventory/cycle-count/create<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-48-3" name="__codelineno-48-3" href="#__codelineno-48-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-48-4" name="__codelineno-48-4" href="#__codelineno-48-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;warehouse_id&quot;: 1, &quot;bin_ids&quot;: [3, 4]}&#39;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apiinventorycycle-countcount_id">GET /api/inventory/cycle-count/{count_id}</h3>
+<p>Get cycle count details. Respects <code>count_show_expected</code> setting for blind counts.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-49-1" name="__codelineno-49-1" href="#__codelineno-49-1"></a>curl<span class="w"> </span>http://localhost:5000/api/inventory/cycle-count/1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-49-2" name="__codelineno-49-2" href="#__codelineno-49-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="post-apiinventorycycle-countsubmit">POST /api/inventory/cycle-count/submit</h3>
+<p>Submit cycle count results. Creates pending inventory adjustments for variances.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>count_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>lines</td>
+<td>array</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>lines[].count_line_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>lines[].counted_quantity</td>
+<td>integer</td>
+<td>yes (&gt;= 0)</td>
+</tr>
+<tr>
+<td>lines[].unexpected</td>
+<td>boolean</td>
+<td>no</td>
+</tr>
+<tr>
+<td>lines[].item_id</td>
+<td>integer</td>
+<td>yes if unexpected</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-50-1" name="__codelineno-50-1" href="#__codelineno-50-1"></a><span class="p">{</span>
+<a id="__codelineno-50-2" name="__codelineno-50-2" href="#__codelineno-50-2"></a><span class="w">  </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;VARIANCE&quot;</span><span class="p">,</span>
+<a id="__codelineno-50-3" name="__codelineno-50-3" href="#__codelineno-50-3"></a><span class="w">  </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-50-4" name="__codelineno-50-4" href="#__codelineno-50-4"></a><span class="w">    </span><span class="nt">&quot;total_lines&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-50-5" name="__codelineno-50-5" href="#__codelineno-50-5"></a><span class="w">    </span><span class="nt">&quot;lines_with_variance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-50-6" name="__codelineno-50-6" href="#__codelineno-50-6"></a><span class="w">    </span><span class="nt">&quot;adjustments&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-50-7" name="__codelineno-50-7" href="#__codelineno-50-7"></a><span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;TST-001&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;expected&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;counted&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">45</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;variance&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">-5</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;adjustment_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-50-8" name="__codelineno-50-8" href="#__codelineno-50-8"></a><span class="w">    </span><span class="p">]</span>
+<a id="__codelineno-50-9" name="__codelineno-50-9" href="#__codelineno-50-9"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-50-10" name="__codelineno-50-10" href="#__codelineno-50-10"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-51-1" name="__codelineno-51-1" href="#__codelineno-51-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/inventory/cycle-count/submit<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-51-2" name="__codelineno-51-2" href="#__codelineno-51-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-51-3" name="__codelineno-51-3" href="#__codelineno-51-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-51-4" name="__codelineno-51-4" href="#__codelineno-51-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;count_id&quot;: 1, &quot;lines&quot;: [{&quot;count_line_id&quot;: 1, &quot;counted_quantity&quot;: 45}]}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="transfers">Transfers</h2>
+<h3 id="post-apitransfersmove">POST /api/transfers/move</h3>
+<p>Move items between bins within the same warehouse.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Request body:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>item_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>from_bin_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>to_bin_id</td>
+<td>integer</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>quantity</td>
+<td>integer</td>
+<td>yes (&gt; 0)</td>
+</tr>
+<tr>
+<td>reason</td>
+<td>string</td>
+<td>no</td>
+</tr>
+<tr>
+<td>lot_number</td>
+<td>string</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Errors:</strong> 400 (cross-warehouse, same bin, insufficient qty)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-52-1" name="__codelineno-52-1" href="#__codelineno-52-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/transfers/move<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-52-2" name="__codelineno-52-2" href="#__codelineno-52-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-52-3" name="__codelineno-52-3" href="#__codelineno-52-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-52-4" name="__codelineno-52-4" href="#__codelineno-52-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;item_id&quot;: 1, &quot;from_bin_id&quot;: 3, &quot;to_bin_id&quot;: 4, &quot;quantity&quot;: 10}&#39;</span>
+</code></pre></div>
+<hr />
+<h2 id="warehouses">Warehouses</h2>
+<h3 id="get-apiwarehouseslist">GET /api/warehouses/list</h3>
+<p>List all active warehouses. Used by the mobile app for post-login warehouse selection.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-53-1" name="__codelineno-53-1" href="#__codelineno-53-1"></a><span class="p">{</span>
+<a id="__codelineno-53-2" name="__codelineno-53-2" href="#__codelineno-53-2"></a><span class="w">  </span><span class="nt">&quot;warehouses&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-53-3" name="__codelineno-53-3" href="#__codelineno-53-3"></a><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Apartment Lab&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;APT-LAB&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-53-4" name="__codelineno-53-4" href="#__codelineno-53-4"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-53-5" name="__codelineno-53-5" href="#__codelineno-53-5"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-54-1" name="__codelineno-54-1" href="#__codelineno-54-1"></a>curl<span class="w"> </span>http://localhost:5000/api/warehouses/list<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-54-2" name="__codelineno-54-2" href="#__codelineno-54-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="lookups">Lookups</h2>
+<h3 id="get-apilookupitembarcode">GET /api/lookup/item/{barcode}</h3>
+<p>Look up an item by UPC, SKU, or barcode alias. Returns inventory locations scoped to user's warehouses.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-55-1" name="__codelineno-55-1" href="#__codelineno-55-1"></a>curl<span class="w"> </span>http://localhost:5000/api/lookup/item/100000000001<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-55-2" name="__codelineno-55-2" href="#__codelineno-55-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apilookupbinbarcode">GET /api/lookup/bin/{barcode}</h3>
+<p>Look up a bin by barcode or bin code with contents.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-56-1" name="__codelineno-56-1" href="#__codelineno-56-1"></a>curl<span class="w"> </span>http://localhost:5000/api/lookup/bin/A-01-01<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-56-2" name="__codelineno-56-2" href="#__codelineno-56-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apilookupsobarcode">GET /api/lookup/so/{barcode}</h3>
+<p>Look up a sales order by barcode or SO number with line-by-line fulfillment progress.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-57-1" name="__codelineno-57-1" href="#__codelineno-57-1"></a>curl<span class="w"> </span>http://localhost:5000/api/lookup/so/SO-001<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-57-2" name="__codelineno-57-2" href="#__codelineno-57-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apilookupitemsearchqquery">GET /api/lookup/item/search?q={query}</h3>
+<p>Search items by SKU, name, or UPC. Case-insensitive. Returns up to 50 results.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-58-1" name="__codelineno-58-1" href="#__codelineno-58-1"></a>curl<span class="w"> </span><span class="s2">&quot;http://localhost:5000/api/lookup/item/search?q=fly&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-58-2" name="__codelineno-58-2" href="#__codelineno-58-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h3 id="get-apilookupbinsearchqquery">GET /api/lookup/bin/search?q={query}</h3>
+<p>Search bins by code or barcode. Scoped to user's warehouses. Returns up to 50 results.</p>
+<ul>
+<li><strong>Auth required:</strong> Yes</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-59-1" name="__codelineno-59-1" href="#__codelineno-59-1"></a>curl<span class="w"> </span><span class="s2">&quot;http://localhost:5000/api/lookup/bin/search?q=A-01&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-59-2" name="__codelineno-59-2" href="#__codelineno-59-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="admin-endpoints">Admin Endpoints</h2>
+<p>All admin endpoints require authentication and the <strong>ADMIN</strong> role. Mutating admin endpoints (POST / PUT / PATCH / DELETE) called via the HttpOnly-cookie path must include the <code>X-CSRF-Token</code> header. Bearer-token callers are unaffected.</p>
+<hr />
+<h3 id="admin-warehouses">Admin - Warehouses</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/warehouses</code></td>
+<td>List warehouses (paginated)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/warehouses/{id}</code></td>
+<td>Get warehouse with zones</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/warehouses</code></td>
+<td>Create warehouse (<code>warehouse_code</code>, <code>warehouse_name</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/warehouses/{id}</code></td>
+<td>Update warehouse</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/admin/warehouses/{id}</code></td>
+<td>Delete warehouse (blocked if has inventory/bins/zones)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-zones">Admin - Zones</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/zones</code></td>
+<td>List zones (filter: <code>warehouse_id</code>, paginated)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/zones</code></td>
+<td>Create zone (<code>warehouse_id</code>, <code>zone_code</code>, <code>zone_name</code>, <code>zone_type</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/zones/{id}</code></td>
+<td>Update zone</td>
+</tr>
+</tbody>
+</table>
+<p>Zone types: <code>STORAGE</code>, <code>RECEIVING</code>, <code>STAGING</code>, <code>SHIPPING</code>, <code>QUALITY</code>, <code>DAMAGE</code></p>
+<hr />
+<h3 id="admin-bins">Admin - Bins</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/bins</code></td>
+<td>List bins (filter: <code>warehouse_id</code>, <code>zone_id</code>, <code>bin_type</code>, paginated)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/bins/{id}</code></td>
+<td>Get bin with inventory contents</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/bins</code></td>
+<td>Create bin (<code>zone_id</code>, <code>warehouse_id</code>, <code>bin_code</code>, <code>bin_barcode</code>, <code>bin_type</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/bins/{id}</code></td>
+<td>Update bin</td>
+</tr>
+</tbody>
+</table>
+<p>Bin types: <code>Pickable</code>, <code>PickableStaging</code>, <code>Staging</code></p>
+<hr />
+<h3 id="admin-items">Admin - Items</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/items</code></td>
+<td>List items (filter: <code>category</code>, <code>active</code>, <code>q</code> search, paginated)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/items/{id}</code></td>
+<td>Get item with inventory and preferred bins</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/items</code></td>
+<td>Create item (<code>sku</code>, <code>item_name</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/items/{id}</code></td>
+<td>Update item</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/items/{id}/archive</code></td>
+<td>Toggle archive/restore</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/admin/items/{id}</code></td>
+<td>Hard delete (blocked if inventory/order history)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-inventory">Admin - Inventory</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/inventory</code></td>
+<td>Inventory overview (filter: <code>warehouse_id</code>, <code>item_id</code>, paginated)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-preferred-bins">Admin - Preferred Bins</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/preferred-bins</code></td>
+<td>List preferred bins (filter: <code>item_id</code>, <code>bin_id</code>, <code>q</code> search)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/preferred-bins</code></td>
+<td>Create/update preferred bin (<code>item_id</code>, <code>bin_id</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/preferred-bins/{id}</code></td>
+<td>Update priority</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/admin/preferred-bins/{id}</code></td>
+<td>Delete preferred bin</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-purchase-orders">Admin - Purchase Orders</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/purchase-orders</code></td>
+<td>List POs (filter: <code>status</code>, <code>warehouse_id</code>, paginated)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/purchase-orders/{id}</code></td>
+<td>Get PO with lines</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/purchase-orders</code></td>
+<td>Create PO with lines (<code>po_number</code>, <code>warehouse_id</code>, <code>lines</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/purchase-orders/{id}</code></td>
+<td>Update PO (OPEN only)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/purchase-orders/{id}/close</code></td>
+<td>Close PO</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-sales-orders">Admin - Sales Orders</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/sales-orders</code></td>
+<td>List SOs (filter: <code>status</code>, <code>warehouse_id</code>, paginated)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/sales-orders/{id}</code></td>
+<td>Get SO with lines</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/sales-orders</code></td>
+<td>Create SO with lines (<code>so_number</code>, <code>warehouse_id</code>, <code>lines</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/sales-orders/{id}</code></td>
+<td>Update SO (OPEN only)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/sales-orders/{id}/cancel</code></td>
+<td>Cancel SO (releases allocated inventory)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-users">Admin - Users</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/users</code></td>
+<td>List users (paginated)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/users</code></td>
+<td>Create user (<code>username</code>, <code>password</code>, <code>full_name</code>, <code>role</code> required)</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/users/{id}</code></td>
+<td>Update user (safeguards prevent self-demotion, last-admin removal)</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/api/admin/users/{id}</code></td>
+<td>Delete user (cannot delete self or last admin)</td>
+</tr>
+</tbody>
+</table>
+<p>Roles: <code>ADMIN</code>, <code>USER</code></p>
+<p>Allowed functions: <code>pick</code>, <code>pack</code>, <code>ship</code>, <code>receive</code>, <code>putaway</code>, <code>count</code>, <code>transfer</code></p>
+<hr />
+<h3 id="admin-import">Admin - Import</h3>
+<p><strong>POST /api/admin/import/{entity_type}</strong></p>
+<p>Bulk import records. Max 5000 records per request.</p>
+<p>Entity types: <code>items</code>, <code>bins</code>, <code>purchase-orders</code>, <code>sales-orders</code></p>
+<p><strong>Request body:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-60-1" name="__codelineno-60-1" href="#__codelineno-60-1"></a><span class="p">{</span>
+<a id="__codelineno-60-2" name="__codelineno-60-2" href="#__codelineno-60-2"></a><span class="w">  </span><span class="nt">&quot;records&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-60-3" name="__codelineno-60-3" href="#__codelineno-60-3"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;NEW-001&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;item_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;New Item&quot;</span><span class="p">},</span>
+<a id="__codelineno-60-4" name="__codelineno-60-4" href="#__codelineno-60-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;NEW-002&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;item_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Another Item&quot;</span><span class="p">}</span>
+<a id="__codelineno-60-5" name="__codelineno-60-5" href="#__codelineno-60-5"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-60-6" name="__codelineno-60-6" href="#__codelineno-60-6"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Response (200):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-61-1" name="__codelineno-61-1" href="#__codelineno-61-1"></a><span class="p">{</span>
+<a id="__codelineno-61-2" name="__codelineno-61-2" href="#__codelineno-61-2"></a><span class="w">  </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Import complete&quot;</span><span class="p">,</span>
+<a id="__codelineno-61-3" name="__codelineno-61-3" href="#__codelineno-61-3"></a><span class="w">  </span><span class="nt">&quot;total&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-61-4" name="__codelineno-61-4" href="#__codelineno-61-4"></a><span class="w">  </span><span class="nt">&quot;imported&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-61-5" name="__codelineno-61-5" href="#__codelineno-61-5"></a><span class="w">  </span><span class="nt">&quot;skipped&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-61-6" name="__codelineno-61-6" href="#__codelineno-61-6"></a><span class="w">  </span><span class="nt">&quot;errors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-61-7" name="__codelineno-61-7" href="#__codelineno-61-7"></a><span class="p">}</span>
+</code></pre></div>
+<hr />
+<h3 id="admin-dashboard">Admin - Dashboard</h3>
+<p><strong>GET /api/admin/dashboard</strong></p>
+<p>Dashboard stats. Optional <code>warehouse_id</code> filter.</p>
+<p>Returns: <code>open_pos</code>, <code>pending_receipts</code>, <code>items_awaiting_putaway</code>, <code>open_sos</code>, <code>orders_ready_to_pick</code>, <code>orders_in_picking</code>, <code>ready_to_ship</code>, <code>ready_to_pack</code>, <code>orders_packed</code>, <code>total_skus</code>, <code>total_bins</code>, <code>low_stock_items</code>, <code>short_picks_7d</code>, <code>pending_adjustments</code>, <code>require_packing</code>, <code>recent_activity</code>.</p>
+<hr />
+<h3 id="admin-settings">Admin - Settings</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/settings</code></td>
+<td>Get all settings</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/settings/{key}</code></td>
+<td>Get single setting</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/admin/settings</code></td>
+<td>Update settings (<code>settings</code> object with key-value pairs)</td>
+</tr>
+</tbody>
+</table>
+<p>Available settings: <code>require_packing_before_shipping</code>, <code>count_show_expected</code>, <code>allow_over_receiving</code>, <code>default_receiving_bin</code>, <code>require_count_approval_separation</code></p>
+<hr />
+<h3 id="admin-adjustments">Admin - Adjustments</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/adjustments/pending</code></td>
+<td>List pending cycle count adjustments</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/adjustments/review</code></td>
+<td>Approve/reject adjustments (<code>decisions</code> array)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/adjustments/direct</code></td>
+<td>Direct inventory add/remove (auto-approved)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/adjustments/list</code></td>
+<td>Adjustment history (filter: <code>warehouse_id</code>, paginated)</td>
+</tr>
+</tbody>
+</table>
+<p>Self-approval blocked when <code>require_count_approval_separation</code> is enabled.</p>
+<hr />
+<h3 id="admin-cycle-counts">Admin - Cycle Counts</h3>
+<p><strong>GET /api/admin/cycle-counts</strong> - List cycle counts with line details (last 200).</p>
+<hr />
+<h3 id="admin-inter-warehouse-transfers">Admin - Inter-Warehouse Transfers</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST</td>
+<td><code>/api/admin/inter-warehouse-transfer</code></td>
+<td>Move inventory between warehouses</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/admin/inter-warehouse-transfers</code></td>
+<td>Recent transfers (optional <code>limit</code>, default 50)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="admin-short-picks">Admin - Short Picks</h3>
+<p><strong>GET /api/admin/short-picks</strong> - Short pick report. Filter by <code>days</code> (default 30), <code>warehouse_id</code>.</p>
+<hr />
+<h3 id="admin-audit-log">Admin - Audit Log</h3>
+<p><strong>GET /api/admin/audit-log</strong> - Paginated audit log. Filter by <code>action_type</code>, <code>user_id</code>, <code>start_date</code>, <code>end_date</code>.</p>
+<hr />
+<h3 id="admin-connectors-v130">Admin - Connectors (v1.3.0+)</h3>
+<p>All connector endpoints require <code>ADMIN</code> role.</p>
+<p><strong>GET /api/admin/connectors</strong> - List every registered connector with its config-schema fields and declared capabilities. The response includes only metadata; stored credentials are not returned here.</p>
+<p><strong>GET /api/admin/connectors/{connector_name}/config-schema</strong> - Return the config-schema + capabilities for one connector.</p>
+<p><strong>POST /api/admin/connectors/{connector_name}/credentials</strong> - Save encrypted credentials for <code>warehouse_id</code>. Body: <code>{"warehouse_id": &lt;int&gt;, "credentials": {&lt;key&gt;: &lt;string&gt;, ...}}</code>. Values are encrypted with the Fernet master key (<code>SENTRY_ENCRYPTION_KEY</code>) before insert.</p>
+<p><strong>GET /api/admin/connectors/{connector_name}/credentials?warehouse_id={id}</strong> - List stored credential keys for a connector + warehouse. Values are masked as <code>****</code>; plaintext is never returned through this endpoint.</p>
+<p><strong>DELETE /api/admin/connectors/{connector_name}/credentials</strong> - Remove all credentials for one connector + warehouse. Body: <code>{"warehouse_id": &lt;int&gt;}</code>.</p>
+<p><strong>POST /api/admin/connectors/{connector_name}/test</strong> - Invoke the connector's <code>test_connection()</code> with the stored credentials. Returns <code>{"connected": &lt;bool&gt;, "message": &lt;string&gt;, ...}</code>. The message is length-capped at 500 characters and stripped of non-printable bytes. Returns <code>400</code> with <code>error: "blocked_destination"</code> if the configured <code>base_url</code> resolves to a private / loopback / internal address (SSRF guard, see <a href="https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md">SECURITY.md</a>).</p>
+<p><strong>GET /api/admin/connectors/{connector_name}/sync-status?warehouse_id={id}</strong> - Return the sync-state row for every sync type (<code>orders</code>, <code>items</code>, <code>inventory</code>, <code>fulfillment</code>). Each row carries <code>sync_status</code> (<code>idle</code> / <code>running</code> / <code>error</code>), <code>last_synced_at</code>, <code>last_success_at</code>, <code>last_error_at</code>, <code>last_error_message</code>, and <code>consecutive_errors</code>.</p>
+<p><strong>POST /api/admin/connectors/{connector_name}/sync/{sync_type}</strong> - Queue a manual Celery task for one sync type. <code>sync_type</code> is one of <code>orders</code>, <code>items</code>, <code>inventory</code>, <code>fulfillment</code>. Returns <code>202 Accepted</code> with the Celery task ID. Returns <code>409 Conflict</code> if a sync of the same type is already running (state machine enforcement).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

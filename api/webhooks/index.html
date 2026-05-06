@@ -1,0 +1,1134 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/api/webhooks/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Webhooks (v1.6.1) - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#webhooks-v161" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Webhooks (v1.6.1)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-request-looks-like" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a request looks like
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Envelope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Headers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signature-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signature verification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dedupe-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedupe contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replay-protection-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replay-protection window
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#latency-characteristics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency characteristics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retry-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retry semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dual-accept-rotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dual-accept rotation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dual-accept rotation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#handling-the-secret-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Handling the secret bytes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subscription-pause-dlq-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subscription pause + DLQ behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ceiling-changes-do-not-auto-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ceiling changes do not auto-resume
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#filter-changes-are-non-retroactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filter changes are non-retroactive
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#idempotency-expectations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Idempotency expectations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-contract-from-your-perspective" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error contract from your perspective
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#response-body-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response body size
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#timeout-budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timeout budget
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#replay-timestamps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replay timestamps
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#useful-operator-side-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Useful operator-side links
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="webhooks-v161">Webhooks (v1.6.1)</h1>
+<p>This is the consumer integration guide for the Outbound Push surface (introduced in v1.6.0; hardened in v1.6.1). If you are integrating an external system that wants to receive Sentry's <code>integration_events</code> as HTTPS POSTs instead of polling <code>/api/v1/events</code>, this document is the contract.</p>
+<p>The wire envelope is byte-for-byte identical to a single-event response from the polling endpoint, so a consumer that already polls Sentry can keep its event-handling code and add a webhook entry point that calls the same handler.</p>
+<h2 id="overview">Overview</h2>
+<p>A Sentry admin registers your endpoint as a webhook subscription via the admin panel. The dispatcher daemon then POSTs each visible event to the registered URL in commit order, signs every request with HMAC-SHA256 over a shared secret, retries failures on an exponential schedule (eight attempts, ~15 hours total), and dead-letters on the eighth failure. Your endpoint's job is to verify the signature, dedupe on <code>event_id</code>, and return a 2xx within the 10-second timeout.</p>
+<h2 id="what-a-request-looks-like">What a request looks like</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>POST /your/webhook/endpoint HTTP/1.1
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Host: your-host.example.com
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>Content-Type: application/json
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>X-Sentry-Signature: sha256=8c4e1b...
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>X-Sentry-Signature-Generation: 1
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>X-Sentry-Delivery-Id: 48213906:1744042927
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>X-Sentry-Event-Type: ship.confirmed
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>X-Sentry-Timestamp: 1744042927
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>Content-Length: 412
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>{&quot;event_id&quot;:48213906,&quot;event_type&quot;:&quot;ship.confirmed&quot;,&quot;event_version&quot;:1,&quot;event_timestamp&quot;:&quot;2026-05-02T14:22:07.413Z&quot;,&quot;aggregate_type&quot;:&quot;sales_order&quot;,&quot;aggregate_id&quot;:&quot;2a8c34e2-...&quot;,&quot;warehouse_id&quot;:3,&quot;source_txn_id&quot;:&quot;6f9e7c6a-...&quot;,&quot;data&quot;:{...}}
+</code></pre></div>
+<h2 id="envelope">Envelope</h2>
+<p>The request body is a single-event JSON object identical to a polling response payload. Field-by-field:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>event_id</code></td>
+<td>int64</td>
+<td>Server-side <code>BIGSERIAL</code> from <code>integration_events</code>. Monotonic in commit order via the v1.5 <code>visible_at</code> trigger. <strong>This is the only safe dedupe key.</strong> See <a href="#dedupe-contract">Dedupe contract</a>.</td>
+</tr>
+<tr>
+<td><code>event_type</code></td>
+<td>string</td>
+<td>One of the catalog values returned by <code>GET /api/v1/events/types</code> (<code>ship.confirmed</code>, <code>pick.confirmed</code>, <code>receipt.completed</code>, <code>adjustment.applied</code>, <code>cycle_count.adjusted</code>, <code>transfer.completed</code>, <code>pack.confirmed</code>).</td>
+</tr>
+<tr>
+<td><code>event_version</code></td>
+<td>int</td>
+<td>Schema version. The full JSON Schema is at <code>api/schemas_v1/events/&lt;event_type&gt;/&lt;version&gt;.json</code> in the Sentry repo and served at <code>GET /api/v1/events/schema/&lt;type&gt;/&lt;version&gt;</code> for runtime fetches.</td>
+</tr>
+<tr>
+<td><code>event_timestamp</code></td>
+<td>RFC 3339 string</td>
+<td>When the warehouse operation that produced the event happened. Distinct from <code>X-Sentry-Timestamp</code>, which reflects dispatch (or replay) time.</td>
+</tr>
+<tr>
+<td><code>aggregate_type</code></td>
+<td>string</td>
+<td>The owning entity type (<code>sales_order</code>, <code>purchase_order</code>, <code>inventory</code>, <code>cycle_count</code>, <code>transfer</code>).</td>
+</tr>
+<tr>
+<td><code>aggregate_id</code></td>
+<td>UUID string</td>
+<td>The owning entity's <code>external_id</code>. Stable across the entity's lifetime; a consumer keying by aggregate gets per-aggregate FIFO across events.</td>
+</tr>
+<tr>
+<td><code>warehouse_id</code></td>
+<td>int</td>
+<td>The warehouse the event happened in. Filterable at subscription-creation time.</td>
+</tr>
+<tr>
+<td><code>source_txn_id</code></td>
+<td>UUID string</td>
+<td>Sentry-internal idempotency key. Exposed on the wire for distributed-tracing correlation. <strong>Not</strong> safe as a dedupe key because authenticated callers can steer it via <code>X-Request-ID</code>. See <a href="#dedupe-contract">Dedupe contract</a>.</td>
+</tr>
+<tr>
+<td><code>data</code></td>
+<td>object</td>
+<td>Event-specific payload. The shape is locked by the schema for <code>(event_type, event_version)</code>; consult the schema files.</td>
+</tr>
+</tbody>
+</table>
+<p>The body is canonicalized before signing as <code>json.dumps(envelope, separators=(',', ':'), sort_keys=True).encode('utf-8')</code>. The dispatcher serializes once and signs / sends the same buffer; a runtime assertion at the HTTP-client boundary fails loudly if any code path introduces a transformation between sign and send. Your verifier should HMAC the raw request bytes, not a re-serialized form.</p>
+<h2 id="headers">Headers</h2>
+<p>All headers are case-insensitive per RFC 7230; examples use the canonical case the dispatcher emits.</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>X-Sentry-Signature</code></td>
+<td><code>sha256=&lt;hex digest&gt;</code>. The HMAC-SHA256 of <code>f"{X-Sentry-Timestamp}.{body}"</code> keyed on the shared secret matching <code>X-Sentry-Signature-Generation</code>.</td>
+</tr>
+<tr>
+<td><code>X-Sentry-Signature-Generation</code></td>
+<td><code>1</code> or <code>2</code>. During the 24-hour rotation window, both generations are valid; outside the window, only generation 1 verifies. See <a href="#dual-accept-rotation">Dual-accept rotation</a>.</td>
+</tr>
+<tr>
+<td><code>X-Sentry-Delivery-Id</code></td>
+<td><code>&lt;event_id&gt;:&lt;X-Sentry-Timestamp&gt;</code>. Per-attempt identifier; replays of the same event get a fresh delivery_id. Useful for log correlation, never for dedupe.</td>
+</tr>
+<tr>
+<td><code>X-Sentry-Event-Type</code></td>
+<td>The <code>event_type</code> field from the body, hoisted to the headers so a router can dispatch without parsing JSON.</td>
+</tr>
+<tr>
+<td><code>X-Sentry-Timestamp</code></td>
+<td>Unix epoch seconds at dispatch time. Used by the signature input AND by the <a href="#replay-protection-window">replay-protection window</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>The signing input is the literal string <code>"&lt;timestamp&gt;.&lt;body&gt;"</code> where <code>&lt;body&gt;</code> is the exact bytes the dispatcher sent (no leading or trailing whitespace, no transformation). A trailing newline introduced by your framework's request parser will break verification.</p>
+<h2 id="signature-verification">Signature verification</h2>
+<p>Reference Python verifier:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hmac</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">REPLAY_WINDOW_S</span> <span class="o">=</span> <span class="mi">300</span>  <span class="c1"># 5 minutes</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">verify_webhook</span><span class="p">(</span><span class="n">headers</span><span class="p">,</span> <span class="n">raw_body</span><span class="p">,</span> <span class="n">secret_for_generation</span><span class="p">):</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns True if the request is from Sentry, False otherwise.</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="sd">    headers: dict-like with the X-Sentry-* headers</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="sd">    raw_body: bytes; pass the exact bytes that arrived on the wire</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="sd">    secret_for_generation: callable taking int (1 or 2) and returning bytes</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="n">sig_header</span> <span class="o">=</span> <span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;X-Sentry-Signature&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">sig_header</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;sha256=&quot;</span><span class="p">):</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="n">received_hex</span> <span class="o">=</span> <span class="n">sig_header</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;sha256=&quot;</span><span class="p">):]</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="n">generation</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;X-Sentry-Signature-Generation&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>        <span class="n">timestamp</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;X-Sentry-Timestamp&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    <span class="k">if</span> <span class="n">generation</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>    <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span> <span class="o">-</span> <span class="n">timestamp</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">REPLAY_WINDOW_S</span><span class="p">:</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>    <span class="n">secret</span> <span class="o">=</span> <span class="n">secret_for_generation</span><span class="p">(</span><span class="n">generation</span><span class="p">)</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    <span class="k">if</span> <span class="n">secret</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>        <span class="c1"># Generation rotated past its 24h dual-accept window.</span>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>        <span class="k">return</span> <span class="kc">False</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>    <span class="n">signing_input</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">timestamp</span><span class="si">}</span><span class="s2">.&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">raw_body</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    <span class="n">expected</span> <span class="o">=</span> <span class="n">hmac</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">secret</span><span class="p">,</span> <span class="n">signing_input</span><span class="p">,</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>    <span class="k">return</span> <span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">received_hex</span><span class="p">)</span>
+</code></pre></div>
+<p>Reference Node verifier:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kd">const</span><span class="w"> </span><span class="nx">crypto</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">require</span><span class="p">(</span><span class="s1">&#39;crypto&#39;</span><span class="p">);</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kd">const</span><span class="w"> </span><span class="nx">REPLAY_WINDOW_S</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">300</span><span class="p">;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kd">function</span><span class="w"> </span><span class="nx">verifyWebhook</span><span class="p">(</span><span class="nx">headers</span><span class="p">,</span><span class="w"> </span><span class="nx">rawBody</span><span class="p">,</span><span class="w"> </span><span class="nx">secretForGeneration</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">sigHeader</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">headers</span><span class="p">[</span><span class="s1">&#39;x-sentry-signature&#39;</span><span class="p">]</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">sigHeader</span><span class="p">.</span><span class="nx">startsWith</span><span class="p">(</span><span class="s1">&#39;sha256=&#39;</span><span class="p">))</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">receivedHex</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">sigHeader</span><span class="p">.</span><span class="nx">slice</span><span class="p">(</span><span class="s1">&#39;sha256=&#39;</span><span class="p">.</span><span class="nx">length</span><span class="p">);</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">generation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">parseInt</span><span class="p">(</span><span class="nx">headers</span><span class="p">[</span><span class="s1">&#39;x-sentry-signature-generation&#39;</span><span class="p">],</span><span class="w"> </span><span class="mf">10</span><span class="p">);</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">timestamp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">parseInt</span><span class="p">(</span><span class="nx">headers</span><span class="p">[</span><span class="s1">&#39;x-sentry-timestamp&#39;</span><span class="p">],</span><span class="w"> </span><span class="mf">10</span><span class="p">);</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="p">[</span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="mf">2</span><span class="p">].</span><span class="nx">includes</span><span class="p">(</span><span class="nx">generation</span><span class="p">))</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">Math</span><span class="p">.</span><span class="nx">abs</span><span class="p">(</span><span class="nb">Math</span><span class="p">.</span><span class="nx">floor</span><span class="p">(</span><span class="nb">Date</span><span class="p">.</span><span class="nx">now</span><span class="p">()</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1000</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="nx">timestamp</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="nx">REPLAY_WINDOW_S</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">secret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">secretForGeneration</span><span class="p">(</span><span class="nx">generation</span><span class="p">);</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">secret</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">signingInput</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">Buffer</span><span class="p">.</span><span class="nx">concat</span><span class="p">([</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="nx">Buffer</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">timestamp</span><span class="si">}</span><span class="sb">.`</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;utf-8&#39;</span><span class="p">),</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">    </span><span class="nx">rawBody</span><span class="p">,</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">  </span><span class="p">]);</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">expected</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">crypto</span><span class="p">.</span><span class="nx">createHmac</span><span class="p">(</span><span class="s1">&#39;sha256&#39;</span><span class="p">,</span><span class="w"> </span><span class="nx">secret</span><span class="p">).</span><span class="nx">update</span><span class="p">(</span><span class="nx">signingInput</span><span class="p">).</span><span class="nx">digest</span><span class="p">(</span><span class="s1">&#39;hex&#39;</span><span class="p">);</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">Buffer</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="nx">expected</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;hex&#39;</span><span class="p">);</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">Buffer</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="nx">receivedHex</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;hex&#39;</span><span class="p">);</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">a</span><span class="p">.</span><span class="nx">length</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">length</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="nx">crypto</span><span class="p">.</span><span class="nx">timingSafeEqual</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">);</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="p">}</span>
+</code></pre></div>
+<p>Both verifiers use constant-time comparison; do not substitute <code>==</code> on the digests, or a network attacker observing your response timing can extract the signature byte-by-byte.</p>
+<p>The <code>raw_body</code> argument MUST be the exact bytes the dispatcher sent. If your web framework parses JSON before your handler runs, capture the raw bytes from the framework's request object (Flask: <code>request.get_data(cache=True)</code>; Express: install the <code>body-parser</code> raw mode for the webhook route; FastAPI: <code>await request.body()</code>). A re-serialized body will not match the signed bytes.</p>
+<h2 id="dedupe-contract">Dedupe contract</h2>
+<p><strong>Dedupe on <code>event_id</code>. Never on <code>source_txn_id</code>. Never on <code>delivery_id</code>.</strong></p>
+<p><code>event_id</code> is a server-generated <code>BIGSERIAL</code> made monotonic in commit order by the <code>visible_at</code> trigger. Two deliveries of the same event always carry the same <code>event_id</code>; two different events always carry different <code>event_id</code>s.</p>
+<p><code>source_txn_id</code> is set from the <code>X-Request-ID</code> header on the inbound HTTP request that produced the event. It is a Sentry-internal idempotency key for collapsing retries of the <em>same</em> request, exposed on the wire for distributed-tracing correlation. An authenticated caller inside the Sentry deployment can set it to an arbitrary UUID. A consumer that dedupes on <code>source_txn_id</code> alone trusts a value an attacker can steer; one legitimate caller with a deterministic <code>X-Request-ID</code> pattern is enough to poison downstream dedupe.</p>
+<p><code>delivery_id</code> (the integer in <code>X-Sentry-Delivery-Id</code>) changes on every retry and on every replay, so deduping on it would process the same event multiple times.</p>
+<p>The correct shape: track the largest <code>event_id</code> your endpoint has successfully applied (in your own database, transactionally with whatever side effect the event triggers); on every incoming webhook, treat any <code>event_id</code> less than or equal to that watermark as already-processed and ignore.</p>
+<p>This contract matches the v1.5 polling contract documented at <code>docs/events/README.md</code>.</p>
+<h2 id="replay-protection-window">Replay-protection window</h2>
+<p>The verifier rejects any request whose <code>X-Sentry-Timestamp</code> is more than 5 minutes from your endpoint's wall clock. The window is bidirectional (past or future). The dispatcher emits the timestamp from <code>time.time()</code> at dispatch (or replay) time on the dispatcher host; your verifier compares against your endpoint's <code>time.time()</code>.</p>
+<p>If your clock skews more than ~30 seconds, signed requests will be rejected as replays even though they are legitimate. Run NTP. The 5-minute budget gives every well-tuned host plenty of headroom.</p>
+<p>The replay-protection window also bounds the value of a stolen webhook: an attacker who captures one of your incoming requests cannot replay it more than 5 minutes later, even with a valid signature.</p>
+<h2 id="latency-characteristics">Latency characteristics</h2>
+<p>Sentry's outbound dispatcher enforces a <strong>2-second visibility floor</strong> between when a warehouse operation commits and when its event becomes eligible for dispatch. The floor is inherited from the v1.5 cursor semantics that the polling endpoint also depends on; it absorbs the deferred-trigger / commit-order skew between the moment <code>visible_at</code> is set on an <code>integration_events</code> row and the moment a separate session can read that row in commit order. Without the floor, a poll or dispatch could observe an event whose <code>event_id</code> is greater than a not-yet-visible neighbor and advance the cursor past a hole; the floor closes that race at the cost of a fixed delay.</p>
+<p>What this means for the consumer:</p>
+<ul>
+<li>The earliest possible delivery time for an event is <code>visible_at + 2 seconds</code>. Plan around this when setting your own SLA. A consumer expecting "instant" delivery will be disappointed; the contract is "near real-time, with a 2-second floor."</li>
+<li>The dispatcher's NOTIFY-driven wake path is sub-second: the dispatcher knows about the event within ~10ms of commit. The 2-second wait is in the dispatch query, not in the wake path.</li>
+<li>The end-to-end p95 budget for <code>visible_at -&gt; POST sent</code> is 2.5 seconds under healthy load. The 500ms above the floor covers signing, the cursor query round-trip, the per-subscription rate-limit token acquisition, and the HTTP request-build phase; HTTP response time is on top of that.</li>
+<li>Under a burst (multiple events committed within a short window for the same subscription), per-aggregate FIFO and head-of-line blocking serialize the dispatches. The N-th event in a burst sees <code>2 seconds + (N-1) * (your endpoint's response time)</code> before its POST goes out. Tune your endpoint's response time accordingly; sustained sub-200ms responses keep the queue draining at well above the 50 events/sec sustained budget.</li>
+<li>The <code>X-Sentry-Timestamp</code> header reflects dispatch time, not the warehouse-operation time. The envelope's <code>event_timestamp</code> field carries the original time-of-record.</li>
+</ul>
+<h2 id="retry-semantics">Retry semantics</h2>
+<p>The dispatcher retries any non-2xx response (and any network-level failure) on a fixed schedule:</p>
+<table>
+<thead>
+<tr>
+<th>Attempt</th>
+<th>Delay from previous attempt</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>(initial dispatch)</td>
+</tr>
+<tr>
+<td>2</td>
+<td>1 second</td>
+</tr>
+<tr>
+<td>3</td>
+<td>4 seconds</td>
+</tr>
+<tr>
+<td>4</td>
+<td>15 seconds</td>
+</tr>
+<tr>
+<td>5</td>
+<td>60 seconds</td>
+</tr>
+<tr>
+<td>6</td>
+<td>5 minutes</td>
+</tr>
+<tr>
+<td>7</td>
+<td>30 minutes</td>
+</tr>
+<tr>
+<td>8</td>
+<td>2 hours</td>
+</tr>
+<tr>
+<td>(DLQ)</td>
+<td>12 hours after attempt 8's failure</td>
+</tr>
+</tbody>
+</table>
+<p>Cumulative window: ~15 hours nominal. v1.6.1 adds +/-10% jitter applied per attempt to decorrelate retries across multiple subscriptions that share a consumer URL: without jitter, N subscriptions whose first delivery to the same URL fails at the same minute retry at the same minute on every slot, presenting the consumer with a synchronized retry storm indistinguishable from a coordinated DoS. The cumulative window stays inside ~17h worst case under the jitter band, so consumer-side incident-response budgeting is unchanged.</p>
+<p>Per-aggregate FIFO is intentional. Head-of-line blocking applies: a stuck event blocks newer events on the same subscription until the head terminates (succeeds, hits the DLQ, or auto-pauses at the ceiling). This is by design; per-aggregate ordering matters more than throughput when the consumer is mid-failure.</p>
+<p>The dispatch-time SSRF guard verifies your endpoint resolves to a public IP on every dispatch. If your endpoint moves to an internal address mid-flight (DNS rebinding), the next attempt will be rejected with <code>error_kind=ssrf_rejected</code>.</p>
+<h2 id="dual-accept-rotation">Dual-accept rotation</h2>
+<p>The shared secret has two generation slots: <code>1</code> (primary, what the dispatcher signs with) and <code>2</code> (previous, valid for 24 hours after rotation). On rotation:</p>
+<ol>
+<li>The current generation 1 is demoted to generation 2 with <code>expires_at = NOW() + 24h</code>.</li>
+<li>A new plaintext is issued at generation 1; the dispatcher uses it on every subsequent dispatch.</li>
+<li>The plaintext is shown to the admin exactly once; Sentry stores only the encrypted form.</li>
+</ol>
+<p>During the 24-hour window, the dispatcher signs every request with generation 1 but the consumer must accept either. After 24 hours, generation 2 is no longer valid (the dispatcher's gen=2 row is reaped by the cleanup beat).</p>
+<p>The verifier handles this by passing the <code>X-Sentry-Signature-Generation</code> header into the secret lookup. Your secret store should hold both generations during rotation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># pseudocode</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">SECRETS</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="mi">1</span><span class="p">:</span> <span class="n">load_secret_gen_1_from_secret_store</span><span class="p">(),</span>  <span class="c1"># primary</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="mi">2</span><span class="p">:</span> <span class="n">load_secret_gen_2_from_secret_store</span><span class="p">(),</span>  <span class="c1"># may be None outside the window</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">secret_for_generation</span><span class="p">(</span><span class="n">g</span><span class="p">):</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="k">return</span> <span class="n">SECRETS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>
+</code></pre></div>
+<p>When the admin rotates, the new generation 1 plaintext appears in the rotation modal. Update your secret store before the 24-hour window closes:</p>
+<ol>
+<li>Move the value at slot 1 to slot 2 in your store.</li>
+<li>Write the new plaintext to slot 1.</li>
+</ol>
+<p>A second rotation within the 24h window overwrites generation 2 and shortens the cutover; the operator runbook documents waiting the full window before re-rotating except in compromise scenarios.</p>
+<h3 id="handling-the-secret-bytes">Handling the secret bytes</h3>
+<p>The shared secret bytes are sensitive. Treat them as you would any HMAC key: keep them in a secret manager (HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, or your platform's equivalent) and load them per-process. Do NOT:</p>
+<ul>
+<li>Commit the plaintext to source control or write it to a <code>.env</code> file that ends up in a backup tarball.</li>
+<li>Print or log the plaintext - structured loggers that capture local variables on exceptions will dump it.</li>
+<li>Let it sit in process state that might be pickled (Python <code>pickle</code>, <code>joblib</code>, <code>multiprocessing</code>'s default IPC), swapped to disk, captured in an APM error report (<code>Sentry.io</code>'s SDK with <code>capture_locals=True</code>, Datadog/New Relic equivalents), or read out of a debugger snapshot.</li>
+<li>Cache it in a long-lived dict that gets serialized for warm-restart hydration. Reload from the secret manager on each process boot.</li>
+</ul>
+<p>A leaked secret means an attacker who reaches your webhook endpoint can forge signed deliveries indistinguishable from Sentry's until you rotate. Rotate via the Sentry admin panel and update your secret store within the 24-hour dual-accept window. Sentry's server side mirrors this contract: the dispatcher's <code>SecretMaterial</code> wrapper refuses <code>repr</code> / <code>str</code> / <code>pickle</code> so the plaintext cannot escape via the analogous server-side leak surfaces.</p>
+<h2 id="subscription-pause-dlq-behavior">Subscription pause + DLQ behavior</h2>
+<p>Two ceilings auto-pause the subscription:</p>
+<ul>
+<li><strong>Pending ceiling</strong> (default 10,000). When pending + in_flight delivery rows for the subscription reach the ceiling, dispatch stops and the subscription flips to <code>paused</code> with <code>pause_reason='pending_ceiling'</code>. Auto-pause prevents the dispatcher from spinning forever on a stuck consumer.</li>
+<li><strong>DLQ ceiling</strong> (default 1,000). When the count of dead-lettered rows reaches the ceiling, dispatch stops with <code>pause_reason='dlq_ceiling'</code>. Bounded operator triage volume.</li>
+</ul>
+<p>A paused subscription does not retry, does not advance the cursor, and does not publish new deliveries. The admin resumes via the admin panel after triaging the DLQ; resume publishes a <code>resumed</code> event on the cross-worker pubsub channel and the dispatcher picks up where it stopped.</p>
+<p>Your endpoint can detect a long pause by watching for a gap in <code>event_id</code>s after a sustained outage. Sentry will not silently drop events: the dispatcher's cursor stays at the last terminal delivery until you triage and resume.</p>
+<h2 id="ceiling-changes-do-not-auto-resume">Ceiling changes do not auto-resume</h2>
+<p>When the admin lifts <code>pending_ceiling</code> or <code>dlq_ceiling</code> on a subscription that is currently paused with the matching <code>pause_reason</code>, the subscription does NOT auto-resume. The dispatcher publishes a <code>ceiling_changed</code> event on the cross-worker channel and the audit_log records the diff, but the subscription stays paused until the admin issues a follow-up PATCH with <code>status=active</code>. The PATCH response carries a <code>hint</code> field naming the pending follow-up step when the gap is detected. Resume is always an explicit operator decision so a single misclick cannot un-pause a subscription that is still triaging.</p>
+<h2 id="filter-changes-are-non-retroactive">Filter changes are non-retroactive</h2>
+<p>When the admin edits the subscription's <code>subscription_filter</code> (event_types, warehouse_ids, aggregate_external_id_allowlist), the new filter applies to events the dispatcher selects from now on; the cursor never rewinds. Events that were committed before the PATCH and that match the new filter but did not match the old are not re-delivered. To backfill historical events under the new filter, the operator uses the admin panel's replay-batch endpoint with the matching filter shape.</p>
+<h2 id="idempotency-expectations">Idempotency expectations</h2>
+<p>Sentry's contract is at-least-once delivery. Your endpoint MUST be idempotent on <code>event_id</code>. The retry schedule alone produces duplicates: if your endpoint accepts the request, applies the side effect, and then crashes before returning a 2xx, the dispatcher will retry. A 12-hour gap between attempt 8 and the DLQ also means a replay-batch hours later can produce a "delayed duplicate" your endpoint must absorb.</p>
+<h2 id="error-contract-from-your-perspective">Error contract from your perspective</h2>
+<p>If your endpoint returns a 4xx or 5xx, or fails the network call, the dispatcher classifies the failure into one of seven <code>error_kind</code> values: <code>timeout</code>, <code>connection</code>, <code>tls</code>, <code>4xx</code>, <code>5xx</code>, <code>ssrf_rejected</code>, <code>unknown</code>. Sentry stores ONLY the categorical kind plus the HTTP status code; your response body is never persisted. This is intentional: a misconfigured consumer endpoint can echo upstream credentials (database connection strings, API tokens) into a 5xx page, and Sentry refuses to act as a persistence channel for the consumer's secrets.</p>
+<p>If the Sentry admin needs to debug a delivery failure, they will see the categorical short message and triage hint from the server-owned error catalog. Specifics about why your endpoint failed live in your endpoint's logs.</p>
+<h2 id="response-body-size">Response body size</h2>
+<p>The dispatcher caps the response body it will read at 64 KB and closes the connection past that point. A consumer that advertises <code>Content-Length</code> above the cap is reclassified as a 5xx-class failure without the bytes ever being drained. Ship a small JSON ACK or a bare 200; do NOT return a stack trace, an HTML error page, or any large payload. The dispatcher does not inspect the body anyway -- only the status code drives delivery state.</p>
+<h2 id="timeout-budget">Timeout budget</h2>
+<p>The dispatcher enforces three timeouts on every delivery:</p>
+<ul>
+<li><code>DISPATCHER_HTTP_CONNECT_TIMEOUT_MS</code> (default 5 s) bounds DNS + TCP + TLS handshake.</li>
+<li><code>DISPATCHER_HTTP_READ_TIMEOUT_MS</code> (default 8 s) bounds each individual socket read.</li>
+<li><code>DISPATCHER_HTTP_TIMEOUT_MS</code> (default 10 s) is the WALL-CLOCK cap on the entire send. A consumer that drip-feeds bytes within the per-op read budget cannot keep the connection alive past this; the dispatcher's watchdog cancels the request and classifies the delivery as <code>timeout</code>.</li>
+</ul>
+<p>Your endpoint must return a complete 2xx response inside the wall-clock cap. Streaming a slow chunked body is not supported; ship the ACK and close.</p>
+<h2 id="replay-timestamps">Replay timestamps</h2>
+<p>When the admin replays a delivery, the new request carries:</p>
+<ul>
+<li>A fresh <code>X-Sentry-Timestamp</code> reflecting the replay time. The signature is recomputed against this fresh timestamp.</li>
+<li>The original <code>event_timestamp</code> from the envelope body, unchanged. The warehouse-operation time of record stays the same.</li>
+</ul>
+<p>If your dedupe is keyed correctly on <code>event_id</code>, a replay is a no-op for already-applied events. If you also surface <code>event_timestamp</code> in your UI, replays will show the original time, not the replay time.</p>
+<h2 id="useful-operator-side-links">Useful operator-side links</h2>
+<ul>
+<li>Subscription registration: admin panel <code>/webhooks</code> page.</li>
+<li>Per-subscription DLQ viewer: <code>/webhooks</code> page, "DLQ" action per row.</li>
+<li>Cross-subscription error log: <code>/webhooks</code> page, "View errors" button.</li>
+<li>Per-subscription stats: <code>/webhooks</code> page, "Stats" action per row.</li>
+<li>Schema files: <code>api/schemas_v1/events/&lt;event_type&gt;/&lt;version&gt;.json</code>.</li>
+<li>Polling endpoint contract (the same envelope shape served as a list): <code>docs/api-reference.md</code>.</li>
+<li>Consumer contract on dedupe: <code>docs/events/README.md</code>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
