@@ -7,6 +7,17 @@ service with an HTTP API. Sentry does not ship first-party connectors
 for those systems yet (planned for v2.0.0); v1.3 delivers the
 scaffolding you write one against.
 
+> **v1.7.0 alternative.** Source systems can also push canonical-shaped
+> resource updates directly to Sentry via the [inbound API](api-reference.md)
+> at `/api/v1/inbound/*` without writing a connector. The inbound API is
+> the right shape when the source system can emit per-resource events on
+> its own schedule (push) and the canonical-side translation can be
+> expressed in a YAML mapping document. The connector framework remains
+> the right shape when Sentry has to pull on a schedule, when the
+> integration needs background tasks, or when polling state has to live
+> in Sentry. Both surfaces share the X-WMS-Token auth model. See
+> [Deployment -- Inbound (v1.7.0)](deployment.md) for the operator setup.
+
 ## What the framework provides
 
 - **A standard interface (`BaseConnector`)** every connector implements.

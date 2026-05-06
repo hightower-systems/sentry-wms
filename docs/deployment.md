@@ -143,6 +143,25 @@ SENTRY_TOKEN_PEPPER=$(python -c "import secrets; print(secrets.token_hex(32))")
 # dispatcher is enabled (default). Generate with:
 SENTRY_PUBSUB_HMAC_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
+# Inbound staging-row forensic retention (v1.7.0 R6). Default 90 days.
+# The retention beat task NULLs source_payload past this many days
+# rather than DELETing rows so cross_system_mappings + canonical FKs
+# stay intact. Hard floor 7 days enforced at boot (V-201 shape):
+# typo'd or zero values refuse to start the api.
+SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS=90
+
+# Inbound per-request body cap (v1.7.0 #273). Default 256 KB; valid
+# range [16, 4096]. Boot guard refuses out-of-range or unparseable
+# values rather than silently clamping (pre-#273 a typo like 42096
+# silently degraded to 4096 with no signal).
+SENTRY_INBOUND_MAX_BODY_KB=256
+
+# Inbound mapping-document directory (v1.7.0 #279). Default
+# /db/mappings (absolute, matches the docker-compose ./db:/db volume
+# mount). The mapping_loader reads <source_system>.yaml files from
+# this directory at boot. Override only when running outside docker.
+SENTRY_INBOUND_MAPPINGS_DIR=/db/mappings
+
 # Redis broker password (Celery)
 REDIS_PASSWORD=$(python -c "import secrets; print(secrets.token_hex(32))")
 
@@ -383,11 +402,51 @@ The hop count must match the number of trusted proxies in the chain exactly. Ove
 
 ---
 
+## Inbound (v1.7.0)
+
+The v1.7.0 release adds a Pipe B inbound API. External systems POST canonical-shaped resource updates to `/api/v1/inbound/{sales_orders,items,customers,vendors,purchase_orders}` instead of (or alongside) running a `connector` against Sentry. Per-source mapping documents translate source-system payloads into Sentry's canonical model. This section covers the operator setup; see [`api/services/mapping_loader.py`](https://github.com/hightower-systems/sentry-wms/blob/main/api/services/mapping_loader.py), the [inbound OpenAPI](api/inbound-openapi.yaml), and the v1.7.0 release notes for the API contract.
+
+### Configuring an inbound source_system
+
+For every source system you intend to ingest from, four pieces have to exist before the api will accept inbound POSTs:
+
+1. **Allowlist row** in `inbound_source_systems_allowlist`. Boot fails loud when an allowlisted source has no mapping doc OR a doc has no allowlist row.
+
+   ```sql
+   INSERT INTO inbound_source_systems_allowlist
+               (source_system, kind)
+        VALUES ('your-source-system', 'connector');
+                          -- 'connector' | 'internal_tool' | 'manual_import'
+   ```
+
+2. **Mapping document YAML** at `db/mappings/<source_system>.yaml`. Filename stem must equal the `source_system` field inside the doc. Start from the annotated template at `db/mappings/example-template.yaml.template` (the `.template` suffix excludes the template itself from the boot loader). The template covers all five resources with every required canonical column marked `required: true` plus comments naming the schema constraint, every supported `type:` (string / integer / decimal / boolean / uuid / iso_timestamp / enum), and `cross_system_lookup` examples on `sales_orders.customer_id` and `purchase_orders.vendor_id`.
+
+3. **WMS token** issued via the admin panel's API tokens page with:
+    - `source_system` = your-source-system
+    - `inbound_resources` containing the resources the token can write to (subset of: sales_orders, items, customers, vendors, purchase_orders)
+    - The `mapping_override` capability checkbox is reserved for v1.7.1; the v1.7.0 handler rejects requests with `mapping_overrides` regardless of the flag.
+
+4. **`docker compose restart api`** so `boot_load()` picks up the new mapping doc. There is no hot-reload. Each restart writes a fresh `MAPPING_DOCUMENT_LOAD` audit_log row carrying the file's sha256 so investigators can correlate which mapping doc was active when a given inbound POST was processed.
+
+### Boot validators
+
+Three boot guards refuse to start the api on misconfiguration:
+
+- **Canonical-column shape (#267)**: every mapping doc field's `canonical:` name must correspond to a real column on the canonical table. A typo or stale field name fails boot loud with the file path, resource block, and offending field. No more 500-on-first-POST surprises.
+- **Eval-shape derived expressions (#272)**: static AST walker rejects derived expressions whose AST contains forbidden names (`__import__`, `eval`, `exec`, `open`, `compile`, etc.), attribute walks not rooted at `source`, or call targets outside the function whitelist (`int`, `float`, `str`, `len`, `abs`, `min`, `max`, `round`). A malicious expression in a `when_present`-gated branch that smoke testing never triggers cannot sit dormant.
+- **`SENTRY_INBOUND_MAX_BODY_KB` range (#273)**: refuses to boot on parse failure or values outside `[16, 4096]`. Pre-fix the helper silently clamped to the boundaries and silently fell back to 256 on parse failure; a typo (e.g. `42096` vs `4096`) silently degraded with no signal at deploy time.
+
+### Load testing
+
+The k6 script at `tools/loadtest/inbound_v1_7.js` drives all five inbound endpoints with realistic payloads under concurrent load. See [`docs/loadtest.md`](loadtest.md) for the operator runbook (k6 install, ramp profiles, expected baselines, threshold-trip triage). Operator-run, not CI-default.
+
+---
+
 ## Mobile App
 
 ### Sideloading the APK
 
-Download the APK from the [GitHub Releases](https://github.com/hightower-systems/sentry-wms/releases) page. **`sentry-wms-v1.5.1.apk`** is the current recommended baseline; v1.6.0 and v1.6.1 ship no mobile code changes (the dispatcher daemon, admin Webhooks page, and the v1.6.1 webhook security patch are server-side surfaces) and the v1.5.1 APK carries the dependency-tree security overrides from #158 and #61. Operators still on v1.4.1 or v1.4.3 should install v1.5.1 to pick up those fixes.
+Download the APK from the [GitHub Releases](https://github.com/hightower-systems/sentry-wms/releases) page. **`sentry-wms-v1.5.1.apk`** is the current recommended baseline; v1.6.0, v1.6.1, and v1.7.0 ship no mobile code changes (the dispatcher daemon, admin Webhooks page, the v1.6.1 webhook security patch, and the v1.7.0 inbound API are server-side surfaces) and the v1.5.1 APK carries the dependency-tree security overrides from #158 and #61. Operators still on v1.4.1 or v1.4.3 should install v1.5.1 to pick up those fixes.
 
 Install via ADB:
 

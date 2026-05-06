@@ -6,6 +6,237 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.7.0 -- Inbound (Pipe B)
+
+*2026-05-06.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.7.0).
+
+External systems can now POST canonical-shaped resource updates to
+Sentry through five new endpoints under `/api/v1/inbound/`:
+`sales_orders`, `items`, `customers`, `vendors`, and
+`purchase_orders`. Each request carries `external_id` +
+`external_version` + `source_payload`; per-source mapping documents
+(YAML at `db/mappings/<source_system>.yaml`) translate the source
+payload into Sentry's canonical model with strict-typed Pydantic
+validation, JSONPath resolution, simpleeval-sandboxed derived
+expressions, and `cross_system_lookup` for canonical UUID resolution
+against prior ingestions. `X-WMS-Token` authentication gains
+`source_system` + `inbound_resources` scope dimensions on top of
+the v1.5 endpoint scope. `inbound_source_systems_allowlist` gates
+which source systems can POST; misconfigured allowlist or missing
+mapping doc refuses boot loud.
+
+Twelve new migrations (037-048). One new env var
+(`SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS`); two existing env
+vars gain new shape (`SENTRY_INBOUND_MAX_BODY_KB` boot-validated,
+`SENTRY_INBOUND_MAPPINGS_DIR` default changed to absolute
+`/db/mappings`). Three boot validators reject misconfiguration loud
+at startup: canonical-column shape (#267), eval-shape derived
+expressions (#272), and `SENTRY_INBOUND_MAX_BODY_KB` range (#273).
+audit_log strict-by-log_id chain integrity hardened against
+concurrent insert via sentinel-lock + nextval-in-trigger (#271).
+Direct-DB revoke of `wms_tokens.revoked_at` propagates auth
+invalidation across workers via `pg_notify` trigger + LISTEN
+subscriber + lock-step status flip (#274, #278).
+
+Mobile is unchanged. Cookie-auth admin surface is unchanged outside
+the new Inbound activity page (read-only) and the token-create
+modal extensions for `source_system` + `inbound_resources` scope.
+Outbound webhook dispatcher (v1.6) and polling endpoints (v1.5) are
+unchanged. License changed from MIT to Apache 2.0 with this release;
+pre-v1.7.0 tagged releases remain MIT-licensed.
+
+Inbound API surface:
+
+- **Five POST endpoints under `/api/v1/inbound/`** (#253-#257). One
+  per canonical resource. Shared 10-step handler covering
+  external_id + external_version validation, advisory-lock on
+  `(source_system, external_id)` to serialize concurrent upserts on
+  the same key, stale-version 409, mapping-doc apply, canonical
+  INSERT-or-UPDATE, cross_system_mappings registration,
+  source_payload staging, and audit_log on terminal state. Every
+  response carries `X-Sentry-Canonical-Model: DRAFT-v1`. 422 on body
+  validation failure, 413 on `Content-Length > SENTRY_INBOUND_MAX_BODY_KB`,
+  409 on stale_version / cross_system_lookup_miss / lock_held.
+- **`GET /api/v1/inbound/mapping-schema`** (#251). Unauthenticated
+  documentation aid emitting JSON Schema (Draft 2020-12) for offline
+  validation of `db/mappings/<source_system>.yaml`. Cacheable via
+  `Cache-Control: public, max-age=300`.
+- **Cross-direction + per-resource scope on `@require_wms_token`**
+  (#252). Inbound POST routes use the new `inbound_resources` array
+  (Decision-S; separate from `event_types`). Cross-direction tokens
+  refused with 401 `cross_direction_scope_violation`; in-scope token
+  but resource not in the array returns 401
+  `inbound_resource_scope_violation`. Empty array denies.
+
+Mapping document format:
+
+- **Strict-typed YAML loader** (#248-#250). Pydantic with
+  `extra='forbid'`; JSONPath via `jsonpath-ng`; derived expressions
+  via `simpleeval` with a function whitelist (`int`, `float`, `str`,
+  `len`, `abs`, `min`, `max`, `round`); attribute walks and
+  `__import__` / `eval` / `exec` rejected. Cross-system lookup
+  misses on required-true fields raise 409 carrying the missing
+  `(source_system, source_type, source_id)` tuple. simpleeval
+  pinned at 1.0.5.
+- **`boot_load`** writes one `MAPPING_DOCUMENT_LOAD` audit_log row
+  per loaded doc carrying `source_system`, `path`, `sha256`,
+  `mapping_version`, `version_compare`, `resource_count`. Boot
+  refuses to start when an allowlisted source has no doc OR a doc
+  has no allowlist row.
+- **Operator-facing template** (#280) at
+  `db/mappings/example-template.yaml.template`. Annotated YAML
+  covering all five resources with every required canonical column
+  marked `required: true` plus comments naming the schema
+  constraint, every supported `type:` (string / integer / decimal /
+  boolean / uuid / iso_timestamp / enum), all three
+  `version_compare` strategies, `cross_system_lookup` examples on
+  `sales_orders.customer_id` and `purchase_orders.vendor_id`, and a
+  footer block listing common pitfalls. The `.template` suffix
+  excludes it from `boot_load` so it is documentation-only.
+
+Admin panel:
+
+- **Token-create modal extensions** (#258). Issuance surface gains
+  `source_system` (dropdown sourced from
+  `inbound_source_systems_allowlist`) and `inbound_resources`
+  (multi-select). Existing `event_types`, `endpoints`, and
+  `warehouse_ids` stay independent so a token can be outbound-only,
+  inbound-only, or both. The `mapping_override` capability
+  checkbox is present but the v1.7.0 handler rejects requests
+  carrying `mapping_overrides` regardless (#269).
+- **Inbound activity page** (#259). Read-only admin page listing
+  recent inbound rows joined to issuing token + source_system +
+  canonical resource. Filters by source_system, resource, status
+  (`accepted` / `stale_version` / `lookup_miss`), and time range.
+  Per-row drilldown shows the staged `source_payload` JSON, the
+  resolved `canonical_payload`, and the audit_log entry from the
+  upsert.
+
+Retention + cleanup:
+
+- **`source_payload` retention beat task** (#260). Celery beat task
+  NULLs out the staged `source_payload` JSONB column past
+  `SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS` (default 90 days).
+  `inbound_cleanup_runs` log table records every run for operator
+  audit. **7-day hard floor** at boot (V-201 shape) refuses to start
+  the api on a typo'd or zero retention. Migration 045 makes
+  `source_payload` nullable so the retention task NULLs rather than
+  DELETEs (preserves cross_system_mappings + canonical FKs).
+
+Pre-merge gate fixes:
+
+- **mapping_overrides hard reject** (#269). Reserved for v1.7.1
+  pending the source-path-remap-vs-canonical-value-replacement
+  semantics decision (#270).
+- **audit_log chain serialization** (#271). Pre-#271 the V-025
+  chain trigger read `prev_hash` without serialization; concurrent
+  inserts forked the strict-by-log_id chain. Final form (migration
+  047): drop the `BIGSERIAL` DEFAULT, add `audit_log_chain_head`
+  sentinel, replace the trigger to acquire `LOCK TABLE EXCLUSIVE
+  MODE` and assign `NEW.log_id := nextval(...)` inside the critical
+  section. Two earlier iterations (`pg_advisory_xact_lock`, then
+  `SELECT FOR UPDATE` on a sentinel) did not hold under READ
+  COMMITTED + BIGSERIAL DEFAULT timing. See
+  [`docs/audit-log.md`](audit-log.md) for the invariants.
+- **Boot eval-shape rejection of mapping docs** (#272). Static AST
+  walker rejects derived expressions whose AST contains forbidden
+  names, attribute walks rooted off `source`, or call targets
+  outside the function whitelist. Single-sourced helper called from
+  both apply-time and boot-time so a malicious expression in a
+  never-reached branch cannot sit dormant in a loaded doc.
+- **`SENTRY_INBOUND_MAX_BODY_KB` boot validator** (#273). Pre-fix
+  silently clamped to `[16, 4096]` and silently fell back to 256 on
+  parse failure. Boot guard now refuses out-of-range or
+  unparseable values; runtime helper trusts the boot guard rather
+  than re-clamping.
+- **Direct-DB revoke propagates auth invalidation** (#274, #278).
+  AFTER UPDATE OF `revoked_at` trigger fires
+  `pg_notify('wms_token_revocations', token_id::text)` and (#278)
+  flips `status` to `'revoked'` in lock-step. New daemon thread in
+  `services.token_cache` LISTENs and calls
+  `_invalidate_token_id_local` on receipt. `auth_middleware.py` adds
+  a defense-in-depth second 401 gate rejecting `revoked_at IS NOT NULL`
+  regardless of status. Independent of Redis; sub-second cross-worker
+  invalidation for direct-DB revokes.
+- **Allowlist TRUNCATE forensic trigger reachability** (#275).
+  Documented as TRUNCATE-CASCADE-only (plain TRUNCATE raises
+  `ForeignKeyViolation` before the trigger fires; CASCADE is the
+  sole forensic-write path).
+- **`SENTRY_INBOUND_MAPPINGS_DIR` default** (#279). Changed from
+  relative `db/mappings` (resolved from CWD `/app` to
+  `/app/db/mappings`, which silently ignored docs at the documented
+  repo-root path) to absolute `/db/mappings` matching the
+  `./db:/db` Compose volume mount. Operator-facing template moved
+  to `db/mappings/example-template.yaml.template`.
+- **`TEST_DATABASE_URL` hard-fail in conftest** (#265). Pytest now
+  refuses to run unless `TEST_DATABASE_URL` is set and distinct from
+  `DATABASE_URL`; the conftest TRUNCATEs 39 tables at session start
+  and v1.7 added operator-managed state where that wipe was a real
+  footgun. CI workflow already provisions and forwards both vars.
+
+Hygiene + tooling:
+
+- **CI lint suite for v1.7.0 inbound** (#262). New
+  `test_inbound_ci_lints.py` covers no eval/exec/`__import__` in
+  `mapping_loader.py`, every loaded mapping doc declares a valid
+  `version_compare`, mappings dir reachable from CI's path
+  resolution. Plus OpenAPI parity test against
+  `services.inbound_openapi.build_inbound_openapi()`.
+- **`tools/scripts/regenerate-inbound-openapi.py --check` mode**
+  (#276). Default writes the YAML in place; `--check` exits non-zero
+  on drift with a unified diff naming the regen command. Wired into
+  `.github/workflows/test.yml` as a fast-fail step.
+- **k6 load test for the inbound burst** (#277). Operator runbook
+  at [`docs/loadtest.md`](loadtest.md); script at
+  `tools/loadtest/inbound_v1_7.js`. Operator-run, not CI-default.
+
+Migrations:
+
+- **037-038** -- `wms_tokens` inbound columns + `inbound_source_systems_allowlist`
+  + `cross_system_mappings` with audit and DELETE / TRUNCATE forensic
+  triggers.
+- **039-043** -- One staging table per inbound resource. New
+  canonical `customers` and `vendors` tables (UUID PK,
+  denormalized) for resources without a v1.5 canonical home.
+- **044-045** -- `inbound_cleanup_runs` log table; `source_payload`
+  made nullable so the retention beat task NULLs rather than
+  DELETEs.
+- **046** -- `sales_orders.billing_address` + `shipping_address`
+  columns so the gate-test mapping resolves cleanly.
+- **047** -- audit_log chain serialization fix.
+- **048** -- `wms_tokens` AFTER UPDATE OF `revoked_at` trigger
+  (`pg_notify` + lock-step `status` flip).
+
+All twelve are small DDL operations against new or existing tables.
+Operators applying v1.7.0 to a v1.6.x deployment apply 037-048 in
+numeric order before bringing the new compose stack up.
+
+Breaking changes:
+
+- **`TEST_DATABASE_URL` required for `pytest`** (#265).
+- **`SENTRY_INBOUND_MAPPINGS_DIR` default** changed to absolute
+  `/db/mappings` (#279).
+- **`SENTRY_INBOUND_MAX_BODY_KB` boot-validated** (#273) -- typo'd
+  values fail boot rather than silently clamping.
+
+Reserved for v1.7.1: `mapping_overrides` capability (#269; see #270).
+
+Known limitations:
+
+- `sales_orders.billing_address` + `shipping_address` are DB-only
+  in v1.7.0 (#268). Rollout to CSV exports, admin panel, and
+  outbound webhook envelopes lands in a follow-up.
+- No mapping-doc hot-reload; edits require api restart. Each
+  restart writes a `MAPPING_DOCUMENT_LOAD` audit row carrying the
+  file's sha256 so investigators can correlate.
+
+License: changed from MIT to Apache 2.0 with this release.
+Pre-v1.7.0 tagged releases remain MIT-licensed; v1.7.0 and later
+are Apache 2.0. See [`LICENSE`](https://github.com/hightower-systems/sentry-wms/blob/main/LICENSE)
+and [`NOTICE`](https://github.com/hightower-systems/sentry-wms/blob/main/NOTICE).
+
+---
+
 ## v1.6.1 -- Webhook Security Patch
 
 *2026-05-03.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.6.1).
