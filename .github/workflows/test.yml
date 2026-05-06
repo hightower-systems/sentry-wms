@@ -157,6 +157,15 @@ jobs:
           fi
           echo "OK: no verify=False in api/services/webhook_dispatcher/"
 
+      - name: v1.7.0 inbound OpenAPI drift check (#276)
+        # Fails fast when docs/api/inbound-openapi.yaml has drifted
+        # from services.inbound_openapi.build_inbound_openapi(). The
+        # parity pytest covers the same drift in-suite, but this step
+        # surfaces it before the full test database boots so a stale
+        # spec doesn't burn three minutes of runner time.
+        run: |
+          PYTHONPATH=api python tools/scripts/regenerate-inbound-openapi.py --check
+
       - name: Validate v1.5.0 event schemas
         # #111: importing the registry forces Draft 2020-12 validation
         # of every api/schemas_v1/events/*/*.json file and asserts

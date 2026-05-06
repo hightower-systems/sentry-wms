@@ -55,7 +55,8 @@ class TestCommittedInboundOpenAPIMatchesLive:
         assert live == on_disk, (
             "docs/api/inbound-openapi.yaml is out of sync with the live "
             "build_inbound_openapi() output. Regenerate via: "
-            "tools/scripts/regenerate-inbound-openapi.py"
+            "PYTHONPATH=api python tools/scripts/regenerate-inbound-openapi.py "
+            "(or run with --check from CI / pre-commit)."
         )
 
 
