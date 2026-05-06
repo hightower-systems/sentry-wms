@@ -234,13 +234,21 @@ def create_app():
             )
 
     # v1.7.0 Pipe B: load every mapping document under
-    # SENTRY_INBOUND_MAPPINGS_DIR (default db/mappings) at boot. Cross-checks
+    # SENTRY_INBOUND_MAPPINGS_DIR (default /db/mappings) at boot. Cross-checks
     # against inbound_source_systems_allowlist; an allowlisted source_system
     # without a doc, or a doc without an allowlist row, refuses boot. One
     # MAPPING_DOCUMENT_LOAD audit_log row per loaded doc establishes "which
     # mapping was active when this inbound was processed" forensic chain.
+    #
+    # The default is absolute (/db/mappings, matching the docker-compose
+    # ./db:/db volume mount) rather than relative (db/mappings) so the
+    # path resolves to the repo-root db/mappings/ directory regardless of
+    # the api container's working directory. Pre-#279 the relative default
+    # leaked the api/-rooted CWD into the path; operators following the
+    # repo-root db/mappings/.gitkeep breadcrumb had their docs silently
+    # ignored.
     from services.mapping_loader import boot_load as _mapping_boot_load
-    mappings_dir = os.getenv("SENTRY_INBOUND_MAPPINGS_DIR", "db/mappings")
+    mappings_dir = os.getenv("SENTRY_INBOUND_MAPPINGS_DIR", "/db/mappings")
     if not os.path.isdir(mappings_dir):
         # Fresh checkouts may not have the dir; create empty rather than
         # die so an operator running with no inbound source_systems can

@@ -11,14 +11,11 @@
 #
 # Where to put the renamed copy:
 #
-#   api/db/mappings/<source_system>.yaml
+#   db/mappings/<source_system>.yaml
 #
-# (The mapping-loader resolves SENTRY_INBOUND_MAPPINGS_DIR -- default
-# `db/mappings` -- relative to the api container's working directory.
-# In the default docker-compose layout that's /app/db/mappings, which
-# bind-mounts to ./api/db/mappings/ on the host. See issue #279 for
-# the documentation drift between this path and the repo-root
-# `db/mappings/` directory.)
+# The mapping-loader resolves SENTRY_INBOUND_MAPPINGS_DIR -- default
+# `/db/mappings`, matching the docker-compose `./db:/db` volume mount
+# -- to this directory at the repo root.
 #
 # Other required setup before the api will accept inbound POSTs from
 # this source_system:

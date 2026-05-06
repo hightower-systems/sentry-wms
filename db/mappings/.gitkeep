@@ -1,4 +1,12 @@
-# Placeholder so the mappings/ directory exists in fresh checkouts.
-# Real <source_system>.yaml files land here as connectors register.
+# This is the directory the running api container reads mapping
+# documents from at boot. SENTRY_INBOUND_MAPPINGS_DIR (default
+# /db/mappings, matching the docker-compose ./db:/db volume mount)
+# resolves here.
+#
+# Operators writing their first mapping doc: start with
+# `example-template.yaml.template` in this directory. Copy to
+# `<source_system>.yaml`, edit, drop in an inbound_source_systems_allowlist
+# row, restart api.
+#
 # See db/migrations/037_wms_tokens_inbound_columns.sql for the
-# inbound_source_systems_allowlist row that gates each source_system.
+# inbound_source_systems_allowlist DDL.
