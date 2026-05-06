@@ -41,6 +41,7 @@ def insert_token(
     plaintext="live-plaintext",
     status="active",
     expires_at=None,
+    revoked_at=None,
     warehouse_ids=None,
     event_types=None,
     endpoints=None,
@@ -94,6 +95,14 @@ def insert_token(
         if expires_at is not None:
             cols.append("expires_at")
             vals.append(expires_at)
+        # v1.7.0 #278: tests asserting the auth-side revoked_at gate need
+        # to seed a row directly with revoked_at populated. INSERT does
+        # not fire the AFTER UPDATE OF revoked_at trigger, so this path
+        # produces the "active status + revoked_at populated" shape that
+        # would otherwise require bypassing the trigger.
+        if revoked_at is not None:
+            cols.append("revoked_at")
+            vals.append(revoked_at)
         placeholders = ", ".join(["%s"] * len(cols))
         cur.execute(
             f"INSERT INTO wms_tokens ({', '.join(cols)}) VALUES ({placeholders}) "

@@ -29,6 +29,27 @@ BEGIN
     IF NEW.revoked_at IS NOT NULL
        AND (OLD.revoked_at IS NULL OR OLD.revoked_at <> NEW.revoked_at)
     THEN
+        -- v1.7.0 #278: keep the `status` column in lock-step with
+        -- revoked_at when a direct-DB write sets revoked_at without
+        -- updating status. Pre-fix, gate 17 caught the gap: an
+        -- operator running `UPDATE wms_tokens SET revoked_at = NOW()`
+        -- against a row whose status was 'active' produced a token
+        -- that the auth middleware (which gated only on
+        -- status='active') still authenticated, even after the
+        -- pg_notify trigger evicted the cache. The auth check is
+        -- tightened separately (auth_middleware.py); this trigger
+        -- closes the schema half so the on-disk row tells a
+        -- consistent story to investigators.
+        --
+        -- Idempotent: only fires the secondary UPDATE when status
+        -- is not already 'revoked'. The trigger declares AFTER
+        -- UPDATE OF revoked_at so the inner UPDATE on `status`
+        -- alone does not re-enter this function (column-list filter).
+        IF NEW.status IS DISTINCT FROM 'revoked' THEN
+            UPDATE wms_tokens
+               SET status = 'revoked'
+             WHERE token_id = NEW.token_id;
+        END IF;
         PERFORM pg_notify(
             'wms_token_revocations',
             NEW.token_id::text

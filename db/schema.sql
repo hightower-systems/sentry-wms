@@ -908,6 +908,15 @@ BEGIN
     IF NEW.revoked_at IS NOT NULL
        AND (OLD.revoked_at IS NULL OR OLD.revoked_at <> NEW.revoked_at)
     THEN
+        -- v1.7.0 #278: keep `status` in lock-step with revoked_at on
+        -- direct-DB writes. Idempotent; the inner UPDATE doesn't
+        -- re-enter this function (AFTER UPDATE OF revoked_at column
+        -- filter). See db/migrations/048_wms_tokens_revocation_notify.sql.
+        IF NEW.status IS DISTINCT FROM 'revoked' THEN
+            UPDATE wms_tokens
+               SET status = 'revoked'
+             WHERE token_id = NEW.token_id;
+        END IF;
         PERFORM pg_notify(
             'wms_token_revocations',
             NEW.token_id::text

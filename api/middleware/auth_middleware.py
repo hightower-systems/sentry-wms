@@ -398,6 +398,21 @@ def require_wms_token(f):
                 row["status"], row.get("token_id"),
             )
             return jsonify({"error": "invalid_token"}), 401
+        # v1.7.0 #278: also reject when revoked_at is set, regardless of
+        # status. Pre-fix, a direct-DB write of the form
+        # `UPDATE wms_tokens SET revoked_at = NOW()` -- without also
+        # setting status='revoked' -- produced a row that the status
+        # check above let through. Mig 048's trigger now flips status
+        # in lock-step on the same UPDATE, so in normal operation this
+        # second condition is redundant. It stays as defense-in-depth:
+        # if a future schema or trigger change drops the lock-step
+        # behavior, this gate still de-authenticates the token.
+        if row.get("revoked_at") is not None:
+            _INVALID_LOGGER.debug(
+                "wms_token: revoked_at populated for token_id=%s",
+                row.get("token_id"),
+            )
+            return jsonify({"error": "invalid_token"}), 401
         if row.get("expires_at") and datetime.now(timezone.utc) > row["expires_at"]:
             _INVALID_LOGGER.debug(
                 "wms_token: expired token_id=%s", row.get("token_id")
