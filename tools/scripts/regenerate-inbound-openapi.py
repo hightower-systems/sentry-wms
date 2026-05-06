@@ -31,6 +31,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_OUTPUT = _REPO_ROOT / "docs" / "api" / "inbound-openapi.yaml"
 
 
+def _display_path(p: Path) -> str:
+    """Render `p` relative to the repo root when possible, otherwise
+    fall back to the absolute path. Tests pass --output at a tmp dir
+    outside the repo; the relative_to() call would raise there."""
+    try:
+        return str(p.relative_to(_REPO_ROOT))
+    except ValueError:
+        return str(p)
+
+
 def _live_yaml() -> str:
     sys.path.insert(0, str(_REPO_ROOT / "api"))
     from services.inbound_openapi import build_inbound_openapi
@@ -49,7 +59,7 @@ def _live_yaml() -> str:
 def _cmd_write(output_path: Path) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(_live_yaml())
-    print(f"wrote {output_path.relative_to(_REPO_ROOT)}", file=sys.stderr)
+    print(f"wrote {_display_path(output_path)}", file=sys.stderr)
     return 0
 
 
@@ -60,9 +70,10 @@ def _cmd_stdout() -> int:
 
 def _cmd_check(output_path: Path) -> int:
     live = _live_yaml()
+    display = _display_path(output_path)
     if not output_path.is_file():
         print(
-            f"::error::{output_path.relative_to(_REPO_ROOT)} does not exist. "
+            f"::error::{display} does not exist. "
             f"Run `python tools/scripts/regenerate-inbound-openapi.py` to "
             f"regenerate it.",
             file=sys.stderr,
@@ -75,13 +86,13 @@ def _cmd_check(output_path: Path) -> int:
         difflib.unified_diff(
             on_disk.splitlines(keepends=True),
             live.splitlines(keepends=True),
-            fromfile=f"{output_path.relative_to(_REPO_ROOT)} (on disk)",
+            fromfile=f"{display} (on disk)",
             tofile="build_inbound_openapi() (live)",
             n=3,
         )
     )
     print(
-        f"::error::{output_path.relative_to(_REPO_ROOT)} is out of sync with "
+        f"::error::{display} is out of sync with "
         f"the live build_inbound_openapi() output. Regenerate via:\n"
         f"    python tools/scripts/regenerate-inbound-openapi.py\n"
         f"and commit the diff.\n\n{diff}",
