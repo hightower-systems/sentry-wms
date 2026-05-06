@@ -84,6 +84,10 @@ All twelve migrations are small DDL operations against new or existing tables (o
 - **No mapping-doc hot-reload.** Edits to `<source_system>.yaml` files take effect on api container restart. Every restart writes a fresh `MAPPING_DOCUMENT_LOAD` audit row carrying the file's sha256 so investigators can correlate which mapping doc was active when a given inbound POST was processed.
 - **Empirical inbound throughput / tail latency is operator-measured** (#277). Gate 25 (the inbound burst load test) is operator-run via `tools/loadtest/inbound_v1_7.js` against a staging stack. CI does not exercise this surface because GitHub Actions runner neighbor noise is too unstable for run-over-run trend tracking.
 
+### Changed -- licensing
+
+- **License changed from MIT to Apache 2.0.** Pre-v1.7.0 tagged releases remain MIT-licensed; v1.7.0 and later are Apache 2.0. See `LICENSE` and `NOTICE` for the canonical license text and project attribution. The legacy `NOTICES.md` (third-party font attributions) is renamed to `NOTICE` per Apache convention so a single file at the repo root carries both the project's Apache 2.0 attribution and the bundled third-party assets list. SPDX `Apache-2.0` identifier added at the project level in `admin/package.json`, `mobile/package.json`, and the `packages.""` blocks of both lockfiles.
+
 ### Notes for operators
 
 - **`SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS`** -- staging-row forensic retention. Default 90 days; hard floor 7 days enforced at boot. The retention beat task NULLs `source_payload` rather than DELETing rows so cross_system_mappings + canonical FKs stay intact.

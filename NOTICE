@@ -1,7 +1,16 @@
-# Third-party notices
+Sentry WMS
+Copyright 2026 hightower-systems
+
+This product includes software developed by hightower-systems
+(https://github.com/hightower-systems).
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------
+Bundled third-party assets
+------------------------------------------------------------------------
 
 Sentry WMS bundles third-party assets under their respective licenses.
-The project itself is MIT-licensed; see `LICENSE`.
 
 ## Fonts (admin panel)
 

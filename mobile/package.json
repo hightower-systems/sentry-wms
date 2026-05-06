@@ -1,6 +1,7 @@
 {
   "name": "sentry-wms-mobile",
   "version": "1.7.0",
+  "license": "Apache-2.0",
   "description": "Sentry WMS - Mobile Scanner App",
   "main": "expo/AppEntry.js",
   "scripts": {

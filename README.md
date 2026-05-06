@@ -5,7 +5,7 @@
 
   ![Version](https://img.shields.io/badge/version-1.7.0-8e2716)
   ![Tests](https://img.shields.io/badge/tests-1842%20passing-34a853)
-  ![License](https://img.shields.io/badge/license-MIT-blue)
+  ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
   
   **[Documentation](https://hightower-systems.github.io/sentry-wms)** | **[API Reference](https://hightower-systems.github.io/sentry-wms/api-reference/)** | **[Releases](https://github.com/hightower-systems/sentry-wms/releases)**
 
@@ -324,6 +324,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT - see [LICENSE](LICENSE) for details.
+Apache License 2.0 - see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details. Pre-v1.7.0 tagged releases remain MIT-licensed; v1.7.0 and later are Apache 2.0.
 
 Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v1.7.0
