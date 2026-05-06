@@ -157,6 +157,15 @@ jobs:
           fi
           echo "OK: no verify=False in api/services/webhook_dispatcher/"
 
+      - name: v1.7.0 inbound OpenAPI drift check (#276)
+        # Fails fast when docs/api/inbound-openapi.yaml has drifted
+        # from services.inbound_openapi.build_inbound_openapi(). The
+        # parity pytest covers the same drift in-suite, but this step
+        # surfaces it before the full test database boots so a stale
+        # spec doesn't burn three minutes of runner time.
+        run: |
+          PYTHONPATH=api python tools/scripts/regenerate-inbound-openapi.py --check
+
       - name: Validate v1.5.0 event schemas
         # #111: importing the registry forces Draft 2020-12 validation
         # of every api/schemas_v1/events/*/*.json file and asserts
@@ -177,9 +186,23 @@ jobs:
           PGPASSWORD: sentry
         run: psql -h localhost -U sentry -d sentry -f db/seed-apartment-lab.sql
 
+      - name: Create + schema-load test database
+        # v1.7.0 test-DB isolation: the conftest TRUNCATEs 39 tables at
+        # session start. Routing it at a dedicated `sentry_test`
+        # database keeps the application DB intact when pytest runs
+        # against a real stack.
+        env:
+          PGPASSWORD: sentry
+        run: |
+          psql -h localhost -U sentry -d sentry -c "CREATE DATABASE sentry_test;"
+          psql -h localhost -U sentry -d sentry_test -f db/schema.sql
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry
+          # v1.7.0: dedicated test DB. conftest hard-fails when this is
+          # missing or equal to DATABASE_URL.
+          TEST_DATABASE_URL: postgresql://sentry:sentry@localhost:5432/sentry_test
           JWT_SECRET: test-secret
           # v1.6.0 D3 #175: wake.WakeOrchestrator pubsub tests
           # need REDIS_URL pointing at the service container above.

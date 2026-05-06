@@ -81,7 +81,10 @@ CREATE TABLE items (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
+    -- Unindexed, no FK; see db/migrations/040_inbound_items.sql.
+    latest_inbound_id BIGINT
 );
 
 CREATE INDEX ix_items_upc ON items(upc);
@@ -127,7 +130,10 @@ CREATE TABLE purchase_orders (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     received_at TIMESTAMPTZ,
     created_by VARCHAR(100),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
+    -- Unindexed, no FK; see db/migrations/043_inbound_purchase_orders.sql.
+    latest_inbound_id BIGINT
 );
 
 CREATE TABLE purchase_order_lines (
@@ -179,6 +185,12 @@ CREATE TABLE sales_orders (
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
     ship_address VARCHAR(500),
+    -- v1.7.0 (#266): per-order ecommerce ship-to / bill-to. ship_address
+    -- above stays the warehouse-floor field used by pick/pack/ship;
+    -- shipping_address + billing_address are the canonical values
+    -- inbound consumers populate (per-order, not per-customer).
+    billing_address TEXT,
+    shipping_address TEXT,
     order_date TIMESTAMPTZ,
     ship_by_date DATE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -188,7 +200,10 @@ CREATE TABLE sales_orders (
     carrier VARCHAR(100),
     tracking_number VARCHAR(255),
     created_by VARCHAR(100),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
+    -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
+    latest_inbound_id BIGINT
 );
 
 CREATE TABLE sales_order_lines (
@@ -370,8 +385,15 @@ CREATE TABLE inventory_adjustments (
 -- AUDIT LOG (Every action tracked)
 -- ============================================================
 
+-- v1.7.0 #271: log_id sequence is owned by audit_log.log_id but the
+-- column has no DEFAULT, so concurrent transactions cannot pre-allocate
+-- log_ids out of trigger-execution order. The chain trigger assigns
+-- NEW.log_id := nextval(...) inside its lock-protected critical section.
+-- See db/migrations/047_audit_log_chain_serialization.sql.
+CREATE SEQUENCE audit_log_log_id_seq;
+
 CREATE TABLE audit_log (
-    log_id BIGSERIAL PRIMARY KEY,
+    log_id BIGINT PRIMARY KEY NOT NULL,
     action_type VARCHAR(50) NOT NULL,      -- 'RECEIVE', 'PUTAWAY', 'PICK', 'PACK', 'SHIP', 'TRANSFER', 'ADJUST', 'COUNT'
     entity_type VARCHAR(50) NOT NULL,      -- 'PO', 'SO', 'ITEM', 'BIN', 'INVENTORY'
     entity_id INT NOT NULL,
@@ -397,12 +419,43 @@ CREATE INDEX ix_audit_log_entity ON audit_log(entity_type, entity_id);
 -- for deployments that were created before V-025 shipped.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- v1.7.0 #271: chain serialization sentinel + LOCK TABLE EXCLUSIVE on
+-- the chain trigger's critical section. The chain trigger:
+--   1. Acquires LOCK TABLE EXCLUSIVE on audit_log_chain_head.
+--   2. Calls nextval('audit_log_log_id_seq') for NEW.log_id (so log_id
+--      ordering matches trigger-execution ordering -- otherwise concurrent
+--      transactions pre-allocate log_ids out of trigger-execution order
+--      and the strict-by-log_id chain forks).
+--   3. Reads sentinel.row_hash, computes NEW.row_hash, updates sentinel.
+-- Under READ COMMITTED + EXCLUSIVE table lock, the next waiter sees the
+-- prior holder's committed UPDATE on unblock; the lock + the explicit
+-- log_id allocation together yield strict-by-log_id chain integrity.
+-- See db/migrations/047_audit_log_chain_serialization.sql for the
+-- iteration history (advisory lock + FOR UPDATE were tried first, both
+-- insufficient).
+CREATE TABLE audit_log_chain_head (
+    singleton  BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    row_hash   BYTEA NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO audit_log_chain_head (singleton, row_hash)
+VALUES (TRUE, '\x00'::bytea);
+
 CREATE OR REPLACE FUNCTION audit_log_chain_hash() RETURNS TRIGGER AS $$
 DECLARE
     prev BYTEA;
     payload TEXT;
 BEGIN
-    SELECT row_hash INTO prev FROM audit_log ORDER BY log_id DESC LIMIT 1;
+    -- v1.7.0 #271: serialize the entire critical section (log_id
+    -- allocation + prev_hash read + row_hash compute + sentinel
+    -- update). EXCLUSIVE table lock blocks other writers; nextval
+    -- inside the lock guarantees log_id-order matches trigger-
+    -- execution-order so the strict-by-log_id chain holds.
+    LOCK TABLE audit_log_chain_head IN EXCLUSIVE MODE;
+    NEW.log_id := nextval('audit_log_log_id_seq');
+    SELECT row_hash INTO prev FROM audit_log_chain_head
+     WHERE singleton = TRUE;
     NEW.prev_hash := COALESCE(prev, '\x00'::bytea);
     payload := COALESCE(NEW.action_type, '') || '|' ||
                COALESCE(NEW.entity_type, '') || '|' ||
@@ -412,6 +465,9 @@ BEGIN
                COALESCE(NEW.details::text, '') || '|' ||
                COALESCE(NEW.created_at::text, NOW()::text);
     NEW.row_hash := digest(NEW.prev_hash || payload::bytea, 'sha256');
+    UPDATE audit_log_chain_head
+       SET row_hash = NEW.row_hash, updated_at = NOW()
+     WHERE singleton = TRUE;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -655,6 +711,89 @@ CREATE TABLE consumer_groups_tombstones (
 );
 
 -- ============================================================
+-- INBOUND SOURCE SYSTEMS ALLOWLIST (v1.7.0 Pipe B gate)
+-- ============================================================
+-- Privilege table: a row here is what gates a source_system from
+-- writing inbound. Operator-managed via SQL only in v1.7 (no admin
+-- endpoint; documented in docs/runbooks/inbound-source-systems.md).
+-- Defined ahead of wms_tokens because wms_tokens.source_system FKs
+-- into it. The identical DDL lives in
+-- db/migrations/037_wms_tokens_inbound_columns.sql for deployments
+-- created before v1.7.0.
+-- ============================================================
+CREATE TABLE inbound_source_systems_allowlist (
+    source_system  VARCHAR(64)  PRIMARY KEY,
+    kind           VARCHAR(16)  NOT NULL CHECK (kind IN ('connector','internal_tool','manual_import')),
+    notes          TEXT,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- v1.7.0 forensic audit (V-157 pattern, mirrors wms_tokens_audit).
+CREATE TABLE inbound_source_systems_allowlist_audit (
+    audit_id         BIGSERIAL    PRIMARY KEY,
+    event_type       VARCHAR(16)  NOT NULL,
+    rows_affected    INTEGER,
+    sess_user        TEXT         NOT NULL,
+    curr_user        TEXT         NOT NULL,
+    backend_pid      INTEGER      NOT NULL,
+    application_name TEXT,
+    event_at         TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX inbound_source_systems_allowlist_audit_event_at
+    ON inbound_source_systems_allowlist_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION inbound_source_systems_allowlist_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO inbound_source_systems_allowlist_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_inbound_source_systems_allowlist_audit_delete
+    AFTER DELETE ON inbound_source_systems_allowlist
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION inbound_source_systems_allowlist_audit_delete();
+
+CREATE OR REPLACE FUNCTION inbound_source_systems_allowlist_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO inbound_source_systems_allowlist_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+-- v1.7.0 #275: this AFTER TRUNCATE trigger fires only on
+-- `TRUNCATE inbound_source_systems_allowlist CASCADE`. A plain
+-- `TRUNCATE inbound_source_systems_allowlist` raises ForeignKeyViolation
+-- before the trigger fires because six v1.7 tables (inbound_sales_orders,
+-- inbound_items, inbound_customers, inbound_purchase_orders,
+-- inbound_vendors, cross_system_mappings) and one nullable referencer
+-- (wms_tokens) declare FKs into source_system. The CASCADE form is
+-- therefore the sole path that writes a forensic audit row; a direct
+-- plain-TRUNCATE attempt leaves a Postgres error in the logs but no
+-- audit_log entry. See docs/audit-log.md for the operator-facing shape.
+CREATE TRIGGER tr_inbound_source_systems_allowlist_audit_truncate
+    AFTER TRUNCATE ON inbound_source_systems_allowlist
+    FOR EACH STATEMENT EXECUTE FUNCTION inbound_source_systems_allowlist_audit_truncate();
+
+-- ============================================================
 -- WMS TOKENS (v1.5.0 inbound API tokens for X-WMS-Token auth)
 -- ============================================================
 -- Hash-only storage per Decision P. token_hash is
@@ -662,24 +801,39 @@ CREATE TABLE consumer_groups_tombstones (
 -- Scope columns are typed arrays per Decision S. Default expiry is
 -- one year per Decision R.
 --
+-- v1.7.0 adds three columns for Pipe B (inbound):
+--   source_system     -- nullable FK to inbound_source_systems_allowlist
+--                        (PostgreSQL forbids subqueries in CHECK
+--                        constraints; nullable FK is the correct shape
+--                        and naturally exempts outbound-only tokens).
+--   inbound_resources -- TEXT[] scope dimension for inbound resources
+--                        (sales_orders / items / customers / vendors /
+--                        purchase_orders).
+--   mapping_override  -- BOOLEAN capability flag for per-request mapping
+--                        overrides; default false.
+--
 -- The identical DDL lives in db/migrations/023_wms_tokens.sql for
--- deployments created before v1.5.0.
+-- deployments created before v1.5.0; the v1.7 columns are added by
+-- db/migrations/037_wms_tokens_inbound_columns.sql.
 -- ============================================================
 
 CREATE TABLE wms_tokens (
-    token_id       BIGSERIAL     PRIMARY KEY,
-    token_name     VARCHAR(128)  NOT NULL,
-    token_hash     CHAR(64)      UNIQUE NOT NULL,
-    warehouse_ids  BIGINT[]      NOT NULL DEFAULT '{}',
-    event_types    TEXT[]        NOT NULL DEFAULT '{}',
-    endpoints      TEXT[]        NOT NULL DEFAULT '{}',
-    connector_id   VARCHAR(64)   REFERENCES connectors(connector_id),
-    status         VARCHAR(16)   NOT NULL DEFAULT 'active',
-    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    rotated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-    expires_at     TIMESTAMPTZ   NOT NULL DEFAULT (NOW() + INTERVAL '1 year'),
-    revoked_at     TIMESTAMPTZ,
-    last_used_at   TIMESTAMPTZ
+    token_id          BIGSERIAL     PRIMARY KEY,
+    token_name        VARCHAR(128)  NOT NULL,
+    token_hash        CHAR(64)      UNIQUE NOT NULL,
+    warehouse_ids     BIGINT[]      NOT NULL DEFAULT '{}',
+    event_types       TEXT[]        NOT NULL DEFAULT '{}',
+    endpoints         TEXT[]        NOT NULL DEFAULT '{}',
+    connector_id      VARCHAR(64)   REFERENCES connectors(connector_id),
+    source_system     VARCHAR(64)   REFERENCES inbound_source_systems_allowlist(source_system),
+    inbound_resources TEXT[]        NOT NULL DEFAULT '{}',
+    mapping_override  BOOLEAN       NOT NULL DEFAULT FALSE,
+    status            VARCHAR(16)   NOT NULL DEFAULT 'active',
+    created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    rotated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    expires_at        TIMESTAMPTZ   NOT NULL DEFAULT (NOW() + INTERVAL '1 year'),
+    revoked_at        TIMESTAMPTZ,
+    last_used_at      TIMESTAMPTZ
 );
 
 CREATE INDEX wms_tokens_status_rotated ON wms_tokens (status, rotated_at);
@@ -741,6 +895,328 @@ $$;
 CREATE TRIGGER tr_wms_tokens_audit_truncate
     AFTER TRUNCATE ON wms_tokens
     FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_truncate();
+
+-- v1.7.0 #274: defense-in-depth for token revocation cache invalidation.
+-- Identical DDL lives in db/migrations/048_wms_tokens_revocation_notify.sql
+-- for upgrade paths. AFTER UPDATE OF revoked_at fires
+-- pg_notify('wms_token_revocations', token_id) on NULL -> NOT NULL
+-- transitions so a direct-DB revoke triggers the same cross-worker
+-- cache invalidation as the Flask admin path. See migration file.
+CREATE OR REPLACE FUNCTION wms_tokens_revocation_notify()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.revoked_at IS NOT NULL
+       AND (OLD.revoked_at IS NULL OR OLD.revoked_at <> NEW.revoked_at)
+    THEN
+        -- v1.7.0 #278: keep `status` in lock-step with revoked_at on
+        -- direct-DB writes. Idempotent; the inner UPDATE doesn't
+        -- re-enter this function (AFTER UPDATE OF revoked_at column
+        -- filter). See db/migrations/048_wms_tokens_revocation_notify.sql.
+        IF NEW.status IS DISTINCT FROM 'revoked' THEN
+            UPDATE wms_tokens
+               SET status = 'revoked'
+             WHERE token_id = NEW.token_id;
+        END IF;
+        PERFORM pg_notify(
+            'wms_token_revocations',
+            NEW.token_id::text
+        );
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_wms_tokens_revocation_notify
+    AFTER UPDATE OF revoked_at ON wms_tokens
+    FOR EACH ROW
+    EXECUTE FUNCTION wms_tokens_revocation_notify();
+
+-- ============================================================
+-- CROSS-SYSTEM MAPPINGS (v1.7.0 Pipe B canonical bridge)
+-- ============================================================
+-- Bidirectional table binding (source_system, source_type, source_id)
+-- to (canonical_type, canonical_id). Each external ID maps to exactly
+-- one canonical entity (UNIQUE on the source side); a single canonical
+-- entity may carry mappings in many source systems (canonical-side
+-- index, not constraint).
+--
+-- The identical DDL lives in db/migrations/038_cross_system_mappings.sql
+-- for deployments created before v1.7.0.
+-- ============================================================
+
+CREATE TABLE cross_system_mappings (
+    mapping_id       BIGSERIAL    PRIMARY KEY,
+    source_system    VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    source_type      VARCHAR(32)  NOT NULL,
+    source_id        VARCHAR(128) NOT NULL,
+    canonical_type   VARCHAR(32)  NOT NULL,
+    canonical_id     UUID         NOT NULL,
+    first_seen_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CHECK (source_type    IN ('sales_order','item','customer','vendor','purchase_order')),
+    CHECK (canonical_type IN ('sales_order','item','customer','vendor','purchase_order'))
+);
+
+CREATE UNIQUE INDEX cross_system_mappings_source_unique
+    ON cross_system_mappings (source_system, source_type, source_id);
+
+CREATE INDEX cross_system_mappings_canonical
+    ON cross_system_mappings (canonical_type, canonical_id);
+
+-- v1.7.0 forensic audit (V-157 pattern, mirrors wms_tokens_audit).
+CREATE TABLE cross_system_mappings_audit (
+    audit_id         BIGSERIAL    PRIMARY KEY,
+    event_type       VARCHAR(16)  NOT NULL,
+    rows_affected    INTEGER,
+    sess_user        TEXT         NOT NULL,
+    curr_user        TEXT         NOT NULL,
+    backend_pid      INTEGER      NOT NULL,
+    application_name TEXT,
+    event_at         TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX cross_system_mappings_audit_event_at
+    ON cross_system_mappings_audit (event_at DESC);
+
+CREATE OR REPLACE FUNCTION cross_system_mappings_audit_delete()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+    _count INTEGER;
+BEGIN
+    SELECT COUNT(*) INTO _count FROM deleted_rows;
+    INSERT INTO cross_system_mappings_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'DELETE', _count, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_cross_system_mappings_audit_delete
+    AFTER DELETE ON cross_system_mappings
+    REFERENCING OLD TABLE AS deleted_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION cross_system_mappings_audit_delete();
+
+CREATE OR REPLACE FUNCTION cross_system_mappings_audit_truncate()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO cross_system_mappings_audit (
+        event_type, rows_affected, sess_user, curr_user,
+        backend_pid, application_name
+    ) VALUES (
+        'TRUNCATE', NULL, SESSION_USER, CURRENT_USER,
+        pg_backend_pid(), current_setting('application_name', true)
+    );
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_cross_system_mappings_audit_truncate
+    AFTER TRUNCATE ON cross_system_mappings
+    FOR EACH STATEMENT EXECUTE FUNCTION cross_system_mappings_audit_truncate();
+
+-- ============================================================
+-- INBOUND STAGING TABLES (v1.7.0 Pipe B per-resource history)
+-- ============================================================
+-- Append-only with status flag. Each accepted inbound POST inserts a
+-- fresh row; older rows for the same (source_system, external_id)
+-- flip to 'superseded'. canonical_id resolves to the canonical
+-- table's external_id UUID per the V-216 retrofit. ingested_via_token_id
+-- is BIGINT (wms_tokens.token_id is BIGSERIAL) ON DELETE RESTRICT;
+-- tokens are revoked via revoked_at, not DELETE. Per-resource files
+-- are: 039 sales_orders, 040 items, 041 customers, 042 vendors,
+-- 043 purchase_orders.
+-- ============================================================
+
+CREATE TABLE inbound_sales_orders (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_sales_orders_idempotency
+    ON inbound_sales_orders (source_system, external_id, external_version);
+
+CREATE INDEX inbound_sales_orders_current
+    ON inbound_sales_orders (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_sales_orders_canonical
+    ON inbound_sales_orders (canonical_id);
+
+CREATE TABLE inbound_items (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_items_idempotency
+    ON inbound_items (source_system, external_id, external_version);
+
+CREATE INDEX inbound_items_current
+    ON inbound_items (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_items_canonical
+    ON inbound_items (canonical_id);
+
+-- v1.7.0 customers (new canonical table; conservative NOT NULL posture
+-- per plan §1.4 -- only canonical_id, created_at, updated_at,
+-- latest_inbound_id NOT NULL until v2.0 has signal). DDL identical
+-- to db/migrations/041_inbound_customers.sql.
+CREATE TABLE customers (
+    canonical_id      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_id       UUID         UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+    customer_name     VARCHAR(200),
+    email             VARCHAR(255),
+    phone             VARCHAR(50),
+    billing_address   TEXT,
+    shipping_address  TEXT,
+    tax_id            VARCHAR(64),
+    is_active         BOOLEAN,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    latest_inbound_id BIGINT       NOT NULL DEFAULT 0
+);
+
+CREATE TABLE inbound_customers (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_customers_idempotency
+    ON inbound_customers (source_system, external_id, external_version);
+
+CREATE INDEX inbound_customers_current
+    ON inbound_customers (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_customers_canonical
+    ON inbound_customers (canonical_id);
+
+-- v1.7.0 vendors (new canonical table; same conservative NOT NULL
+-- posture as customers). DDL identical to
+-- db/migrations/042_inbound_vendors.sql.
+CREATE TABLE vendors (
+    canonical_id      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    external_id       UUID         UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+    vendor_name       VARCHAR(200),
+    contact_name      VARCHAR(200),
+    email             VARCHAR(255),
+    phone             VARCHAR(50),
+    billing_address   TEXT,
+    remit_to_address  TEXT,
+    tax_id            VARCHAR(64),
+    payment_terms     VARCHAR(64),
+    is_active         BOOLEAN,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    latest_inbound_id BIGINT       NOT NULL DEFAULT 0
+);
+
+CREATE TABLE inbound_vendors (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_vendors_idempotency
+    ON inbound_vendors (source_system, external_id, external_version);
+
+CREATE INDEX inbound_vendors_current
+    ON inbound_vendors (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_vendors_canonical
+    ON inbound_vendors (canonical_id);
+
+CREATE TABLE inbound_purchase_orders (
+    inbound_id            BIGSERIAL    PRIMARY KEY,
+    source_system         VARCHAR(64)  NOT NULL REFERENCES inbound_source_systems_allowlist(source_system),
+    external_id           VARCHAR(128) NOT NULL,
+    external_version      VARCHAR(64)  NOT NULL,
+    canonical_id          UUID         NOT NULL,
+    canonical_payload     JSONB        NOT NULL,
+    source_payload        JSONB,
+    received_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    status                VARCHAR(16)  NOT NULL DEFAULT 'applied',
+    superseded_at         TIMESTAMPTZ,
+    ingested_via_token_id BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE RESTRICT,
+    CHECK (status IN ('applied','superseded'))
+);
+
+CREATE UNIQUE INDEX inbound_purchase_orders_idempotency
+    ON inbound_purchase_orders (source_system, external_id, external_version);
+
+CREATE INDEX inbound_purchase_orders_current
+    ON inbound_purchase_orders (source_system, external_id, received_at DESC)
+    WHERE status = 'applied';
+
+CREATE INDEX inbound_purchase_orders_canonical
+    ON inbound_purchase_orders (canonical_id);
+
+-- v1.7.0 inbound retention beat log. One row per (resource, run);
+-- the Celery beat task itself is Python code and lives outside
+-- migrations. DDL identical to db/migrations/044_inbound_retention_beat.sql.
+CREATE TABLE inbound_cleanup_runs (
+    run_id          BIGSERIAL    PRIMARY KEY,
+    resource        VARCHAR(32)  NOT NULL,
+    started_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    finished_at     TIMESTAMPTZ,
+    rows_nullified  INTEGER      NOT NULL DEFAULT 0,
+    retention_days  INTEGER      NOT NULL,
+    status          VARCHAR(16)  NOT NULL DEFAULT 'running',
+    error_message   TEXT,
+    CHECK (resource IN ('sales_orders','items','customers','vendors','purchase_orders')),
+    CHECK (status   IN ('running','succeeded','failed'))
+);
+
+CREATE INDEX inbound_cleanup_runs_resource_started
+    ON inbound_cleanup_runs (resource, started_at DESC);
+
+CREATE INDEX inbound_cleanup_runs_status_started
+    ON inbound_cleanup_runs (status, started_at DESC)
+    WHERE status = 'failed';
 
 -- ============================================================
 -- SNAPSHOT SCANS (v1.5.0 bulk-snapshot keeper coordination)

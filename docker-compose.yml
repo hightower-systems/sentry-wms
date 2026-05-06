@@ -12,9 +12,20 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # v1.7.0 test-DB isolation: 00- runs first so the empty
+      # sentry_test database exists before schema.sql loads into
+      # `sentry`. Existing volumes need `docker compose down -v` to
+      # pick this up; the postgres image runs init scripts only on a
+      # virgin data dir.
+      - ./db/create-test-db.sql:/docker-entrypoint-initdb.d/00-create-test-db.sql
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./db/seed-apartment-lab.sql:/seed-data/seed-apartment-lab.sql
       - ./db/seed.sh:/docker-entrypoint-initdb.d/02-seed.sh
+      # Schema also loaded into sentry_test so the conftest's
+      # TRUNCATE has tables to wipe. Runs after the schema lands in
+      # `sentry` (alphabetic order: 03 > 02 > 01).
+      - ./db/schema.sql:/seed-data/schema-for-test-db.sql
+      - ./db/load-schema-into-test-db.sh:/docker-entrypoint-initdb.d/03-load-schema-into-test-db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sentry"]
       interval: 5s

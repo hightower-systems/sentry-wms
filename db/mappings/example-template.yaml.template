@@ -1,0 +1,481 @@
+# =====================================================================
+# Sentry WMS v1.7.0 inbound mapping document -- annotated template
+# =====================================================================
+#
+# This is a starting-point template for operators writing their first
+# mapping doc against the v1.7.0 Pipe B inbound API. It is not loaded
+# by the api at boot: the `.template` suffix is filtered out by
+# api/services/mapping_loader.py:load_directory, which only globs
+# `.yaml`, `.yml`, and `.json` files. Copy this file to
+# `<source_system>.yaml` to put it into service.
+#
+# Where to put the renamed copy:
+#
+#   db/mappings/<source_system>.yaml
+#
+# The mapping-loader resolves SENTRY_INBOUND_MAPPINGS_DIR -- default
+# `/db/mappings`, matching the docker-compose `./db:/db` volume mount
+# -- to this directory at the repo root.
+#
+# Other required setup before the api will accept inbound POSTs from
+# this source_system:
+#
+#   1. Allowlist row in inbound_source_systems_allowlist:
+#
+#      INSERT INTO inbound_source_systems_allowlist
+#                  (source_system, kind)
+#           VALUES ('<source_system>', 'connector');
+#                       -- 'connector' | 'internal_tool' | 'manual_import'
+#
+#   2. WMS token issued via the admin panel with:
+#
+#      - source_system  = '<source_system>'
+#      - inbound_resources containing the resources the token can
+#        write to (subset of: sales_orders, items, customers,
+#        vendors, purchase_orders).
+#
+#   3. Container restart after editing this file -- the loader runs
+#      once at boot. There is no hot-reload. Every restart writes
+#      one MAPPING_DOCUMENT_LOAD audit_log row per loaded file.
+#
+# The boot validator (#267) refuses to start if any `canonical:`
+# field name does not match a real column on the canonical table.
+# The boot eval-shape rejection (#272) refuses to start if any
+# derived expression contains forbidden names (e.g. __import__,
+# eval, attribute walks). Both fail loud with the offending file
+# path, resource, and field.
+
+mapping_version: "1.0"
+# `mapping_version` is a free-form label so the operator can track
+# revisions of THIS document. It rolls forward independently of
+# Sentry's own canonical model version (which is pinned in the
+# X-Sentry-Canonical-Model response header).
+
+source_system: "your-source-system"
+# `source_system` MUST equal the filename stem after rename. If the
+# file is named `acme-erp.yaml` the value here must be `acme-erp`.
+# Mismatch fails boot loudly with the offending file path.
+#
+# This is also the value the issued WMS token must carry on its
+# source_system field, and the value the matching
+# inbound_source_systems_allowlist row must contain.
+
+version_compare: "iso_timestamp"
+# Strategy used for the per-request `external_version` stale-write
+# check. The handler stores the highest-seen version per
+# (source_system, external_id); a POST whose external_version
+# compares older than the stored value returns 409 stale_version
+# rather than overwriting newer canonical state. Three strategies:
+#
+#   iso_timestamp   -- external_version is parsed as
+#                       datetime.fromisoformat(); offset-bearing
+#                       values compare correctly across timezones.
+#                       Pick this when your source system emits
+#                       reliable timestamps (Shopify-style
+#                       updated_at, NetSuite lastModifiedDate, etc.).
+#                       Most common.
+#
+#   integer         -- external_version is parsed as int and compared
+#                       numerically. Pick this for source systems that
+#                       emit a monotonically-increasing integer
+#                       (e.g. row_version, op_id).
+#
+#   lexicographic   -- plain string comparison. Pick this for source
+#                       systems whose version string is naturally
+#                       sortable (e.g. "20260506T120000Z" formatted
+#                       to fixed-width). Brittle for free-form
+#                       versions; prefer iso_timestamp or integer.
+
+resources:
+  # =================================================================
+  # CUSTOMERS  (canonical table: customers)
+  # =================================================================
+  customers:
+    canonical_type: "customer"
+    fields:
+      - canonical: "customer_name"
+        # No NOT NULL columns on customers carry "operator must
+        # supply" semantics in v1.7.0 -- canonical_id and external_id
+        # are auto-generated, created_at / updated_at default to
+        # NOW(), latest_inbound_id defaults to 0. customer_name is
+        # marked required: true here as a CONVENTIONAL requirement;
+        # an unnamed customer row is rarely useful.
+        source_path: "$.customer_name"
+        type: "string"            # accepts JSON strings; coerced via str().
+        required: true            # convention: a customer record without
+                                  # a name is rarely useful operationally.
+
+      - canonical: "email"
+        source_path: "$.email"
+        type: "string"
+        required: false           # nullable in canonical; unset becomes NULL.
+
+      - canonical: "phone"
+        source_path: "$.phone"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address"
+        source_path: "$.billing_address"
+        type: "string"            # canonical column is TEXT; freeform.
+        required: false
+
+      - canonical: "shipping_address"
+        source_path: "$.shipping_address"
+        type: "string"
+        required: false
+
+      - canonical: "is_active"
+        source_path: "$.is_active"
+        type: "boolean"           # accepts true/false; non-bool source raises 422.
+        required: false
+        default: true             # used when source_path resolves to None.
+
+  # =================================================================
+  # SALES_ORDERS  (canonical table: sales_orders)
+  # =================================================================
+  sales_orders:
+    canonical_type: "sales_order"
+    fields:
+      - canonical: "so_number"
+        # required: true -- sales_orders.so_number is NOT NULL with
+        # no default in the canonical schema. The handler will 422
+        # if absent. Also UNIQUE-constrained: feeding a duplicate
+        # so_number from a different external_id raises an
+        # IntegrityError surfaced to the caller as 422.
+        source_path: "$.order_number"
+        type: "string"
+        required: true
+
+      - canonical: "warehouse_id"
+        # required: true -- sales_orders.warehouse_id is NOT NULL
+        # with no default and FK-references warehouses(warehouse_id).
+        # The handler will 422 if absent or if the value does not
+        # match an existing warehouse.
+        source_path: "$.warehouse_id"
+        type: "integer"           # accepts int or numeric string; cast to int.
+        required: true
+
+      - canonical: "customer_id"
+        # cross_system_lookup advanced feature. When the source-system
+        # payload references a customer by THAT system's customer ID
+        # (e.g. "CUST-123"), this clause resolves the matching
+        # canonical_id (UUID) by joining cross_system_mappings on
+        # (source_system, source_type, source_id). Required-true
+        # misses raise 409 cross_system_lookup_miss carrying the
+        # missing tuple in the body.
+        #
+        # Use this when:
+        #
+        #   - You're ingesting sales_orders that reference a customer,
+        #     AND
+        #   - You've already ingested at least one customer record
+        #     from the same source_system (so a row exists in
+        #     cross_system_mappings to resolve against).
+        #
+        # The default `source_system` for the lookup is the doc's own
+        # source_system (set above). Override only when the customer
+        # was registered under a different source_system upstream.
+        source_path: "$.customer.id"
+        type: "uuid"              # the canonical column is varchar(50);
+                                  # type: uuid here describes the lookup
+                                  # result format (canonical_id is a UUID).
+        required: false           # set to true only if your source emits
+                                  # customer.id on every sales_order.
+        cross_system_lookup:
+          source_type: "customer"
+          # source_system: "different-system"  # uncomment to override.
+
+      - canonical: "order_date"
+        source_path: "$.order_date"
+        type: "iso_timestamp"     # accepts ISO-8601 strings; parsed via
+                                  # datetime.fromisoformat. Offset-bearing
+                                  # values preserve timezone.
+        required: false
+
+      - canonical: "ship_by_date"
+        source_path: "$.ship_by_date"
+        type: "iso_timestamp"
+        required: false
+
+      - canonical: "billing_address"
+        source_path: "$.billing.address"
+        type: "string"
+        required: false
+
+      - canonical: "shipping_address"
+        source_path: "$.shipping.address"
+        type: "string"
+        required: false
+
+      - canonical: "status"
+        # The canonical column has DEFAULT 'OPEN'. If the source
+        # system emits a status, declare an enum mapping so the
+        # handler rejects values outside the operationally-valid
+        # set at 422 rather than silently storing arbitrary strings.
+        source_path: "$.status"
+        type: "enum"
+        required: false           # default 'OPEN' applies when omitted.
+        enum_values:
+          - "OPEN"
+          - "PICKED"
+          - "PACKED"
+          - "SHIPPED"
+          - "CANCELLED"
+
+      - canonical: "priority"
+        source_path: "$.priority"
+        type: "integer"
+        required: false
+        default: 0                # used when source resolves to null.
+
+      # ----- ADVANCED: derived expressions -----
+      # `derived` evaluates a Python expression against the source
+      # payload at apply-time. The expression sees a flat `source`
+      # namespace and a function whitelist of:
+      #   int, float, str, len, abs, min, max, round
+      # Attribute access on `source.<path>` works; attribute walks
+      # rooted elsewhere (e.g. ().__class__.__bases__) are rejected
+      # at boot AND at apply-time per #272. Forbidden names
+      # (__import__, eval, exec, open, compile) are rejected the
+      # same way.
+      #
+      # Uncomment to attach a derived expression. The optional
+      # `when_present` clause gates evaluation: when the JSONPath
+      # does not resolve, the field falls back to source_path /
+      # default.
+      #
+      # - canonical: "ship_address"
+      #   type: "string"
+      #   derived:
+      #     expression: "str(source.shipping.address) + ' (priority shipping)'"
+      #     when_present: "$.priority"
+
+  # =================================================================
+  # ITEMS  (canonical table: items)
+  # =================================================================
+  items:
+    canonical_type: "item"
+    fields:
+      - canonical: "sku"
+        # required: true -- items.sku is NOT NULL with no default in
+        # the canonical schema. Also UNIQUE; duplicate sku from a
+        # different external_id raises 422.
+        source_path: "$.sku"
+        type: "string"
+        required: true
+
+      - canonical: "item_name"
+        # required: true -- items.item_name is NOT NULL with no
+        # default in the canonical schema.
+        source_path: "$.name"
+        type: "string"
+        required: true
+
+      - canonical: "description"
+        source_path: "$.description"
+        type: "string"
+        required: false
+
+      - canonical: "upc"
+        source_path: "$.upc"
+        type: "string"
+        required: false
+
+      - canonical: "category"
+        source_path: "$.category"
+        type: "string"
+        required: false
+
+      - canonical: "weight_lbs"
+        source_path: "$.dimensions.weight_lbs"
+        type: "decimal"           # accepts numeric strings or floats;
+                                  # canonical column is numeric(10,4).
+        required: false
+
+      - canonical: "length_in"
+        source_path: "$.dimensions.length_in"
+        type: "decimal"
+        required: false
+
+      - canonical: "is_lot_tracked"
+        source_path: "$.tracking.lot"
+        type: "boolean"
+        required: false
+        default: false
+
+      - canonical: "is_active"
+        source_path: "$.is_active"
+        type: "boolean"
+        required: false
+        default: true
+
+  # =================================================================
+  # VENDORS  (canonical table: vendors)
+  # =================================================================
+  vendors:
+    canonical_type: "vendor"
+    fields:
+      - canonical: "vendor_name"
+        # No NOT NULL columns on vendors require operator input
+        # (canonical_id auto, external_id auto, timestamps auto).
+        # Marking vendor_name required: true is a convention.
+        source_path: "$.vendor_name"
+        type: "string"
+        required: true
+
+      - canonical: "contact_name"
+        source_path: "$.contact.name"
+        type: "string"
+        required: false
+
+      - canonical: "email"
+        source_path: "$.contact.email"
+        type: "string"
+        required: false
+
+      - canonical: "phone"
+        source_path: "$.contact.phone"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address"
+        source_path: "$.billing_address"
+        type: "string"
+        required: false
+
+      - canonical: "remit_to_address"
+        source_path: "$.remit_to_address"
+        type: "string"
+        required: false
+
+      - canonical: "payment_terms"
+        source_path: "$.payment_terms"
+        type: "string"
+        required: false
+
+      - canonical: "is_active"
+        source_path: "$.is_active"
+        type: "boolean"
+        required: false
+        default: true
+
+  # =================================================================
+  # PURCHASE_ORDERS  (canonical table: purchase_orders)
+  # =================================================================
+  purchase_orders:
+    canonical_type: "purchase_order"
+    fields:
+      - canonical: "po_number"
+        # required: true -- purchase_orders.po_number is NOT NULL
+        # with no default; UNIQUE-constrained.
+        source_path: "$.po_number"
+        type: "string"
+        required: true
+
+      - canonical: "warehouse_id"
+        # required: true -- purchase_orders.warehouse_id is NOT NULL
+        # with no default and FK-references warehouses(warehouse_id).
+        source_path: "$.warehouse_id"
+        type: "integer"
+        required: true
+
+      - canonical: "vendor_id"
+        # Same cross_system_lookup pattern as sales_orders.customer_id.
+        # Resolves the source-system vendor reference to the canonical
+        # vendor UUID via cross_system_mappings. Requires at least
+        # one prior vendor ingestion under the same source_system.
+        source_path: "$.vendor.id"
+        type: "uuid"
+        required: false
+        cross_system_lookup:
+          source_type: "vendor"
+
+      - canonical: "vendor_name"
+        # Some source systems carry the human-readable vendor name
+        # alongside the ID; storing both gives investigators a
+        # readable audit trail without requiring a join.
+        source_path: "$.vendor.name"
+        type: "string"
+        required: false
+
+      - canonical: "expected_date"
+        source_path: "$.expected_date"
+        type: "iso_timestamp"     # canonical column is `date` but the
+                                  # mapping-loader's iso_timestamp type
+                                  # accepts the same shape; Postgres casts.
+        required: false
+
+      - canonical: "status"
+        source_path: "$.status"
+        type: "enum"
+        required: false
+        enum_values:
+          - "OPEN"
+          - "RECEIVED"
+          - "CANCELLED"
+
+      - canonical: "notes"
+        source_path: "$.notes"
+        type: "string"
+        required: false
+
+      - canonical: "created_by"
+        source_path: "$.created_by_user"
+        type: "string"
+        required: false
+
+# =====================================================================
+# Common pitfalls
+# =====================================================================
+#
+# 1. Column-name typos fail boot, not the first request. The #267
+#    boot validator cross-checks every `canonical:` field name
+#    against information_schema.columns. A typo'd canonical produces
+#    a CRITICAL log line with the file path + offending field at
+#    process startup. Fix the typo, restart api.
+#
+# 2. Filename stem must equal source_system. `acme-erp.yaml` requires
+#    `source_system: "acme-erp"`. The loader rejects mismatches with
+#    a clear error.
+#
+# 3. Filename suffix matters. `<name>.yaml`, `<name>.yml`, and
+#    `<name>.json` are loaded; everything else (including
+#    `<name>.yaml.template`, `<name>.yaml.bak`, `<name>.yaml.old`)
+#    is silently ignored. Use this to keep this template file alive
+#    in the directory without it being parsed.
+#
+# 4. Edits require restart. The mapping registry is built once at
+#    boot. Editing a loaded file does not propagate until the api
+#    container restarts. Every restart writes a fresh
+#    MAPPING_DOCUMENT_LOAD audit_log row carrying the file's sha256;
+#    investigators can correlate which mapping doc was active when
+#    a given inbound POST was processed.
+#
+# 5. `mapping_overrides` is reserved for v1.7.1 and currently
+#    rejected. The InboundBody schema accepts a top-level
+#    `mapping_overrides` dict, but the v1.7.0 handler rejects every
+#    request that carries one with 403 feature_not_available_in_v1_7_0
+#    regardless of token capability flags. Do not include
+#    `mapping_overrides` in inbound POST bodies until v1.7.1 ships
+#    the per-request override semantics (see #270).
+#
+# 6. `line_items` mappings are accepted but not written to *_lines
+#    tables in v1.7.0. The mapping-loader supports `line_items:` at
+#    the resource level (with its own `source_path`,
+#    `canonical_path`, and field list); the inbound handler stores
+#    them in the inbound staging row's canonical_payload JSONB
+#    column. Sync to *_lines tables (`sales_order_lines`,
+#    `purchase_order_lines`, `item_fulfillment_lines`) lands at
+#    v1.8+. If you need the line list in canonical_payload for
+#    forensic/replay purposes, add a `line_items:` block; otherwise
+#    omit and the line array stays in source_payload only.
+#
+# 7. Optional advanced mapping-loader features not shown above:
+#
+#    - `default:` on any field provides a fallback value when both
+#      source_path and derived resolve to None.
+#    - `rename:` is accepted by the schema but unused at apply-time
+#      in v1.7.0; reserved for future canonical-side renames.
+#
+# See api/services/mapping_loader.py for the parser source of truth.

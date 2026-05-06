@@ -32,6 +32,20 @@ def _conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
+def _reset_audit_chain(cur):
+    """v1.7.0 #271: TRUNCATE audit_log + reset audit_log_chain_head to
+    the genesis '\\x00' so the next insert starts a fresh chain. The
+    sentinel is the chain anchor; without resetting it, a TRUNCATE +
+    fresh INSERT yields a row whose prev_hash equals whatever the
+    sentinel held from the prior test session, not '\\x00'."""
+    cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+    cur.execute(
+        "UPDATE audit_log_chain_head SET row_hash = '\\x00'::bytea, "
+        "                                updated_at = NOW() "
+        " WHERE singleton = TRUE"
+    )
+
+
 class TestV025_AuditLogAppendOnly:
     def test_update_is_rejected(self):
         """UPDATE on any audit_log row raises from the trigger."""
@@ -51,7 +65,7 @@ class TestV025_AuditLogAppendOnly:
                 )
         finally:
             # Cleanup via TRUNCATE; DELETE is rejected too.
-            cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+            _reset_audit_chain(cur)
             conn.close()
 
     def test_delete_is_rejected(self):
@@ -67,7 +81,7 @@ class TestV025_AuditLogAppendOnly:
             with pytest.raises(psycopg2.errors.RaiseException, match="append-only"):
                 cur.execute("DELETE FROM audit_log WHERE log_id = %s", (log_id,))
         finally:
-            cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+            _reset_audit_chain(cur)
             conn.close()
 
 
@@ -78,7 +92,7 @@ class TestV025_ChainIntegrity:
         conn = _conn()
         conn.autocommit = True
         cur = conn.cursor()
-        cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+        _reset_audit_chain(cur)
         try:
             cur.execute(
                 "INSERT INTO audit_log (action_type, entity_type, entity_id, user_id, warehouse_id, details) "
@@ -101,7 +115,7 @@ class TestV025_ChainIntegrity:
             # Second row's prev_hash equals the first row's row_hash.
             assert bytes(second[1]) == bytes(first[2])
         finally:
-            cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+            _reset_audit_chain(cur)
             conn.close()
 
     def test_verify_function_detects_tampering(self):
@@ -114,7 +128,7 @@ class TestV025_ChainIntegrity:
         conn = _conn()
         conn.autocommit = True
         cur = conn.cursor()
-        cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+        _reset_audit_chain(cur)
         try:
             cur.execute(
                 "INSERT INTO audit_log (action_type, entity_type, entity_id, user_id, warehouse_id, details) "
@@ -128,7 +142,7 @@ class TestV025_ChainIntegrity:
             (broken_at,) = cur.fetchone()
             assert broken_at is None, f"chain reported broken at log_id={broken_at}"
         finally:
-            cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+            _reset_audit_chain(cur)
             conn.close()
 
     def test_truncate_still_allowed_for_tests(self):
@@ -138,7 +152,7 @@ class TestV025_ChainIntegrity:
         conn = _conn()
         conn.autocommit = True
         cur = conn.cursor()
-        cur.execute("TRUNCATE audit_log RESTART IDENTITY")
+        _reset_audit_chain(cur)
         cur.execute("SELECT COUNT(*) FROM audit_log")
         assert cur.fetchone()[0] == 0
         conn.close()

@@ -407,9 +407,15 @@ class TestScopeCatalog:
         resp = client.get("/api/admin/scope-catalog", headers=auth_headers)
         assert resp.status_code == 200
         body = resp.get_json()
-        assert set(body.keys()) == {"event_types", "endpoints"}
+        # v1.7.0: inbound_resources + source_systems added.
+        assert set(body.keys()) == {
+            "event_types", "endpoints",
+            "inbound_resources", "source_systems",
+        }
         assert isinstance(body["event_types"], list)
         assert isinstance(body["endpoints"], list)
+        assert isinstance(body["inbound_resources"], list)
+        assert isinstance(body["source_systems"], list)
 
     def test_event_types_match_v150_catalog(self, client, auth_headers):
         """event_types must be the distinct set in V150_CATALOG; a

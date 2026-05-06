@@ -92,12 +92,21 @@ def _row_to_listing(row) -> dict:
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
         "rotation_status": _rotation_status(rotated_at) if rotated_at else "none",
+        # v1.7.0 Pipe B columns. Outbound-only tokens get None / [] / False.
+        "source_system": getattr(row, "source_system", None),
+        "inbound_resources": (
+            list(row.inbound_resources)
+            if getattr(row, "inbound_resources", None)
+            else []
+        ),
+        "mapping_override": bool(getattr(row, "mapping_override", False)),
     }
 
 
 @admin_bp.route("/scope-catalog", methods=["GET"])
 @require_auth
 @require_role("ADMIN")
+@with_db
 def scope_catalog():
     """Serve the admin UI's token-create modal its authoritative
     pick-lists so the human never has to type a slug from memory
@@ -124,8 +133,21 @@ def scope_catalog():
     pattern Users.jsx uses). Keeping this endpoint tight to the
     two wms_tokens-specific columns avoids a second round-trip
     on modal open.
+
+    v1.7.0 Pipe B adds two more pick-lists:
+
+    inbound_resources is the sorted list of canonical resource keys
+    a token's ``inbound_resources`` column may reference (see
+    V170_INBOUND_RESOURCE_BY_ENDPOINT in middleware.auth_middleware).
+
+    source_systems is the sorted list of source_system primary keys
+    in inbound_source_systems_allowlist. New rows land via a SQL
+    operator path documented at docs/runbooks/inbound-source-systems.md;
+    the dropdown reflects them so admins can never typo a value the
+    FK would reject.
     """
     from flask import current_app
+    from middleware.auth_middleware import V170_INBOUND_RESOURCE_BY_ENDPOINT
 
     event_types = sorted({entry[0] for entry in V150_CATALOG})
     registered = set(current_app.view_functions.keys())
@@ -134,7 +156,23 @@ def scope_catalog():
         for slug, flask_endpoint in V150_ENDPOINT_SLUGS.items()
         if flask_endpoint in registered
     )
-    return jsonify({"event_types": event_types, "endpoints": endpoints})
+    inbound_resources = sorted(set(V170_INBOUND_RESOURCE_BY_ENDPOINT.values()))
+    source_rows = g.db.execute(
+        text(
+            "SELECT source_system, kind FROM inbound_source_systems_allowlist "
+            " ORDER BY source_system"
+        )
+    ).fetchall()
+    source_systems = [
+        {"source_system": r.source_system, "kind": r.kind}
+        for r in source_rows
+    ]
+    return jsonify({
+        "event_types": event_types,
+        "endpoints": endpoints,
+        "inbound_resources": inbound_resources,
+        "source_systems": source_systems,
+    })
 
 
 @admin_bp.route("/tokens", methods=["POST"])
@@ -184,59 +222,71 @@ def create_token(validated):
                 400,
             )
 
+    # v1.7.0 Pipe B: source_system must exist in
+    # inbound_source_systems_allowlist. The DB FK enforces this on
+    # INSERT, but surfacing the error pre-INSERT lets the admin UI
+    # show a clear "unknown_source_system" body shape (mirrors V-210
+    # warehouse_id / event_types existence checks).
+    if validated.source_system:
+        row = g.db.execute(
+            text(
+                "SELECT 1 FROM inbound_source_systems_allowlist "
+                " WHERE source_system = :ss"
+            ),
+            {"ss": validated.source_system},
+        ).fetchone()
+        if row is None:
+            return (
+                jsonify(
+                    {
+                        "error": "unknown_source_system",
+                        "source_system": validated.source_system,
+                    }
+                ),
+                400,
+            )
+
     plaintext = secrets.token_urlsafe(32)
     token_hash = _hash_for_storage(plaintext)
 
+    base_cols = (
+        "token_name, token_hash, "
+        "warehouse_ids, event_types, endpoints, connector_id, "
+        "source_system, inbound_resources, mapping_override"
+    )
+    base_vals = (
+        ":name, :hash, "
+        ":wh_ids, :ev_types, :endpoints, :connector_id, "
+        ":source_system, :inbound_resources, :mapping_override"
+    )
+    base_params = {
+        "name": validated.token_name,
+        "hash": token_hash,
+        "wh_ids": validated.warehouse_ids,
+        "ev_types": validated.event_types,
+        "endpoints": validated.endpoints,
+        "connector_id": validated.connector_id,
+        "source_system": validated.source_system,
+        "inbound_resources": validated.inbound_resources,
+        "mapping_override": validated.mapping_override,
+    }
     if validated.expires_at is not None:
         result = g.db.execute(
             text(
-                """
-                INSERT INTO wms_tokens (
-                    token_name, token_hash,
-                    warehouse_ids, event_types, endpoints,
-                    connector_id, expires_at
-                ) VALUES (
-                    :name, :hash,
-                    :wh_ids, :ev_types, :endpoints,
-                    :connector_id, :expires_at
-                )
-                RETURNING token_id, created_at, rotated_at, expires_at, status
-                """
+                f"INSERT INTO wms_tokens ({base_cols}, expires_at) "
+                f"VALUES ({base_vals}, :expires_at) "
+                f"RETURNING token_id, created_at, rotated_at, expires_at, status"
             ),
-            {
-                "name": validated.token_name,
-                "hash": token_hash,
-                "wh_ids": validated.warehouse_ids,
-                "ev_types": validated.event_types,
-                "endpoints": validated.endpoints,
-                "connector_id": validated.connector_id,
-                "expires_at": validated.expires_at,
-            },
+            {**base_params, "expires_at": validated.expires_at},
         )
     else:
         result = g.db.execute(
             text(
-                """
-                INSERT INTO wms_tokens (
-                    token_name, token_hash,
-                    warehouse_ids, event_types, endpoints,
-                    connector_id
-                ) VALUES (
-                    :name, :hash,
-                    :wh_ids, :ev_types, :endpoints,
-                    :connector_id
-                )
-                RETURNING token_id, created_at, rotated_at, expires_at, status
-                """
+                f"INSERT INTO wms_tokens ({base_cols}) "
+                f"VALUES ({base_vals}) "
+                f"RETURNING token_id, created_at, rotated_at, expires_at, status"
             ),
-            {
-                "name": validated.token_name,
-                "hash": token_hash,
-                "wh_ids": validated.warehouse_ids,
-                "ev_types": validated.event_types,
-                "endpoints": validated.endpoints,
-                "connector_id": validated.connector_id,
-            },
+            base_params,
         )
     row = result.fetchone()
     # v1.5.1 V-208 (#141): one audit row per issuance. Scope snapshot
@@ -256,6 +306,9 @@ def create_token(validated):
             "event_types": list(validated.event_types),
             "endpoints": list(validated.endpoints),
             "connector_id": validated.connector_id,
+            "source_system": validated.source_system,
+            "inbound_resources": list(validated.inbound_resources),
+            "mapping_override": validated.mapping_override,
             "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         },
     )
@@ -287,7 +340,8 @@ def list_tokens():
             """
             SELECT token_id, token_name, warehouse_ids, event_types, endpoints,
                    connector_id, status, created_at, rotated_at, expires_at,
-                   revoked_at, last_used_at
+                   revoked_at, last_used_at,
+                   source_system, inbound_resources, mapping_override
               FROM wms_tokens
              ORDER BY created_at DESC
             """
@@ -419,7 +473,8 @@ def delete_token(token_id):
         text(
             "DELETE FROM wms_tokens WHERE token_id = :tid "
             "RETURNING token_id, token_name, warehouse_ids, event_types, "
-            "endpoints, connector_id, status"
+            "endpoints, connector_id, status, "
+            "source_system, inbound_resources, mapping_override"
         ),
         {"tid": token_id},
     ).fetchone()
@@ -440,6 +495,13 @@ def delete_token(token_id):
                 "endpoints": list(result.endpoints) if result.endpoints else [],
                 "connector_id": result.connector_id,
                 "status_at_delete": result.status,
+                "source_system": result.source_system,
+                "inbound_resources": (
+                    list(result.inbound_resources)
+                    if result.inbound_resources
+                    else []
+                ),
+                "mapping_override": bool(result.mapping_override),
             },
         },
     )

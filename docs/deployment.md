@@ -13,11 +13,15 @@
 git clone https://github.com/hightower-systems/sentry-wms.git
 cd sentry-wms
 cp .env.example .env
-# Generate the three required secrets and paste them into .env:
-#   JWT_SECRET            -- openssl rand -hex 32
-#   SENTRY_ENCRYPTION_KEY -- python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-#   REDIS_PASSWORD        -- python -c "import secrets; print(secrets.token_hex(32))"
-# docker compose will refuse to start if any of these are missing.
+# Generate the five required secrets and paste them into .env:
+#   JWT_SECRET                -- openssl rand -hex 32
+#   SENTRY_ENCRYPTION_KEY     -- python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   SENTRY_TOKEN_PEPPER       -- python -c "import secrets; print(secrets.token_hex(32))"
+#   SENTRY_PUBSUB_HMAC_KEY    -- python -c "import secrets; print(secrets.token_hex(32))"
+#   REDIS_PASSWORD            -- python -c "import secrets; print(secrets.token_hex(32))"
+# docker compose refuses to interpolate when any of these are missing,
+# and the api / dispatcher containers refuse to boot on weak / placeholder
+# values (V-201). Use the generators above for production deploys.
 docker compose up -d
 ```
 
@@ -37,6 +41,35 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 The overlay replaces the nginx admin with the Vite dev-server on port 3000
 and mounts `./api` and `./admin` into their containers for live reload.
+
+### Test database (v1.7.0+)
+
+The pytest suite TRUNCATEs ~40 tables at session start. To keep that
+wipe from destroying the application database, the conftest hard-fails
+unless `TEST_DATABASE_URL` is set to a separate database AND distinct
+from `DATABASE_URL`.
+
+The default docker-compose stack creates an empty `sentry_test`
+database during the postgres image's first-init (see
+`db/create-test-db.sql`). Run the suite with:
+
+```bash
+docker exec \
+  -e TEST_DATABASE_URL=postgresql://sentry:sentry@db:5432/sentry_test \
+  sentry-api pytest tests/
+```
+
+If you migrated from a pre-v1.7.0 stack, the existing postgres volume
+will not have the test database; run `docker compose down -v && docker
+compose up -d` to re-init from scratch, or create the test database
+manually:
+
+```bash
+docker exec sentry-db psql -U sentry -d postgres \
+  -c "CREATE DATABASE sentry_test;"
+docker exec -i sentry-db psql -U sentry -d sentry_test \
+  < db/schema.sql
+```
 
 ### Admin Login
 
@@ -99,6 +132,16 @@ JWT_SECRET=$(openssl rand -hex 32)
 
 # Connector credential vault (Fernet, base64, 32 bytes)
 SENTRY_ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
+# X-WMS-Token pepper (v1.5.0 #128). SHA256(pepper || plaintext) is the
+# stored hash; rotating the pepper invalidates every issued token.
+# Boot guard rejects short / whitespace / placeholder values (V-201).
+SENTRY_TOKEN_PEPPER=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Cross-worker pubsub HMAC (v1.6.1 #227 / #238). Signs the
+# webhook_subscription_events Redis channel envelope; required when the
+# dispatcher is enabled (default). Generate with:
+SENTRY_PUBSUB_HMAC_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 
 # Redis broker password (Celery)
 REDIS_PASSWORD=$(python -c "import secrets; print(secrets.token_hex(32))")

@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from functools import wraps
+from typing import Optional
 
 from flask import g, jsonify, request
 from sqlalchemy import text
@@ -298,6 +299,43 @@ V150_ENDPOINT_SLUGS = {
     "snapshot.inventory": "snapshot.snapshot_inventory",
 }
 
+# v1.7.0 Pipe B: inbound POST routes do NOT use the V150 endpoint-slug
+# scope; they use the wms_tokens.inbound_resources array (Decision-S
+# alignment, separate scope dimension from event_types). Map the Flask
+# endpoint name to the canonical resource key the token must list.
+# Adding a new /api/v1/inbound/* route means adding one entry here plus
+# wiring it in the admin UI's inbound-resources checkbox group.
+V170_INBOUND_RESOURCE_BY_ENDPOINT = {
+    "inbound.post_sales_orders":    "sales_orders",
+    "inbound.post_items":           "items",
+    "inbound.post_customers":       "customers",
+    "inbound.post_vendors":         "vendors",
+    "inbound.post_purchase_orders": "purchase_orders",
+}
+
+
+_V150_FLASK_ENDPOINTS = frozenset(V150_ENDPOINT_SLUGS.values())
+
+
+def _is_inbound_request(flask_endpoint: Optional[str], path: str) -> bool:
+    if flask_endpoint and flask_endpoint in V170_INBOUND_RESOURCE_BY_ENDPOINT:
+        return True
+    return path.startswith("/api/v1/inbound/")
+
+
+def _is_outbound_request(flask_endpoint: Optional[str], path: str) -> bool:
+    """v1.5 outbound surface: polling + snapshot. The decorator's
+    cross-direction guard refuses an inbound-only token (no event_types,
+    has inbound_resources) reaching this surface.
+
+    Recognised by Flask endpoint name (production routes register under
+    polling.* / snapshot.*) OR by path prefix (covers test probes
+    registered under a non-prefixed URL but the production endpoint
+    name; see test_wms_token_decorator.probe_app)."""
+    if flask_endpoint and flask_endpoint in _V150_FLASK_ENDPOINTS:
+        return True
+    return path.startswith("/api/v1/events") or path.startswith("/api/v1/snapshot")
+
 
 def require_wms_token(f):
     """Gate the decorated endpoint on a valid X-WMS-Token header.
@@ -326,6 +364,17 @@ def require_wms_token(f):
       slug list does not include the route (kept distinct because
       403 is a different HTTP semantic from 401 and the auth check
       already succeeded).
+    - 403 ``cross_direction_scope_violation`` (v1.7.0) when the
+      token tries to cross the inbound / outbound boundary: an
+      inbound-only token (has inbound_resources, no event_types)
+      reaching /api/v1/events* or /api/v1/snapshot/*, or an
+      outbound-only token (no source_system) reaching
+      /api/v1/inbound/*. Distinct error_kind from
+      endpoint_scope_violation so audit and rate-limit dashboards
+      can separate "wrong slug" from "wrong direction".
+    - 403 ``inbound_resource_scope_violation`` (v1.7.0) when an
+      inbound token's inbound_resources array does not list the
+      target resource for an /api/v1/inbound/<resource> route.
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -349,26 +398,79 @@ def require_wms_token(f):
                 row["status"], row.get("token_id"),
             )
             return jsonify({"error": "invalid_token"}), 401
+        # v1.7.0 #278: also reject when revoked_at is set, regardless of
+        # status. Pre-fix, a direct-DB write of the form
+        # `UPDATE wms_tokens SET revoked_at = NOW()` -- without also
+        # setting status='revoked' -- produced a row that the status
+        # check above let through. Mig 048's trigger now flips status
+        # in lock-step on the same UPDATE, so in normal operation this
+        # second condition is redundant. It stays as defense-in-depth:
+        # if a future schema or trigger change drops the lock-step
+        # behavior, this gate still de-authenticates the token.
+        if row.get("revoked_at") is not None:
+            _INVALID_LOGGER.debug(
+                "wms_token: revoked_at populated for token_id=%s",
+                row.get("token_id"),
+            )
+            return jsonify({"error": "invalid_token"}), 401
         if row.get("expires_at") and datetime.now(timezone.utc) > row["expires_at"]:
             _INVALID_LOGGER.debug(
                 "wms_token: expired token_id=%s", row.get("token_id")
             )
             return jsonify({"error": "invalid_token"}), 401
-        # v1.5.1 V-200: resolve the request's Flask endpoint to the
-        # set of slugs it belongs to, intersect with the token's
-        # allowed slugs. Unknown Flask endpoint here would be a code
-        # bug (a new @require_wms_token route without a matching
-        # V150_ENDPOINT_SLUGS entry); treat as 403 fail-closed rather
-        # than letting an unlisted route bypass scope.
-        allowed_flask = {
-            V150_ENDPOINT_SLUGS[slug]
-            for slug in (row.get("endpoints") or [])
-            if slug in V150_ENDPOINT_SLUGS
-        }
-        if request.endpoint not in allowed_flask:
+
+        # v1.7.0 Pipe B: route the scope check based on which surface
+        # the request hit. Inbound POST routes use the inbound_resources
+        # array (Decision-S; separate dimension from event_types).
+        # Outbound polling / snapshot routes use the V150 slug list.
+        is_inbound = _is_inbound_request(request.endpoint, request.path)
+        is_outbound = _is_outbound_request(request.endpoint, request.path)
+
+        if is_inbound:
+            # Cross-direction: an inbound POST requires both a
+            # source_system binding and at least one inbound_resources
+            # entry. Outbound-only tokens (source_system NULL,
+            # inbound_resources empty) are refused at the boundary
+            # without leaking which dimension was missing.
+            if not row.get("source_system") or not row.get("inbound_resources"):
+                return jsonify({"error": "cross_direction_scope_violation"}), 403
+            target = V170_INBOUND_RESOURCE_BY_ENDPOINT.get(request.endpoint)
+            if target is None or target not in (row.get("inbound_resources") or []):
+                return jsonify({"error": "inbound_resource_scope_violation"}), 403
+        elif is_outbound:
+            # Inbound-only token (has inbound_resources, no event_types)
+            # cannot read outbound. Tokens with both directions present
+            # fall through to the V150 slug check below.
+            if (
+                row.get("inbound_resources")
+                and not row.get("event_types")
+            ):
+                return jsonify({"error": "cross_direction_scope_violation"}), 403
+            # v1.5.1 V-200 endpoint-slug enforcement (unchanged).
+            allowed_flask = {
+                V150_ENDPOINT_SLUGS[slug]
+                for slug in (row.get("endpoints") or [])
+                if slug in V150_ENDPOINT_SLUGS
+            }
+            if request.endpoint not in allowed_flask:
+                return jsonify({"error": "endpoint_scope_violation"}), 403
+        else:
+            # Unknown @require_wms_token-protected route. Fail closed:
+            # adding a route under @require_wms_token without claiming
+            # one of the two surface prefixes is a wiring bug. This
+            # mirrors the V-200 fail-closed posture for unmapped
+            # endpoint slugs.
             return jsonify({"error": "endpoint_scope_violation"}), 403
+
         g.current_token = row
         g.current_user = {"token_id": row["token_id"], "kind": "wms_token"}
         return f(*args, **kwargs)
 
+    # v1.7.0 CI lint marker: the inbound-route lint walks each
+    # @require_wms_token-protected view's wrapper chain looking for
+    # this attribute so a new POST landing without the decorator
+    # surfaces at CI time. functools.wraps copies __qualname__ from
+    # the wrapped function, so the chain alone doesn't reveal the
+    # decorator was applied; an explicit attribute does.
+    wrapper.__wms_token_protected__ = True
     return wrapper

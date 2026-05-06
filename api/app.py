@@ -187,6 +187,77 @@ def create_app():
     from services.webhook_dispatcher import env_validator as _dispatcher_env
     _dispatcher_env.validate_or_die()
 
+    # v1.7.0 R6: SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS guards the
+    # source_payload retention beat task. A typo'd or zero value would
+    # silently wipe forensic context; refuse to boot below the 7-day
+    # hard floor (V-201 shape). Default 90 days when unset.
+    _retention_raw = os.getenv("SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS")
+    if _retention_raw is not None and _retention_raw.strip() != "":
+        try:
+            _retention_days = int(_retention_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS={_retention_raw!r} "
+                f"is not an integer. Unset for the default (90), or set to a "
+                f"value >= 7."
+            )
+        if _retention_days < 7:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_SOURCE_PAYLOAD_RETENTION_DAYS={_retention_days} "
+                f"is below the 7-day hard floor. A typo'd or zero value would "
+                f"wipe forensic context; refusing to boot. Set to >= 7 or "
+                f"unset for the 90-day default."
+            )
+
+    # v1.7.0 #273: SENTRY_INBOUND_MAX_BODY_KB declares the per-request
+    # body-size cap on inbound POSTs. Pre-#273 get_max_body_kb() silently
+    # clamped to [16, 4096] and fell back to 256 on parse failure -- a
+    # typo'd value (e.g. 42096 vs 4096) silently degraded with no visible
+    # signal. Match the retention-days guard shape: refuse to boot on
+    # parse failure or out-of-range values.
+    _max_body_raw = os.getenv("SENTRY_INBOUND_MAX_BODY_KB")
+    if _max_body_raw is not None and _max_body_raw.strip() != "":
+        try:
+            _max_body_kb = int(_max_body_raw)
+        except ValueError:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_MAX_BODY_KB={_max_body_raw!r} is not an "
+                f"integer. Unset for the default (256), or set to a value "
+                f"in [16, 4096]."
+            )
+        if _max_body_kb < 16 or _max_body_kb > 4096:
+            raise RuntimeError(
+                f"SENTRY_INBOUND_MAX_BODY_KB={_max_body_kb} is outside the "
+                f"[16, 4096] range. A typo'd value would silently degrade "
+                f"the body-size cap; refusing to boot. Set to a value in "
+                f"[16, 4096] or unset for the 256 KB default."
+            )
+
+    # v1.7.0 Pipe B: load every mapping document under
+    # SENTRY_INBOUND_MAPPINGS_DIR (default /db/mappings) at boot. Cross-checks
+    # against inbound_source_systems_allowlist; an allowlisted source_system
+    # without a doc, or a doc without an allowlist row, refuses boot. One
+    # MAPPING_DOCUMENT_LOAD audit_log row per loaded doc establishes "which
+    # mapping was active when this inbound was processed" forensic chain.
+    #
+    # The default is absolute (/db/mappings, matching the docker-compose
+    # ./db:/db volume mount) rather than relative (db/mappings) so the
+    # path resolves to the repo-root db/mappings/ directory regardless of
+    # the api container's working directory. Pre-#279 the relative default
+    # leaked the api/-rooted CWD into the path; operators following the
+    # repo-root db/mappings/.gitkeep breadcrumb had their docs silently
+    # ignored.
+    from services.mapping_loader import boot_load as _mapping_boot_load
+    mappings_dir = os.getenv("SENTRY_INBOUND_MAPPINGS_DIR", "/db/mappings")
+    if not os.path.isdir(mappings_dir):
+        # Fresh checkouts may not have the dir; create empty rather than
+        # die so an operator running with no inbound source_systems can
+        # still boot. The cross-check inside boot_load() covers the
+        # allowlist-vs-docs mismatch case loudly.
+        os.makedirs(mappings_dir, exist_ok=True)
+    app.config["SENTRY_INBOUND_MAPPINGS_DIR"] = mappings_dir
+    app.config["MAPPING_REGISTRY"] = _mapping_boot_load(database_url, mappings_dir)
+
     # CORS - restrict to known origins, configurable via env var
     cors_origins = os.getenv(
         "CORS_ORIGINS",
@@ -213,6 +284,13 @@ def create_app():
         token_cache.start_invalidation_subscriber(_broker_url)
     else:
         token_cache.start_invalidation_subscriber(None)
+
+    # v1.7.0 #274: Postgres LISTEN subscriber for direct-DB revokes.
+    # The wms_tokens revoked_at trigger (mig 048) fires pg_notify on
+    # every NULL -> NOT NULL transition regardless of who issued the
+    # UPDATE. Independent of Redis: a deployment without Redis still
+    # gets sub-second cross-worker invalidation for direct-DB revokes.
+    token_cache.start_pg_listen_subscriber(database_url)
 
     # Security response headers
     # V-110: fonts are now self-hosted under admin/public/fonts and
@@ -308,6 +386,7 @@ def create_app():
     from routes.warehouses import warehouses_bp
     from routes.polling import polling_bp
     from routes.snapshot import snapshot_bp
+    from routes.inbound import inbound_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(lookup_bp, url_prefix="/api/lookup")
@@ -326,6 +405,10 @@ def create_app():
     # v1.5.0 #133: bulk snapshot paging. Shares the same
     # @require_wms_token surface as polling, distinct 2/min rate limit.
     app.register_blueprint(snapshot_bp, url_prefix="/api/v1/snapshot")
+    # v1.7.0 Pipe B: inbound surface. Currently exposes only the
+    # documentation-aid /mapping-schema endpoint. Per-resource POST
+    # endpoints land in subsequent commits and reuse this blueprint.
+    app.register_blueprint(inbound_bp, url_prefix="/api/v1/inbound")
 
     # Import connector modules so they auto-register with the registry
     import connectors.example  # noqa: F401

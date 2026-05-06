@@ -1,5 +1,22 @@
 # API Reference
 
+This document covers the warehouse-floor and admin REST surface (every route prefixed with `/api/`, mostly used by the mobile app and the admin panel). The integration / connector surface lives elsewhere -- see the section below.
+
+## Connector / integration surface
+
+These v1 surfaces have their own machine-readable specs and runbooks rather than being repeated in this document:
+
+| Surface | Routes | Auth | Spec |
+|---|---|---|---|
+| Outbound polling (v1.5.0) | `GET /api/v1/events`, `GET /api/v1/events/ack`, `GET /api/v1/events/types`, `GET /api/v1/events/schema`, `GET /api/v1/snapshot/inventory` | `X-WMS-Token` | [events catalog](events/README.md) |
+| Outbound webhooks (v1.6.0) | `/api/admin/webhooks/*` (CRUD + DLQ + replay) | cookie + CSRF | [webhooks API](api/webhooks.md) |
+| Inbound writes (v1.7.0) | `POST /api/v1/inbound/{sales_orders,items,customers,vendors,purchase_orders}`, `GET /api/v1/inbound/mapping-schema` | `X-WMS-Token` | [inbound OpenAPI](api/inbound-openapi.yaml), [mapping JSON Schema](api/mapping-document-schema.json) |
+| Admin inbound observability (v1.7.0) | `GET /api/admin/inbound/activity`, `GET /api/admin/inbound/activity/{resource}/{inbound_id}` | cookie + CSRF | inbound is read-only after acceptance; no mutation endpoints |
+
+Tokens are managed through the admin panel's API tokens page. Both `X-WMS-Token` issuance and the cross-direction scope rules (a token cannot reach both inbound and outbound surfaces unless explicitly opted into both) are documented in [SECURITY.md](https://github.com/hightower-systems/sentry-wms/blob/main/SECURITY.md).
+
+---
+
 All endpoints are prefixed with `/api`. The API supports two authentication paths:
 
 **Bearer token (mobile, CLI, any programmatic caller):**

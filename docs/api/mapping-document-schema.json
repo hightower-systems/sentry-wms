@@ -1,0 +1,236 @@
+{
+  "$defs": {
+    "CrossSystemLookup": {
+      "additionalProperties": false,
+      "properties": {
+        "source_system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source System"
+        },
+        "source_type": {
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_type"
+      ],
+      "title": "CrossSystemLookup",
+      "type": "object"
+    },
+    "DerivedExpression": {
+      "additionalProperties": false,
+      "properties": {
+        "expression": {
+          "title": "Expression",
+          "type": "string"
+        },
+        "when_present": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When Present"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "title": "DerivedExpression",
+      "type": "object"
+    },
+    "FieldMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical": {
+          "title": "Canonical",
+          "type": "string"
+        },
+        "cross_system_lookup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CrossSystemLookup"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "default": {
+          "default": null,
+          "title": "Default"
+        },
+        "derived": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DerivedExpression"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enum_values": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enum Values"
+        },
+        "rename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rename"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "source_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Path"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canonical",
+        "type"
+      ],
+      "title": "FieldMapping",
+      "type": "object"
+    },
+    "LineItemMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_path": {
+          "title": "Canonical Path",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FieldMapping"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "source_path": {
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_path",
+        "canonical_path",
+        "fields"
+      ],
+      "title": "LineItemMapping",
+      "type": "object"
+    },
+    "ResourceMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_type": {
+          "title": "Canonical Type",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FieldMapping"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "line_items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LineItemMapping"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "canonical_type",
+        "fields"
+      ],
+      "title": "ResourceMapping",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "mapping_version": {
+      "title": "Mapping Version",
+      "type": "string"
+    },
+    "resources": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ResourceMapping"
+      },
+      "title": "Resources",
+      "type": "object"
+    },
+    "source_system": {
+      "title": "Source System",
+      "type": "string"
+    },
+    "version_compare": {
+      "title": "Version Compare",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mapping_version",
+    "source_system",
+    "version_compare",
+    "resources"
+  ],
+  "title": "SentryWMS Inbound Mapping Document",
+  "type": "object"
+}
