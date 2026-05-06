@@ -886,6 +886,32 @@ CREATE TRIGGER tr_wms_tokens_audit_truncate
     AFTER TRUNCATE ON wms_tokens
     FOR EACH STATEMENT EXECUTE FUNCTION wms_tokens_audit_truncate();
 
+-- v1.7.0 #274: defense-in-depth for token revocation cache invalidation.
+-- Identical DDL lives in db/migrations/048_wms_tokens_revocation_notify.sql
+-- for upgrade paths. AFTER UPDATE OF revoked_at fires
+-- pg_notify('wms_token_revocations', token_id) on NULL -> NOT NULL
+-- transitions so a direct-DB revoke triggers the same cross-worker
+-- cache invalidation as the Flask admin path. See migration file.
+CREATE OR REPLACE FUNCTION wms_tokens_revocation_notify()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.revoked_at IS NOT NULL
+       AND (OLD.revoked_at IS NULL OR OLD.revoked_at <> NEW.revoked_at)
+    THEN
+        PERFORM pg_notify(
+            'wms_token_revocations',
+            NEW.token_id::text
+        );
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER tr_wms_tokens_revocation_notify
+    AFTER UPDATE OF revoked_at ON wms_tokens
+    FOR EACH ROW
+    EXECUTE FUNCTION wms_tokens_revocation_notify();
+
 -- ============================================================
 -- CROSS-SYSTEM MAPPINGS (v1.7.0 Pipe B canonical bridge)
 -- ============================================================

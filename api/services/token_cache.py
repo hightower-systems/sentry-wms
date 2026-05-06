@@ -53,6 +53,14 @@ TTL_SECONDS = 60
 # Every worker subscribes; admin rotate / revoke / delete publishes.
 INVALIDATION_CHANNEL = "wms_token_events"
 
+# v1.7.0 #274: Postgres NOTIFY channel for the wms_tokens revoked_at
+# trigger. The trigger fires on NULL -> NOT NULL transitions of
+# revoked_at regardless of whether the writer is the Flask admin path
+# or a direct DB UPDATE. The LISTEN subscriber below converges on the
+# same _invalidate_token_id_local effect as the Redis subscriber, so
+# direct-DB revokes get sub-second cache eviction across workers.
+PG_NOTIFY_REVOCATION_CHANNEL = "wms_token_revocations"
+
 
 # {token_hash: (row_dict_or_none, fetched_at_epoch_seconds)}
 _cache: Dict[str, Tuple[Optional[dict], float]] = {}
@@ -65,6 +73,13 @@ _lock = threading.Lock()
 _redis_publisher = None
 _subscriber_thread: Optional[threading.Thread] = None
 _subscriber_started = threading.Event()
+
+# v1.7.0 #274: Postgres LISTEN subscriber for the revoked_at trigger.
+# Independent of the Redis subscriber so a deployment without Redis
+# still propagates direct-DB revokes within one round-trip.
+_pg_listen_thread: Optional[threading.Thread] = None
+_pg_listen_started = threading.Event()
+_pg_listen_stop = threading.Event()
 
 
 def _fetch_by_hash(token_hash: str) -> Optional[dict]:
@@ -286,6 +301,107 @@ def start_invalidation_subscriber(redis_url: Optional[str]) -> None:
     )
 
 
+def start_pg_listen_subscriber(database_url: Optional[str]) -> None:
+    """v1.7.0 #274: Postgres LISTEN subscriber for direct-DB revokes.
+
+    A daemon thread opens a dedicated psycopg2 connection (LISTEN
+    requires its own session and AUTOCOMMIT isolation) and dispatches
+    every NOTIFY on `wms_token_revocations` to
+    `_invalidate_token_id_local`. The trigger published in mig 048
+    fires AFTER UPDATE OF revoked_at so the LISTEN path catches every
+    revoke regardless of whether the writer is the Flask admin handler
+    or a direct DB UPDATE.
+
+    Idempotent: safe to call more than once per process.
+    `database_url` of None disables the LISTEN path; the per-entry TTL
+    remains the only revocation backstop in that mode.
+    """
+    global _pg_listen_thread
+    if _pg_listen_started.is_set():
+        return
+    if not database_url:
+        LOGGER.info(
+            "token_cache: no database URL; pg LISTEN disabled "
+            "(direct-DB revokes fall back to %ds TTL)",
+            TTL_SECONDS,
+        )
+        _pg_listen_started.set()
+        return
+
+    try:
+        import psycopg2  # noqa: WPS433 -- localised to keep test boot light
+        from psycopg2 import extensions as _ext  # noqa: WPS433
+    except ImportError:
+        LOGGER.warning(
+            "token_cache: psycopg2 unavailable; pg LISTEN disabled "
+            "(direct-DB revokes fall back to %ds TTL)",
+            TTL_SECONDS,
+        )
+        _pg_listen_started.set()
+        return
+
+    try:
+        conn = psycopg2.connect(database_url)
+        conn.set_isolation_level(_ext.ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute(f"LISTEN {PG_NOTIFY_REVOCATION_CHANNEL}")
+    except Exception:  # noqa: BLE001
+        LOGGER.warning(
+            "token_cache: failed to open pg LISTEN connection; "
+            "direct-DB revokes fall back to %ds TTL",
+            TTL_SECONDS,
+        )
+        _pg_listen_started.set()
+        return
+
+    def _run():
+        # select-loop with a short timeout so the thread can exit when
+        # `_pg_listen_stop` is set during test teardown without waiting
+        # for a NOTIFY to wake it.
+        import select
+        try:
+            while not _pg_listen_stop.is_set():
+                rlist, _, _ = select.select([conn], [], [], 1.0)
+                if not rlist:
+                    continue
+                conn.poll()
+                while conn.notifies:
+                    notify = conn.notifies.pop(0)
+                    try:
+                        token_id = int(notify.payload)
+                    except (TypeError, ValueError):
+                        LOGGER.warning(
+                            "token_cache: malformed pg NOTIFY payload "
+                            "ignored: %r",
+                            notify.payload,
+                        )
+                        continue
+                    _invalidate_token_id_local(token_id)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.info(
+                "token_cache: pg LISTEN subscriber exiting (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+        finally:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    _pg_listen_thread = threading.Thread(
+        target=_run,
+        daemon=True,
+        name="wms-token-cache-pg-listen",
+    )
+    _pg_listen_thread.start()
+    _pg_listen_started.set()
+    LOGGER.info(
+        "token_cache: pg LISTEN subscriber started on channel %s",
+        PG_NOTIFY_REVOCATION_CHANNEL,
+    )
+
+
 def _testing_override_ttl(new_ttl_seconds: float) -> None:
     """Test-only: swap the module TTL to make TTL-boundary tests fast.
 
@@ -300,7 +416,11 @@ def _testing_reset_subscriber() -> None:
     """Test-only: reset the subscriber-started sentinel so a test can
     force a re-initialisation with a different Redis configuration
     (e.g., simulating "Redis unavailable" vs "Redis up")."""
-    global _redis_publisher, _subscriber_thread
+    global _redis_publisher, _subscriber_thread, _pg_listen_thread
     _subscriber_started.clear()
     _redis_publisher = None
     _subscriber_thread = None
+    _pg_listen_stop.set()
+    _pg_listen_started.clear()
+    _pg_listen_thread = None
+    _pg_listen_stop.clear()

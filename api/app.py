@@ -277,6 +277,13 @@ def create_app():
     else:
         token_cache.start_invalidation_subscriber(None)
 
+    # v1.7.0 #274: Postgres LISTEN subscriber for direct-DB revokes.
+    # The wms_tokens revoked_at trigger (mig 048) fires pg_notify on
+    # every NULL -> NOT NULL transition regardless of who issued the
+    # UPDATE. Independent of Redis: a deployment without Redis still
+    # gets sub-second cross-worker invalidation for direct-DB revokes.
+    token_cache.start_pg_listen_subscriber(database_url)
+
     # Security response headers
     # V-110: fonts are now self-hosted under admin/public/fonts and
     # served by the admin nginx container. Neither style-src nor
