@@ -74,3 +74,33 @@ Regression coverage in `api/tests/test_audit_log_chain_concurrency.py`.
 both per-row tamper-evidence and strict-by-log_id chain integrity.
 Returns the offending log_id on the first break, or NULL when the
 chain is intact.
+
+## inbound_source_systems_allowlist forensic shape (#275)
+
+The `inbound_source_systems_allowlist_audit` table receives one row
+per DELETE statement and one row per TRUNCATE statement. The DELETE
+path is unconditional: any DELETE on the allowlist writes a forensic
+row regardless of how many rows were deleted (zero-row DELETEs still
+write).
+
+The TRUNCATE path is **CASCADE-only**. Plain
+`TRUNCATE inbound_source_systems_allowlist` raises
+`ForeignKeyViolation` before the AFTER TRUNCATE trigger fires because
+the v1.7 inbound tables (`inbound_sales_orders`, `inbound_items`,
+`inbound_customers`, `inbound_purchase_orders`, `inbound_vendors`)
+and `cross_system_mappings` carry NOT NULL FKs into
+`source_system`, and `wms_tokens.source_system` carries a nullable
+FK. Postgres refuses to truncate a table referenced by an FK without
+CASCADE, so the trigger never executes on the plain form.
+
+`TRUNCATE inbound_source_systems_allowlist CASCADE` is therefore the
+sole path that writes a forensic audit row. An operator running a
+direct plain TRUNCATE leaves a Postgres error in the server log but
+no `inbound_source_systems_allowlist_audit` entry; investigators
+auditing forensic state should treat the absence of an audit row as
+"no successful TRUNCATE happened on this table" rather than
+"someone bypassed the audit". The CASCADE path is what to look for
+when reconstructing operator activity.
+
+Regression coverage in
+`api/tests/test_inbound_source_systems_allowlist_truncate.py`.

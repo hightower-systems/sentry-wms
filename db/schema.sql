@@ -779,6 +779,16 @@ BEGIN
 END;
 $$;
 
+-- v1.7.0 #275: this AFTER TRUNCATE trigger fires only on
+-- `TRUNCATE inbound_source_systems_allowlist CASCADE`. A plain
+-- `TRUNCATE inbound_source_systems_allowlist` raises ForeignKeyViolation
+-- before the trigger fires because six v1.7 tables (inbound_sales_orders,
+-- inbound_items, inbound_customers, inbound_purchase_orders,
+-- inbound_vendors, cross_system_mappings) and one nullable referencer
+-- (wms_tokens) declare FKs into source_system. The CASCADE form is
+-- therefore the sole path that writes a forensic audit row; a direct
+-- plain-TRUNCATE attempt leaves a Postgres error in the logs but no
+-- audit_log entry. See docs/audit-log.md for the operator-facing shape.
 CREATE TRIGGER tr_inbound_source_systems_allowlist_audit_truncate
     AFTER TRUNCATE ON inbound_source_systems_allowlist
     FOR EACH STATEMENT EXECUTE FUNCTION inbound_source_systems_allowlist_audit_truncate();
