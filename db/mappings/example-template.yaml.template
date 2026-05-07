@@ -208,6 +208,49 @@ resources:
         type: "string"
         required: false
 
+      # ----- ADVANCED: per-field decimal bounds (v1.8.0 #285) -----
+      # type='decimal' fields accept four optional bound attributes
+      # that mirror the canonical column's NUMERIC(p,s) precision +
+      # any business-level value range. When declared, the inbound
+      # handler returns 422 mapping_apply_error on violation rather
+      # than letting Postgres silently round excess scale or 500 on
+      # excess precision:
+      #
+      #   max_digits      -- max significant digits (mirror NUMERIC(p,...))
+      #   decimal_places  -- max digits after the decimal point (mirror NUMERIC(...,s))
+      #   ge              -- value must be >= this (lower bound, inclusive)
+      #   le              -- value must be <= this (upper bound, inclusive)
+      #
+      # Bounds are optional; omitting them preserves the v1.7 pass-
+      # through behaviour. Declared values are quoted strings so YAML
+      # does not coerce them to float and lose precision.
+
+      - canonical: "order_total"
+        # canonical column: sales_orders.order_total NUMERIC(12,2).
+        # Bounds match the column exactly so a connector author sees
+        # the constraint as a clear 422 with the field name, rather
+        # than a silent round (excess scale -> Postgres rounds to 2dp)
+        # or a 500 (excess precision -> NumericValueOutOfRange).
+        source_path: "$.order.total"
+        type: "decimal"
+        required: false
+        max_digits: 12
+        decimal_places: 2
+        ge: "0"
+        le: "9999999999.99"
+
+      - canonical: "customer_shipping_paid"
+        # canonical column: sales_orders.customer_shipping_paid
+        # NUMERIC(12,2). Same bounds as order_total. Consumed by
+        # dockd's carrier optimization engine in v1.9.
+        source_path: "$.order.shipping"
+        type: "decimal"
+        required: false
+        max_digits: 12
+        decimal_places: 2
+        ge: "0"
+        le: "9999999999.99"
+
       - canonical: "status"
         # The canonical column has DEFAULT 'OPEN'. If the source
         # system emits a status, declare an enum mapping so the
