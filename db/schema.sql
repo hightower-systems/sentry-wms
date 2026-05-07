@@ -829,10 +829,15 @@ CREATE TRIGGER tr_inbound_source_systems_allowlist_audit_truncate
 --                        purchase_orders).
 --   mapping_override  -- BOOLEAN capability flag for per-request mapping
 --                        overrides; default false.
+--   mapping_overrides -- JSONB per-token static override map (v1.8.0
+--                        #284, mig 052). Consulted only when
+--                        mapping_override is TRUE.
 --
 -- The identical DDL lives in db/migrations/023_wms_tokens.sql for
 -- deployments created before v1.5.0; the v1.7 columns are added by
--- db/migrations/037_wms_tokens_inbound_columns.sql.
+-- db/migrations/037_wms_tokens_inbound_columns.sql; the v1.8
+-- mapping_overrides JSONB is added by
+-- db/migrations/052_mapping_override_per_token.sql.
 -- ============================================================
 
 CREATE TABLE wms_tokens (
@@ -846,6 +851,7 @@ CREATE TABLE wms_tokens (
     source_system     VARCHAR(64)   REFERENCES inbound_source_systems_allowlist(source_system),
     inbound_resources TEXT[]        NOT NULL DEFAULT '{}',
     mapping_override  BOOLEAN       NOT NULL DEFAULT FALSE,
+    mapping_overrides JSONB         NOT NULL DEFAULT '{}'::jsonb,
     status            VARCHAR(16)   NOT NULL DEFAULT 'active',
     created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     rotated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
