@@ -1,17 +1,29 @@
 """
-V-007: scrub credential fragments from error text before logging or
-persisting to sync_state.last_error_message.
+Scrub credential fragments from text before logging or persisting to
+sync_state.last_error_message.
 
-Primary target: URL userinfo (https://user:pass@host). If any connector
-ever builds such a URL and the request fails, the exception message
-often embeds the whole URL verbatim. urlparse separates the userinfo
-cleanly so we can redact it without mangling the rest.
+URL userinfo and sensitive query parameters: a URL like
+https://user:pass@host/path?api_key=SECRET is decomposed via urlparse
+so userinfo and known credential-shaped query keys are redacted
+without mangling the rest of the URL.
 
-Secondary target: common credential-like query parameters
-(api_key, token, access_token, secret, password). Values are replaced
-with "REDACTED". This is best-effort; it does not replace the
-guarantee that credentials should live in Authorization headers, not
-URLs.
+Credential pattern catalog (#52): connectors do not always raise an
+exception that embeds a URL. A RuntimeError("API rejected key
+'sk-abc123' for account 42") would slip through URL-only scrubbing.
+CREDENTIAL_PATTERNS catches the credential shapes seen on the
+connector surface today: Sentry's own bearer tokens, AWS access keys,
+generic Bearer headers, key=value connection-string fragments,
+NetSuite OAuth fragments, JWT-shaped strings, plus a heuristic
+catch-all for long base64-ish strings near credential keywords.
+
+Pattern false positives are acceptable: a long base64-ish string near
+the word "key" but not actually a credential gets redacted. Defence
+favours over-redaction for log content. New connector types that
+introduce a new credential shape add a pattern entry rather than a
+new helper.
+
+scrub_secrets is idempotent: applying twice yields the same result as
+applying once.
 """
 
 import re
@@ -37,7 +49,6 @@ def _scrub_one_url(match: "re.Match") -> str:
 
     changed = False
 
-    # Drop userinfo (username[:password]) entirely.
     if parsed.username or parsed.password:
         netloc = parsed.hostname or ""
         if parsed.port:
@@ -45,7 +56,6 @@ def _scrub_one_url(match: "re.Match") -> str:
         parsed = parsed._replace(netloc=netloc)
         changed = True
 
-    # Redact sensitive query parameter values.
     if parsed.query:
         pairs = parse_qsl(parsed.query, keep_blank_values=True)
         new_pairs = []
@@ -63,8 +73,50 @@ def _scrub_one_url(match: "re.Match") -> str:
     return urlunparse(parsed)
 
 
+def _scrub_urls(text: str) -> str:
+    return _URL_RE.sub(_scrub_one_url, text)
+
+
+def _scrub_long_credential_after_keyword(m: "re.Match") -> str:
+    return m.group(0).replace(m.group(1), "<REDACTED>")
+
+
+CREDENTIAL_PATTERNS = [
+    (re.compile(r"wms_t_[A-Za-z0-9_\-]{20,}"),
+     "wms_t_<REDACTED>"),
+
+    (re.compile(r"AKIA[0-9A-Z]{16}"),
+     "AKIA<REDACTED>"),
+
+    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9_.\-=]{20,}"),
+     "Bearer <REDACTED>"),
+
+    (re.compile(r"(?i)\b(password|pwd|passwd|secret|api[_-]?key|token|auth)=([^;&\s]+)"),
+     r"\1=<REDACTED>"),
+
+    (re.compile(r'(?i)oauth_(?:token|signature|consumer_key|consumer_secret)["\s=:]+[A-Za-z0-9%+/=_\-]{16,}'),
+     "oauth_<REDACTED>"),
+
+    (re.compile(r"\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b"),
+     "<JWT_REDACTED>"),
+
+    (re.compile(r"(?i)(?:key|token|secret|password)\b[^a-z0-9]{1,32}([A-Za-z0-9+/=_\-]{32,})"),
+     _scrub_long_credential_after_keyword),
+]
+
+
+def scrub_credentials(text: str) -> str:
+    """Apply every credential pattern in order. Idempotent."""
+    if not text:
+        return text
+    for pattern, replacement in CREDENTIAL_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 def scrub_secrets(text) -> str:
-    """Return ``text`` with URL userinfo and sensitive query values stripped.
+    """Return ``text`` with URL userinfo, sensitive query values, and
+    known credential fragments redacted.
 
     ``text`` may be anything str-convertible. None -> empty string.
     """
@@ -73,4 +125,6 @@ def scrub_secrets(text) -> str:
     s = str(text)
     if not s:
         return s
-    return _URL_RE.sub(_scrub_one_url, s)
+    s = _scrub_urls(s)
+    s = scrub_credentials(s)
+    return s
