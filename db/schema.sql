@@ -191,6 +191,12 @@ CREATE TABLE sales_orders (
     -- inbound consumers populate (per-order, not per-customer).
     billing_address TEXT,
     shipping_address TEXT,
+    -- v1.8.0 (#282): values from the source ERP. Currency implied per
+    -- Sentry instance (no per-order currency in v1.8). Wire-level
+    -- range / precision validation lives in the Pydantic inbound
+    -- schema; the column itself is permissive.
+    order_total            NUMERIC(12,2),
+    customer_shipping_paid NUMERIC(12,2),
     order_date TIMESTAMPTZ,
     ship_by_date DATE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
