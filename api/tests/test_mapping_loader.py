@@ -476,3 +476,183 @@ resources:
             {"sku": "A", "quantity": 1},
             {"sku": "B", "quantity": 2},
         ]
+
+
+# ----------------------------------------------------------------------
+# v1.8.0 (#285) per-field decimal coercion + bounds
+# ----------------------------------------------------------------------
+
+
+from decimal import Decimal
+
+
+def _decimal_doc(extra_attrs: str = "", value_path: str = "$.amount") -> str:
+    return f"""\
+mapping_version: "1.0"
+source_system: "acme"
+version_compare: "iso_timestamp"
+resources:
+  sales_orders:
+    canonical_type: "sales_order"
+    fields:
+      - canonical: "so_number"
+        source_path: "$.orderNumber"
+        type: "string"
+        required: true
+      - canonical: "warehouse_id"
+        source_path: "$.warehouseId"
+        type: "integer"
+        required: true
+      - canonical: "order_total"
+        source_path: "{value_path}"
+        type: "decimal"
+{extra_attrs}"""
+
+
+class TestDecimalCoercion:
+    def test_no_bounds_passes_value_through_as_decimal(self, tmp_mappings_dir):
+        # Backward-compat for existing decimal mappings: no bounds
+        # declared -> pass-through behaviour, but we now coerce to
+        # Decimal so downstream Postgres NUMERIC handling is explicit.
+        _write(tmp_mappings_dir, "acme", _decimal_doc())
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        out = apply(doc, "sales_orders", {
+            "orderNumber": "SO-1", "warehouseId": 1, "amount": "12.99",
+        })
+        assert out["order_total"] == Decimal("12.99")
+
+    def test_int_value_coerces_to_decimal(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc())
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        out = apply(doc, "sales_orders", {
+            "orderNumber": "SO-1", "warehouseId": 1, "amount": 42,
+        })
+        assert out["order_total"] == Decimal("42")
+
+    def test_float_value_coerces_to_decimal_via_str(self, tmp_mappings_dir):
+        # Decimal(str(value)) avoids the float -> Decimal binary
+        # representation gotcha (Decimal(0.1) is 0.1000000000000000055...).
+        _write(tmp_mappings_dir, "acme", _decimal_doc())
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        out = apply(doc, "sales_orders", {
+            "orderNumber": "SO-1", "warehouseId": 1, "amount": 0.1,
+        })
+        assert out["order_total"] == Decimal("0.1")
+
+    def test_non_numeric_string_raises(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc())
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        with pytest.raises(ValueError, match="cannot coerce"):
+            apply(doc, "sales_orders", {
+                "orderNumber": "SO-1", "warehouseId": 1, "amount": "not a number",
+            })
+
+    def test_bool_rejected_explicitly(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc())
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        with pytest.raises(ValueError, match="boolean"):
+            apply(doc, "sales_orders", {
+                "orderNumber": "SO-1", "warehouseId": 1, "amount": True,
+            })
+
+    def test_null_value_passes_through_as_none(self, tmp_mappings_dir):
+        # type='decimal' on a non-required field with no source path hit
+        # should leave the canonical column NULL, matching Postgres
+        # nullable column semantics.
+        _write(tmp_mappings_dir, "acme", _decimal_doc())
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        out = apply(doc, "sales_orders", {
+            "orderNumber": "SO-1", "warehouseId": 1,
+        })
+        assert "order_total" not in out or out["order_total"] is None
+
+
+class TestDecimalBounds:
+    def test_decimal_places_violation_raises(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc(
+            extra_attrs="        decimal_places: 2\n",
+        ))
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        with pytest.raises(ValueError) as exc:
+            apply(doc, "sales_orders", {
+                "orderNumber": "SO-1", "warehouseId": 1, "amount": "12.345",
+            })
+        assert "order_total" in str(exc.value)
+        assert "decimal place" in str(exc.value)
+
+    def test_decimal_places_at_limit_accepted(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc(
+            extra_attrs="        decimal_places: 2\n",
+        ))
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        out = apply(doc, "sales_orders", {
+            "orderNumber": "SO-1", "warehouseId": 1, "amount": "12.99",
+        })
+        assert out["order_total"] == Decimal("12.99")
+
+    def test_max_digits_violation_raises(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc(
+            extra_attrs="        max_digits: 12\n",
+        ))
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        with pytest.raises(ValueError, match="significant digit"):
+            apply(doc, "sales_orders", {
+                "orderNumber": "SO-1", "warehouseId": 1,
+                "amount": "12345678901234",  # 14 digits
+            })
+
+    def test_ge_violation_raises(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc(
+            extra_attrs='        ge: "0"\n',
+        ))
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        with pytest.raises(ValueError, match="ge="):
+            apply(doc, "sales_orders", {
+                "orderNumber": "SO-1", "warehouseId": 1, "amount": "-0.01",
+            })
+
+    def test_le_violation_raises(self, tmp_mappings_dir):
+        _write(tmp_mappings_dir, "acme", _decimal_doc(
+            extra_attrs='        le: "9999999999.99"\n',
+        ))
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        with pytest.raises(ValueError, match="le="):
+            apply(doc, "sales_orders", {
+                "orderNumber": "SO-1", "warehouseId": 1,
+                "amount": "10000000000.00",
+            })
+
+    def test_all_bounds_combined_happy_path(self, tmp_mappings_dir):
+        # The exact bounds the v1.8 sales_orders order_total +
+        # customer_shipping_paid columns deserve (mig 050: NUMERIC(12,2)).
+        _write(tmp_mappings_dir, "acme", _decimal_doc(
+            extra_attrs=(
+                "        max_digits: 12\n"
+                "        decimal_places: 2\n"
+                '        ge: "0"\n'
+                '        le: "9999999999.99"\n'
+            ),
+        ))
+        doc = load_directory(tmp_mappings_dir).for_source("acme")
+        out = apply(doc, "sales_orders", {
+            "orderNumber": "SO-1", "warehouseId": 1, "amount": "9999999999.99",
+        })
+        assert out["order_total"] == Decimal("9999999999.99")
+
+    def test_bounds_on_non_decimal_type_refused_at_load(self, tmp_mappings_dir):
+        body = """\
+mapping_version: "1.0"
+source_system: "acme"
+version_compare: "iso_timestamp"
+resources:
+  customers:
+    canonical_type: "customer"
+    fields:
+      - canonical: "email"
+        source_path: "$.contact.email"
+        type: "string"
+        max_digits: 12
+"""
+        _write(tmp_mappings_dir, "acme", body)
+        with pytest.raises(ValueError, match="only valid for type='decimal'"):
+            load_directory(tmp_mappings_dir).for_source("acme")

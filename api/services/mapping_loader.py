@@ -41,13 +41,14 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 from uuid import UUID
 
 import yaml
 from jsonpath_ng import parse as _jsonpath_parse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from simpleeval import EvalWithCompoundTypes
 
 
@@ -157,6 +158,29 @@ class FieldMapping(_StrictModel):
     default: Any = None
     rename: Optional[str] = None
     enum_values: Optional[List[str]] = None  # for type='enum'
+    # v1.8.0 (#285): per-field bounds for type='decimal'. All optional;
+    # absent means current pass-through behaviour. When declared, the
+    # apply-time coercer raises ValueError (-> 422 mapping_apply_error)
+    # on violation so the connector author sees the canonical-column
+    # constraint as a clear wire-level rejection rather than a silent
+    # round (excess scale) or a 500 (excess precision).
+    max_digits: Optional[int] = None
+    decimal_places: Optional[int] = None
+    ge: Optional[Decimal] = None
+    le: Optional[Decimal] = None
+
+    @field_validator("ge", "le", mode="before")
+    @classmethod
+    def _coerce_bound_to_decimal(cls, v):
+        # YAML emits numeric bounds as int / float / str; coerce via
+        # str() to dodge the float -> Decimal binary-representation
+        # gotcha. _StrictModel has strict=True so Pydantic would
+        # otherwise refuse the coercion at validation time.
+        if v is None or isinstance(v, Decimal):
+            return v
+        if isinstance(v, (int, float, str)):
+            return Decimal(str(v))
+        raise ValueError(f"cannot coerce {v!r} to Decimal bound")
 
     @model_validator(mode="after")
     def _check_field_shape(self) -> "FieldMapping":
@@ -170,6 +194,24 @@ class FieldMapping(_StrictModel):
         if self.derived is None and self.source_path is None and self.default is None:
             raise ValueError(
                 f"field {self.canonical!r}: one of source_path / derived / default required"
+            )
+        for attr in ("max_digits", "decimal_places", "ge", "le"):
+            if getattr(self, attr) is not None and self.type != "decimal":
+                raise ValueError(
+                    f"field {self.canonical!r}: {attr} only valid for type='decimal'"
+                )
+        if self.max_digits is not None and self.max_digits <= 0:
+            raise ValueError(
+                f"field {self.canonical!r}: max_digits must be positive"
+            )
+        if self.decimal_places is not None and self.decimal_places < 0:
+            raise ValueError(
+                f"field {self.canonical!r}: decimal_places must be non-negative"
+            )
+        if (self.max_digits is not None and self.decimal_places is not None
+                and self.decimal_places > self.max_digits):
+            raise ValueError(
+                f"field {self.canonical!r}: decimal_places > max_digits"
             )
         return self
 
@@ -525,8 +567,9 @@ def _resolve_field(
 
 
 def _coerce_or_default(field: FieldMapping, value: Any) -> Any:
-    """Light type coercion + enum check. Heavy validation lives in the
-    inbound Pydantic body model."""
+    """Light type coercion + enum check + per-field decimal bounds
+    (#285). Heavy validation otherwise lives in the inbound Pydantic
+    body model."""
     if value is None:
         return None
     if field.type == "enum":
@@ -535,7 +578,71 @@ def _coerce_or_default(field: FieldMapping, value: Any) -> Any:
                 f"field {field.canonical!r}: value {value!r} not in enum_values"
             )
         return value
+    if field.type == "decimal":
+        return _coerce_decimal(field, value)
     return value
+
+
+def _coerce_decimal(field: FieldMapping, value: Any) -> Decimal:
+    """Coerce ``value`` to Decimal and apply optional bounds.
+
+    Raises ValueError (-> 422 mapping_apply_error at the inbound
+    handler) on any of: non-numeric value, decimal_places exceeded,
+    max_digits exceeded, ge / le violation. Bounds are only enforced
+    when declared on the FieldMapping; absent bounds preserve the
+    pre-#285 pass-through-to-Postgres behaviour.
+    """
+    try:
+        if isinstance(value, Decimal):
+            d = value
+        elif isinstance(value, bool):
+            # Booleans coerce to int in Python; reject explicitly so a
+            # mapping bug (boolean source_path on a decimal field) does
+            # not silently store 0 / 1.
+            raise ValueError("boolean cannot be coerced to decimal")
+        elif isinstance(value, (int, float, str)):
+            d = Decimal(str(value))
+        else:
+            raise ValueError(f"unsupported type {type(value).__name__}")
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(
+            f"field {field.canonical!r}: cannot coerce {value!r} to decimal: {exc}"
+        )
+
+    if field.decimal_places is not None:
+        # Decimal.as_tuple().exponent is negative for fractional digits;
+        # exponent of -3 means three decimal places. Compare against
+        # -decimal_places.
+        exp = d.as_tuple().exponent
+        # exp can be 'n' / 'N' / 'F' for special Decimals; reject those.
+        if not isinstance(exp, int):
+            raise ValueError(
+                f"field {field.canonical!r}: non-finite decimal {value!r}"
+            )
+        if exp < -field.decimal_places:
+            raise ValueError(
+                f"field {field.canonical!r}: value {value!r} has more than "
+                f"{field.decimal_places} decimal place(s)"
+            )
+
+    if field.max_digits is not None:
+        digits = len(d.as_tuple().digits)
+        if digits > field.max_digits:
+            raise ValueError(
+                f"field {field.canonical!r}: value {value!r} has more than "
+                f"{field.max_digits} significant digit(s)"
+            )
+
+    if field.ge is not None and d < field.ge:
+        raise ValueError(
+            f"field {field.canonical!r}: value {value!r} is less than ge={field.ge}"
+        )
+    if field.le is not None and d > field.le:
+        raise ValueError(
+            f"field {field.canonical!r}: value {value!r} exceeds le={field.le}"
+        )
+
+    return d
 
 
 # ============================================================

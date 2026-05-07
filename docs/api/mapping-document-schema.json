@@ -70,6 +70,18 @@
           ],
           "default": null
         },
+        "decimal_places": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decimal Places"
+        },
         "default": {
           "default": null,
           "title": "Default"
@@ -99,6 +111,48 @@
           ],
           "default": null,
           "title": "Enum Values"
+        },
+        "ge": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ge"
+        },
+        "le": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Le"
+        },
+        "max_digits": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Digits"
         },
         "rename": {
           "anyOf": [

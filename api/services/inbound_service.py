@@ -40,6 +40,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -471,6 +472,11 @@ def _json_default(value: Any) -> Any:
         return str(value)
     if isinstance(value, datetime):
         return _iso(value)
+    if isinstance(value, Decimal):
+        # v1.8.0 (#285): mapping_loader now coerces type='decimal'
+        # to Decimal. Stored as a string in the JSONB so investigators
+        # can recover the exact value (vs JSON's lossy float).
+        return str(value)
     raise TypeError(f"non-serialisable value {type(value).__name__}: {value!r}")
 
 
