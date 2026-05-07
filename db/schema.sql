@@ -20,7 +20,12 @@ CREATE TABLE warehouses (
     warehouse_name VARCHAR(100) NOT NULL,
     address VARCHAR(500),
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- v1.8.0 (#283): productivity dashboard "Today" / "Yesterday"
+    -- range maps to warehouse-local, not UTC. Default matches the
+    -- AvidMax baseline; per-warehouse override is operator-managed
+    -- in v1.8 (no admin UI in this release).
+    timezone VARCHAR(64) NOT NULL DEFAULT 'America/Denver'
 );
 
 CREATE TABLE zones (
@@ -419,6 +424,13 @@ CREATE TABLE audit_log (
 
 CREATE INDEX ix_audit_log_action ON audit_log(action_type, created_at);
 CREATE INDEX ix_audit_log_entity ON audit_log(entity_type, entity_id);
+-- v1.8.0 (#283): productivity dashboard aggregation. Pattern is
+-- WHERE created_at BETWEEN :s AND :e AND action_type = ANY(:actions)
+-- AND warehouse_id = :w GROUP BY user_id, action_type. INCLUDE clause
+-- covers the projection for index-only scans.
+CREATE INDEX ix_audit_log_dashboard
+    ON audit_log(action_type, created_at, user_id, warehouse_id)
+    INCLUDE (entity_id, details);
 
 -- V-025 tamper resistance: hash-chain trigger + append-only guards.
 -- The identical DDL lives in db/migrations/016_audit_log_tamper_resistance.sql
@@ -1813,3 +1825,21 @@ ALTER TABLE pick_tasks
 INSERT INTO app_settings (key, value)
 VALUES ('transfer_order_block_self_approval', 'true')
 ON CONFLICT (key) DO NOTHING;
+
+-- ============================================================
+-- USER DASHBOARD PREFERENCES (v1.8.0 #283)
+-- ============================================================
+-- Per-user override storage for the productivity dashboard. Defaults
+-- are applied at read time when no row exists; this table is override
+-- storage, not a settings record. Identical DDL lives in
+-- db/migrations/051_user_dashboard_preferences.sql.
+
+CREATE TABLE user_dashboard_preferences (
+    user_id          INT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    chart_order      JSONB NOT NULL DEFAULT '["picking","packing","shipped","received_skus","putaway_skus"]'::jsonb,
+    default_range    VARCHAR(16) NOT NULL DEFAULT 'today'
+                       CHECK (default_range IN ('today','yesterday','last_7d','last_30d','custom')),
+    default_view     VARCHAR(8) NOT NULL DEFAULT 'charts'
+                       CHECK (default_view IN ('charts','table')),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

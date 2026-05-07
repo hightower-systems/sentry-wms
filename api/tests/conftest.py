@@ -96,6 +96,9 @@ ALL_TABLES = [
     "cross_system_mappings",
     "wms_tokens",
     "inbound_source_systems_allowlist",
+    # v1.8.0 #283: per-user productivity dashboard overrides; FK to
+    # users with ON DELETE CASCADE.
+    "user_dashboard_preferences",
     "consumer_groups",
     "connectors",
     "sync_state",
