@@ -38,20 +38,23 @@ def _make_conn():
     return conn
 
 
-def _make_so(conn, **overrides):
+def _make_so(conn, order_total=None, customer_shipping_paid=None):
+    # Explicit column list (not dynamic) so the test_external_id_inserts
+    # static guardrail (#241) can see external_id in the literal SQL.
     cur = conn.cursor()
-    cols = {
-        "so_number": f"SO-T50-{uuid.uuid4().hex[:8]}",
-        "customer_name": "t50",
-        "warehouse_id": 1,
-        "external_id": str(uuid.uuid4()),
-    }
-    cols.update(overrides)
-    keys = ", ".join(cols.keys())
-    placeholders = ", ".join(["%s"] * len(cols))
     cur.execute(
-        f"INSERT INTO sales_orders ({keys}) VALUES ({placeholders}) RETURNING so_id",
-        tuple(cols.values()),
+        "INSERT INTO sales_orders "
+        "(so_number, customer_name, warehouse_id, external_id, "
+        " order_total, customer_shipping_paid) "
+        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING so_id",
+        (
+            f"SO-T50-{uuid.uuid4().hex[:8]}",
+            "t50",
+            1,
+            str(uuid.uuid4()),
+            order_total,
+            customer_shipping_paid,
+        ),
     )
     so_id = cur.fetchone()[0]
     cur.close()
