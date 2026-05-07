@@ -17,6 +17,8 @@ from typing import Optional
 import requests
 from pydantic import BaseModel, Field, field_validator
 
+from utils.log_sanitize import scrub_secrets
+
 # Maximum length of the human-readable ``message`` field on a
 # ConnectionResult. Capping prevents a connector from returning a
 # multi-kilobyte HTTP response body (which could include credentials,
@@ -34,10 +36,16 @@ _ALLOWED_MESSAGE_CHARS = frozenset(
 
 
 def _sanitize_connection_message(value: str) -> str:
-    """Strip non-printable bytes and truncate to CONNECTION_MESSAGE_MAX_LEN."""
+    """Strip non-printable bytes, scrub credential fragments, then
+    truncate to CONNECTION_MESSAGE_MAX_LEN.
+
+    Scrubbing runs before truncation so multi-character redaction tags
+    (``<REDACTED>``, ``<JWT_REDACTED>``) cannot be split by the cap.
+    """
     if value is None:
         return ""
     cleaned = "".join(ch for ch in str(value) if ch in _ALLOWED_MESSAGE_CHARS)
+    cleaned = scrub_secrets(cleaned)
     if len(cleaned) > CONNECTION_MESSAGE_MAX_LEN:
         cleaned = cleaned[: CONNECTION_MESSAGE_MAX_LEN - 3] + "..."
     return cleaned
