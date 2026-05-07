@@ -226,6 +226,38 @@ class TestConnectionMessageScrubbing:
         assert r.message == "Connected as Acme Corp"
 
 
+class TestCarriageReturnAllowlist:
+    """v1.8.0 (#55): \\r is permitted in ConnectionResult.message so
+    Windows-origin upstream errors (which use \\r\\n line endings)
+    survive intact. Safety on emit is guaranteed by JSON encoding,
+    which escapes \\r to the two-character sequence \\\\r."""
+
+    def test_cr_preserved_in_stored_message(self):
+        r = ConnectionResult(connected=False, message="line1\r\nline2")
+        assert "\r" in r.message
+        assert "\n" in r.message
+        assert "line1" in r.message
+        assert "line2" in r.message
+
+    def test_cr_escaped_on_json_emit(self):
+        # Pydantic / json.dumps escapes the raw CR byte to "\\r" so a
+        # message that reaches the admin UI cannot inject a literal
+        # carriage return into a log line or response body.
+        r = ConnectionResult(connected=False, message="line1\r\nline2")
+        serialized = r.model_dump_json()
+        assert "\\r" in serialized
+        assert "\\n" in serialized
+        # Raw CR/LF must not appear unescaped in the JSON payload.
+        assert "\r" not in serialized
+        assert "\n" not in serialized
+
+    def test_lone_cr_preserved(self):
+        # Mac-classic line endings or progress-bar-style overwrites:
+        # the byte survives storage; emit is safe by JSON escaping.
+        r = ConnectionResult(connected=True, message="loaded\rdone")
+        assert "\r" in r.message
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
