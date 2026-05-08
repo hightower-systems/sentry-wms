@@ -1,7 +1,19 @@
 # Nginx server block for the Sentry WMS admin SPA.
-# Serves built static assets and proxies /api requests to the Flask API
-# so the browser sees a single same-origin surface (no CORS needed for
-# admin-origin calls).
+#
+# Templated form: nginx 1.27 alpine's /docker-entrypoint.d/20-envsubst-on-templates.sh
+# substitutes ${API_UPSTREAM_URL} and ${API_UPSTREAM_HOST} (and any other ${VAR})
+# at container start, writing the resolved file to /etc/nginx/conf.d/default.conf.
+#
+# Plain $foo (without braces) is NOT substituted, so nginx variables like
+# $scheme, $host, $admin_hsts_header pass through untouched.
+#
+# Two env vars (with sane Dockerfile defaults for docker-compose):
+#   API_UPSTREAM_URL   — full proxy_pass target including scheme
+#                        (e.g. http://api:5000 for compose; https://<fqdn> for ACA)
+#   API_UPSTREAM_HOST  — value of the Host header sent to the upstream
+#                        (e.g. api:5000 for compose; <fqdn> for ACA — Azure
+#                        Container Apps' edge gateway routes by Host header,
+#                        so this MUST match the target app's FQDN there)
 
 # V-111: HSTS. Emitted only when the connection was TLS-terminated --
 # either by nginx directly ($scheme = https) or by an upstream reverse
@@ -40,18 +52,24 @@ server {
         return 404;
     }
 
-    # Proxy API traffic to the Flask container. This keeps the admin
-    # origin (http://host:8080) and API origin unified, sidestepping
-    # CORS for admin-initiated requests.
+    # Proxy API traffic to the Flask container. URL + Host filled at
+    # container start by envsubst (see comments at top).
     location /api/ {
-        proxy_pass http://api:5000;
+        proxy_pass ${API_UPSTREAM_URL};
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        proxy_set_header Host ${API_UPSTREAM_HOST};
+        proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
+
+        # When the upstream is HTTPS (e.g. ACA HTTPS-only ingress), nginx
+        # needs SNI to negotiate TLS against a virtual-host-routed gateway.
+        # These are no-ops for an http:// upstream.
+        proxy_ssl_server_name on;
+        proxy_ssl_name ${API_UPSTREAM_HOST};
     }
 
     # Hashed build assets can be cached aggressively.
