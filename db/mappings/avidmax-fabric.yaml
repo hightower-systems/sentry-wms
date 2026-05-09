@@ -392,20 +392,94 @@ resources:
         type: "iso_timestamp"
         required: false
 
-      # ----- v1.8.0 structured addresses -----
-      # We do NOT yet have parsed addresses. v1 strategy: stuff the
-      # entire blob into shipping_address_line1 and billing_address_line1
-      # so picking/packing labels can render *something*. All other
-      # structured fields stay NULL until a parse pass exists upstream.
-      # TODO: structured-address parser before peak season.
+      # ----- v1.8.0 structured addresses (2026-05-09) -----
+      # Pusher populates these from dbo.marketplace_orders structured
+      # columns (mirrors Sentry sales_orders mig 053). Carrier integration
+      # (UPS/FedEx/USPS label gen + cost calc) requires per-component
+      # fields, not a blob. Live ingest path in tx-service
+      # services/transaction_service/live_source.py populates them from
+      # BC/Amazon/eBay raw payloads where the structure already exists.
+      # Legacy single-blob path retained as a backfill fallback in pusher
+      # (_structured_or_blob): if all 8 structured shipping fields are NULL,
+      # the cleaned legacy blob lands in shipping_address_line1 only.
+
+      - canonical: "shipping_address_name"
+        source_path: "$.shipping.address.name"
+        type: "string"
+        required: false
 
       - canonical: "shipping_address_line1"
         source_path: "$.shipping.address.line1"
         type: "string"
         required: false
 
+      - canonical: "shipping_address_line2"
+        source_path: "$.shipping.address.line2"
+        type: "string"
+        required: false
+
+      - canonical: "shipping_address_city"
+        source_path: "$.shipping.address.city"
+        type: "string"
+        required: false
+
+      - canonical: "shipping_address_state"
+        source_path: "$.shipping.address.state"
+        type: "string"
+        required: false
+
+      - canonical: "shipping_address_postal_code"
+        source_path: "$.shipping.address.postal_code"
+        type: "string"
+        required: false
+
+      - canonical: "shipping_address_country"
+        source_path: "$.shipping.address.country"
+        type: "string"
+        required: false
+
+      - canonical: "shipping_address_phone"
+        source_path: "$.shipping.address.phone"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_name"
+        source_path: "$.billing.address.name"
+        type: "string"
+        required: false
+
       - canonical: "billing_address_line1"
         source_path: "$.billing.address.line1"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_line2"
+        source_path: "$.billing.address.line2"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_city"
+        source_path: "$.billing.address.city"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_state"
+        source_path: "$.billing.address.state"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_postal_code"
+        source_path: "$.billing.address.postal_code"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_country"
+        source_path: "$.billing.address.country"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_phone"
+        source_path: "$.billing.address.phone"
         type: "string"
         required: false
 
@@ -547,8 +621,11 @@ resources:
 #    incorrectly send POS sales as warehouse_id=1 (AFC) and Sentry will
 #    queue them for picking that already happened.
 #
-# 4. Structured-address parser. Today both shipping and billing on
-#    sales_orders push the entire blob into ..._line1. A parser pass
-#    upstream (in pusher OR in a Fabric view) populates the rest of
-#    the v1.8 columns. Not blocking for May 12 cutover but should land
-#    before peak season.
+# 4. Structured-address parser. RESOLVED 2026-05-09 — instead of parsing
+#    a blob, we kept the structure end-to-end: dbo.marketplace_orders now
+#    has 16 structured columns (mig avidmax-fabric DDL) populated by
+#    avidmax-ai/services/transaction_service/live_source._populate_structured_*
+#    directly from BC/Amazon/eBay raw payloads. Pusher reads these and
+#    sends $.shipping.address.{name,line1,line2,city,state,postal_code,
+#    country,phone} per the canonical declarations above. Legacy single-
+#    blob path retained as a fallback for pre-cutover backfill rows.
