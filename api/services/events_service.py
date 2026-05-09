@@ -124,6 +124,82 @@ def _as_str(value):
     return value
 
 
+def resolve_source_external_id(
+    db,
+    source_type: str,
+    canonical_id,
+    source_system: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve a Sentry canonical UUID back to its source-system external_id.
+
+    Looks up the cross_system_mappings table for the (source_type, canonical_id)
+    pair and returns the source_id — the identifier the upstream source system
+    (e.g., "avidmax-fabric") used when it Pipe-B pushed the entity to Sentry.
+
+    Returns None when:
+      * No mapping row exists (entity created directly in Sentry without a
+        Pipe-B push, e.g., warehouse-floor manual entry).
+      * canonical_id is None / empty.
+
+    Caller pattern: COALESCE the result with the canonical UUID so the field
+    always carries SOMETHING the consumer can act on:
+
+        source_id = resolve_source_external_id(db, "sales_order", so.external_id)
+        payload["sales_order_external_id"] = source_id or str(so.external_id)
+
+    The canonical UUID stays available on `aggregate_id` (which is what
+    Sentry consumers should use for cross-system idempotency anyway), so the
+    fallback never strands the consumer with no identifier at all.
+
+    source_system filter:
+      When None (default), returns the most-recently-updated mapping for the
+      pair. Single-source deployments (one upstream connector pushing per
+      aggregate) only ever have one row, so ORDER-BY is a no-op there.
+      Multi-source deployments should pass source_system explicitly to
+      pick the right upstream identifier.
+
+    NOTE on field naming: pre-this-change the Sentry event payload's
+    *_external_id fields carried the canonical UUID ("the external id Sentry
+    exposes externally"), forcing every consumer to do this same lookup
+    against Sentry's API on every event. After this change those fields
+    carry the source-system external_id ("the external id from the system
+    that owns the data"), which matches the field-name convention used by
+    every other event-integration system the maintainer knows of, and
+    lets consumers process events without an out-of-band Sentry call.
+    """
+    if canonical_id is None or canonical_id == "":
+        return None
+
+    if source_system is not None:
+        row = db.execute(
+            text(
+                """
+                SELECT source_id
+                FROM cross_system_mappings
+                WHERE canonical_id = :cid
+                  AND source_type = :stype
+                  AND source_system = :ssys
+                LIMIT 1
+                """
+            ),
+            {"cid": str(canonical_id), "stype": source_type, "ssys": source_system},
+        ).fetchone()
+    else:
+        row = db.execute(
+            text(
+                """
+                SELECT source_id
+                FROM cross_system_mappings
+                WHERE canonical_id = :cid AND source_type = :stype
+                ORDER BY last_updated_at DESC
+                LIMIT 1
+                """
+            ),
+            {"cid": str(canonical_id), "stype": source_type},
+        ).fetchone()
+    return row.source_id if row else None
+
+
 def get_user_external_id(db, username: str) -> Optional[str]:
     """Look up ``users.external_id`` by username, cached per-request in ``g``.
 

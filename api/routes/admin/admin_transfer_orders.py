@@ -37,7 +37,7 @@ from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.csv_import import TransferOrderImportRow
 from services.audit_service import write_audit_log
-from services.events_service import emit_event
+from services.events_service import emit_event, resolve_source_external_id
 from services.transfer_order_service import (
     TO_APPROVAL_APPROVED,
     TO_APPROVAL_PENDING,
@@ -1326,8 +1326,15 @@ def approve_transfer_order_approval(to_id, approval_id):
                 text("SELECT external_id FROM items WHERE item_id = :iid"),
                 {"iid": item_id},
             ).fetchone()
+            # Resolve canonical UUID to source-system external_id for the
+            # outbound payload. Canonical UUID fallback when no upstream
+            # mapping exists. See resolve_source_external_id docstring.
+            item_source_external_id = (
+                resolve_source_external_id(g.db, "item", item_external.external_id)
+                or str(item_external.external_id)
+            )
             event_lines.append({
-                "item_external_id": str(item_external.external_id),
+                "item_external_id": item_source_external_id,
                 "quantity": qty,
             })
     except ValueError as exc:
