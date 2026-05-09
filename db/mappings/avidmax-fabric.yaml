@@ -1,0 +1,554 @@
+# =====================================================================
+# AvidMax Fabric -> Sentry WMS v1.7.0 inbound mapping
+# =====================================================================
+#
+# source_system: avidmax-fabric
+# Pushes from: gl.dbo.* (Microsoft Fabric SQL DB)
+# Push order (mandatory, due to cross_system_lookup chains):
+#   1. items
+#   2. customers
+#   3. vendors
+#   4. purchase_orders   (depends on vendors + items)
+#   5. sales_orders      (depends on customers + items)
+#
+# Warehouses (Sentry-side warehouses table must contain these IDs):
+#   1 = AFC   (AvidMax Fulfillment Center -- our main warehouse)
+#   2 = FBA   (Fulfilled by Amazon -- visibility only, Sentry takes no pick/pack action)
+#   3 = STORE (Retail store)
+#
+# Operator setup (see template lines 21-39):
+#   1. INSERT INTO inbound_source_systems_allowlist VALUES ('avidmax-fabric', 'connector');
+#   2. Issue WMS token: source_system='avidmax-fabric',
+#      inbound_resources=[items, customers, vendors, purchase_orders, sales_orders]
+#   3. Place this file at db/mappings/avidmax-fabric.yaml inside Sentry; restart api.
+
+mapping_version: "0.1.0-draft"
+source_system: "avidmax-fabric"
+
+# Our pushers stamp every payload with `external_version` = updated_at (ISO-8601).
+# Stale-write protection: a re-POST whose updated_at is older than the last-seen
+# value returns 409 stale_version, preserving downstream state.
+version_compare: "iso_timestamp"
+
+resources:
+
+  # =================================================================
+  # ITEMS  (source: gl.dbo.items, ~30,824 rows)
+  # =================================================================
+  # Pushed FIRST. All sales_order and purchase_order line items
+  # cross_system_lookup item_id by sku, so items must exist before lines.
+  # Suggested payload shape from our pusher:
+  #   {
+  #     "external_id": "<sku>",
+  #     "external_version": "<updated_at ISO>",
+  #     "sku": "...", "name": "...", "description": "...",
+  #     "upc": "...", "category": "...",
+  #     "dimensions": { "weight_lbs": 0.1, "length_in": 13, "width_in": 10, "height_in": 1 },
+  #     "tracking": { "lot": false },
+  #     "is_active": true
+  #   }
+  items:
+    canonical_type: "item"
+    fields:
+      - canonical: "sku"
+        source_path: "$.sku"
+        type: "string"
+        required: true
+
+      - canonical: "item_name"
+        source_path: "$.name"           # we send `product_name` AS `name`
+        type: "string"
+        required: true
+
+      - canonical: "description"
+        source_path: "$.description"    # not on dbo.items today; pusher sends NULL
+        type: "string"
+        required: false
+
+      - canonical: "upc"
+        source_path: "$.upc"
+        type: "string"
+        required: false
+
+      - canonical: "category"
+        source_path: "$.category"
+        type: "string"
+        required: false
+
+      - canonical: "weight_lbs"
+        source_path: "$.dimensions.weight_lbs"
+        type: "decimal"
+        required: false
+
+      - canonical: "length_in"
+        source_path: "$.dimensions.length_in"
+        type: "decimal"
+        required: false
+
+      # NOTE: width_in / height_in are present on dbo.items but the v1.7
+      # canonical items table only exposes weight_lbs + length_in. If
+      # Sentry adds width/height columns, append here. For now they are
+      # dropped at push-time -- not a blocker for ship-confirmation flow.
+
+      - canonical: "is_lot_tracked"
+        source_path: "$.tracking.lot"   # always false today; AvidMax does not lot-track
+        type: "boolean"
+        required: false
+        default: false
+
+      - canonical: "is_active"
+        source_path: "$.is_active"
+        type: "boolean"
+        required: false
+        default: true
+
+  # =================================================================
+  # CUSTOMERS  (source: gl.dbo.customers -- AvidMax-owned master)
+  # =================================================================
+  # Sentry does NOT manage customer data. The rich master -- lifetime
+  # value, segments, full purchase history, CS notes, status history,
+  # refund records, address book, fraud signals -- stays in Fabric and
+  # is owned by AvidMax. We push ONLY the minimum subset Sentry needs
+  # for its picker UI: "who is this order for, and how do we reach them
+  # if there's a shipping issue?"
+  #
+  # Two-field contract: display_name + is_active. That's it.
+  #
+  # WHY this is intentionally minimal (principle of least privilege):
+  #   * Email is NOT pushed -- AvidMax handles all customer comms;
+  #     Sentry never emails customers. Picker UI doesn't need it.
+  #   * Phone is NOT pushed -- Picker UI doesn't call customers; CS does
+  #     using our gl.dbo.customers master. If a carrier needs phone for
+  #     delivery notifications, that field rides on the SO's shipping
+  #     address (carrier-facing), not on the customer record.
+  #   * Notes are NOT pushed -- Sentry will NOT add a customers.notes
+  #     column (Hightower 2026-05-07). Order-context notes for the
+  #     picker live on sales_orders.notes (separate feature request).
+  #   * Status is NOT pushed -- disabled/fraud accounts are blocked at
+  #     order ingest BEFORE the SO ever reaches Sentry.
+  #
+  # Sentry sees: WHO the order is for (display_name) and whether the
+  # record is active (is_active). Everything else picker-relevant rides
+  # on the sales_order itself: ship_to_address, ship_to_name (could
+  # differ for gifts), line items, picker notes.
+  #
+  # external_id strategy: gl.dbo.customers.customer_uuid (UNIQUEIDENTIFIER).
+  # Why UUID and not customer_id (BIGINT)? Long-term the customer_uuid
+  # becomes the cross-system stable ID -- customer self-service portal,
+  # BC integration, future BI -- one ID everywhere, no internal IDs leaking.
+  #
+  # Addresses ride on the sales_order itself (v1.8 structured fields),
+  # not on the customer here. One customer can ship to many addresses.
+  #
+  # Push trigger: INSERT/UPDATE on gl.dbo.customers fires a queued push.
+  customers:
+    canonical_type: "customer"
+    fields:
+      - canonical: "customer_name"
+        source_path: "$.customer_name"
+        type: "string"
+        required: true
+
+      - canonical: "is_active"
+        source_path: "$.is_active"
+        type: "boolean"
+        required: false
+        default: true
+
+      # email: intentionally NOT mapped. AvidMax owns customer comms.
+      # phone: intentionally NOT mapped. CS calls customers, not pickers.
+      #        If a carrier needs phone for delivery notification, it
+      #        belongs on the SO shipping_address fields, not here.
+      # notes: intentionally NOT mapped. See header comment.
+      # status: intentionally NOT mapped. Disabled/fraud accounts are
+      #         blocked at order ingest, before any SO reaches Sentry.
+
+  # =================================================================
+  # VENDORS  (source: gl.dbo.ap_vendors, ~hundreds of rows)
+  # =================================================================
+  # ap_vendors carries name + payment_terms only -- no contact info,
+  # no addresses. We push what we have; canonical optional fields stay NULL.
+  # external_id = vendor_id (string-cast) to keep the lookup deterministic.
+  vendors:
+    canonical_type: "vendor"
+    fields:
+      - canonical: "vendor_name"
+        source_path: "$.vendor_name"
+        type: "string"
+        required: true
+
+      - canonical: "payment_terms"
+        source_path: "$.payment_terms"
+        type: "string"
+        required: false
+
+      - canonical: "is_active"
+        source_path: "$.is_active"
+        type: "boolean"
+        required: false
+        default: true
+
+  # =================================================================
+  # PURCHASE_ORDERS  (source: gl.dbo.purchases_ordered, grouped)
+  # =================================================================
+  # purchases_ordered is FLAT (one row per SKU per PO). The pusher must
+  # GROUP BY (po_check_number, vendor, order_date) and assemble:
+  #   { "po_number": "<po_check_number>",
+  #     "warehouse_id": 1,                       # all POs land at AFC
+  #     "vendor": { "name": "<vendor>", "id": "<resolved ap_vendors.vendor_id>" },
+  #     "expected_date": "<order_date + ap_vendors.vendor_lead_time_days>",
+  #     "status": "<raw NS status string>",
+  #     "line_items": [ { "sku": "...", "quantity_ordered": N }, ... ] }
+  #
+  # expected_date computation (in pusher):
+  #   expected_date = order_date + (vendor_lead_time_days OR 14 default)
+  #   Requires: ALTER TABLE gl.dbo.ap_vendors
+  #     ADD vendor_lead_time_days INT NOT NULL DEFAULT 14;
+  #   Operators may override per-vendor as supplier behaviour shifts
+  #   (e.g. Q4 holiday surge stretching certain vendors to 4-6 weeks).
+  #
+  # Vendor cross_system_lookup uses fuzzy name-match against ap_vendors
+  # in the pusher, NOT exact match. NS-era data quality issues
+  # ("Wapsi Fly" vs "Wapsi Fly Inc.") are accepted as known noise; we
+  # clean ap_vendors over time. Unresolved vendors push with vendor_id
+  # absent and vendor_name populated; an audit log row records the miss
+  # for periodic cleanup.
+  #
+  # Push scope: OPEN POs continuously; Sentry handles receiving and
+  # emits inbound receipt events back to us. Historical closed POs
+  # stay in Fabric for reporting; do not push.
+  purchase_orders:
+    canonical_type: "purchase_order"
+    fields:
+      - canonical: "po_number"
+        source_path: "$.po_number"
+        type: "string"
+        required: true
+
+      - canonical: "warehouse_id"
+        source_path: "$.warehouse_id"
+        type: "integer"
+        required: true
+
+      - canonical: "vendor_id"
+        source_path: "$.vendor.id"
+        type: "uuid"
+        required: false
+        cross_system_lookup:
+          source_type: "vendor"
+
+      - canonical: "vendor_name"
+        source_path: "$.vendor.name"
+        type: "string"
+        required: false
+
+      - canonical: "expected_date"
+        source_path: "$.expected_date"
+        type: "iso_timestamp"
+        required: false
+
+      # NS status strings are messy ("Purchase Order : Partially Received",
+      # "Purchase Order : Fully Received", etc). Map to Sentry enum via
+      # derived expression. Allowlist permits: int/float/str/len/abs/min/
+      # max/round + comparison + ternary + `in` operator.
+      - canonical: "status"
+        type: "enum"
+        required: false
+        enum_values:
+          - "OPEN"
+          - "RECEIVED"
+          - "CANCELLED"
+        derived:
+          expression: >-
+            "CANCELLED" if "Cancel" in str(source.status)
+            else ("RECEIVED" if "Fully Received" in str(source.status) else "OPEN")
+
+      - canonical: "notes"
+        source_path: "$.notes"
+        type: "string"
+        required: false
+
+      - canonical: "created_by"
+        source_path: "$.created_by_user"  # not tracked today; NULL
+        type: "string"
+        required: false
+
+    line_items:
+      source_path: "$.line_items"
+      canonical_path: "lines"
+      fields:
+        - canonical: "item_id"
+          source_path: "$.sku"
+          type: "uuid"
+          required: true
+          cross_system_lookup:
+            source_type: "item"
+        - canonical: "quantity_ordered"
+          source_path: "$.quantity_ordered"
+          type: "integer"
+          required: true
+
+  # =================================================================
+  # SALES_ORDERS  (source: gl.dbo.marketplace_orders + marketplace_order_lines)
+  # =================================================================
+  # Pushed LAST. All marketplace orders push to Sentry. Sentry stores
+  # all of them; pick/pack/ship workflow only triggers for AFC orders.
+  # FBA + STORE orders push for inventory tracking but Sentry takes no
+  # warehouse action on them.
+  #
+  # STORE detection: BC channel_id
+  #   BigCommerce supports multi-channel listings; AvidMax has a separate
+  #   `paypal-zettle` BC channel for the in-store POS register (Zettle
+  #   pushes the sale to BC, BC creates an order under the Zettle channel).
+  #   In test/dev today: 8 SKUs syncing, no orders yet.
+  #
+  #   Pusher rule:
+  #     bc_order_details.channel_id == 1 (main webstore) -> warehouse_id=1 (AFC)
+  #     bc_order_details.channel_id == <ZETTLE_CHANNEL_ID> -> warehouse_id=3 (STORE),
+  #         status=SHIPPED at create (already delivered at counter, no Sentry workflow)
+  #
+  #   ZETTLE_CHANNEL_ID is a config constant in the pusher (one-time
+  #   lookup via BC GET /channels API). Anything non-1 and non-Zettle
+  #   should fail loudly rather than route to AFC by default -- protects
+  #   against future BC channels (eBay marketplace integration, Walmart
+  #   integration, etc.) being silently mis-routed.
+  #
+  # FBA orders push as warehouse_id=2; Amazon ships, we never act.
+  # Sentry remains the system of record for inventory location across
+  # AFC, FBA, and STORE; we consume aggregate qty_on_hand + qty_available
+  # per SKU from Sentry for marketplace inventory pushers.
+  #
+  # Pusher payload shape:
+  #   { "external_id": "<channel>:<external_order_id>",
+  #     "external_version": "<updated_at ISO>",
+  #     "order_number": "<external_order_id>",
+  #     "warehouse_id": 1|2|3,                       # AFC | FBA | STORE
+  #     "customer": { "id": "<gl.dbo.customers.customer_id>" },
+  #     "order_date": "...", "ship_by_date": null,
+  #     "billing":  { "name": "...", "address": { "line1": "<TEXT BLOB>", ... } },
+  #     "shipping": { "name": "...", "address": { "line1": "<TEXT BLOB>", ... } },
+  #     "order":    { "total": 12.34, "shipping": 5.99 },
+  #     "status":   "<our raw status, OR 'shipped' for POS rows>",
+  #     "priority": 0,
+  #     "notes":    "<order-level notes if any>",
+  #     "line_items": [ { "sku": "...", "quantity_ordered": N }, ... ] }
+  #
+  # warehouse_id derivation (in pusher, NOT in mapping doc):
+  #   fulfillment_channel == 'fba'                          -> 2 (FBA)
+  #   channel == 'BIGCOMMERCE' AND is_pos_order             -> 3 (STORE)
+  #   else                                                  -> 1 (AFC)
+  sales_orders:
+    canonical_type: "sales_order"
+    fields:
+      - canonical: "so_number"
+        source_path: "$.order_number"
+        type: "string"
+        required: true
+
+      - canonical: "warehouse_id"
+        source_path: "$.warehouse_id"
+        type: "integer"
+        required: true
+
+      - canonical: "customer_id"
+        source_path: "$.customer.id"
+        type: "uuid"
+        required: true                  # we always derive a customer id (real or anon)
+        cross_system_lookup:
+          source_type: "customer"
+
+      # Denormalized customer snapshot on the SO. Sentry stores name/phone/
+      # address directly on sales_orders so the picker UI doesn't need to
+      # join customers. Pusher must send these alongside the customer.id.
+      - canonical: "customer_name"
+        source_path: "$.customer.name"
+        type: "string"
+        required: false
+      - canonical: "customer_phone"
+        source_path: "$.customer.phone"
+        type: "string"
+        required: false
+      - canonical: "customer_address"
+        source_path: "$.customer.address"  # single-text legacy field; OK to populate from blob
+        type: "string"
+        required: false
+
+      # Carrier / service level requested by the buyer (e.g. "UPS Ground",
+      # "FedEx 2Day", "USPS Priority"). Visible on the picker + packer +
+      # shipper screens. Sentry's ship.confirmed event echoes this back as
+      # `service_level` on the wire.
+      - canonical: "ship_method"
+        source_path: "$.shipping.method"
+        type: "string"
+        required: false
+
+      - canonical: "order_date"
+        source_path: "$.order_date"
+        type: "iso_timestamp"
+        required: false
+
+      - canonical: "ship_by_date"
+        source_path: "$.ship_by_date"   # not tracked today; NULL
+        type: "iso_timestamp"
+        required: false
+
+      # ----- v1.8.0 structured addresses -----
+      # We do NOT yet have parsed addresses. v1 strategy: stuff the
+      # entire blob into shipping_address_line1 and billing_address_line1
+      # so picking/packing labels can render *something*. All other
+      # structured fields stay NULL until a parse pass exists upstream.
+      # TODO: structured-address parser before peak season.
+
+      - canonical: "shipping_address_line1"
+        source_path: "$.shipping.address.line1"
+        type: "string"
+        required: false
+
+      - canonical: "billing_address_line1"
+        source_path: "$.billing.address.line1"
+        type: "string"
+        required: false
+
+      # ----- order economics -----
+      - canonical: "order_total"
+        source_path: "$.order.total"
+        type: "decimal"
+        required: false
+        max_digits: 12
+        decimal_places: 2
+        ge: "0"
+        le: "9999999999.99"
+
+      - canonical: "customer_shipping_paid"
+        source_path: "$.order.shipping"
+        type: "decimal"
+        required: false
+        max_digits: 12
+        decimal_places: 2
+        ge: "0"
+        le: "9999999999.99"
+
+      # Our marketplace_orders.status values seen: 'new', 'shipped',
+      # 'cancelled', 'partial' (BC), 'declined' (BC payment failure).
+      # Map to Sentry's operationally-valid enum.
+      - canonical: "status"
+        type: "enum"
+        required: false
+        enum_values:
+          - "OPEN"
+          - "PICKED"
+          - "PACKED"
+          - "SHIPPED"
+          - "CANCELLED"
+        derived:
+          expression: >-
+            "SHIPPED" if str(source.status) == "shipped"
+            else ("CANCELLED" if str(source.status) in ("cancelled", "declined") else "OPEN")
+
+      - canonical: "priority"
+        source_path: "$.priority"       # not tracked today; defaults to 0
+        type: "integer"
+        required: false
+        default: 0
+
+      # ----- FEATURE REQUEST to Hightower: sales_orders.notes column -----
+      # Order-level free-text notes (special handling, gift messages,
+      # fragile, "double-box this one", etc.) need to be visible to the
+      # warehouse picker in Sentry's UI. Same boot-validator (#267)
+      # constraint as customers.notes -- commented-out until Sentry adds
+      # `notes TEXT NULL` to the canonical sales_orders table (or fork).
+      #
+      # - canonical: "notes"
+      #   source_path: "$.notes"
+      #   type: "string"
+      #   required: false
+
+    line_items:
+      source_path: "$.line_items"
+      canonical_path: "lines"
+      fields:
+        - canonical: "item_id"
+          source_path: "$.sku"
+          type: "uuid"
+          required: true
+          cross_system_lookup:
+            source_type: "item"
+        - canonical: "quantity_ordered"
+          source_path: "$.quantity_ordered"
+          type: "integer"
+          required: true
+
+# =====================================================================
+# IMPORTANT: aggregate_id divergence from spec
+# =====================================================================
+#
+# The outbound spec (outbound-webhook-template.yaml.template line 184)
+# documents `aggregate_id` as a UUID string. Verified live against
+# v1.8.0 (2026-05-07): aggregate_id is the INTEGER internal Sentry id
+# (so_id, item_id, etc.), NOT the canonical UUID.
+#
+# To join an outbound event back to our canonical_map / marketplace_orders:
+#   - Look up the canonical UUID in `data.<entity>_external_id`
+#     (e.g. data.sales_order_external_id, data.item_external_id).
+#   - aggregate_id is Sentry-internal and not useful for our joins.
+#
+# Webhook receiver + sentry_canonical_map lookups must use data.* fields.
+#
+# =====================================================================
+# Resolved decisions (2026-05-07)
+# =====================================================================
+#
+# - Inventory location: Sentry is system of record across AFC + FBA + STORE.
+#   We consume aggregate qty_on_hand + qty_available per SKU from Sentry
+#   for marketplace inventory pushers. Inbound channel: WEBHOOK from
+#   Sentry to our FastAPI receiver. Per-event payload shapes still TBD.
+# - Customer master: AvidMax-owned. Sentry receives only the lightweight
+#   subset (id, name, email, phone, notes) needed to attach orders to
+#   customers in the picker UI. Rich record (history, segments,
+#   addresses) stays in Fabric.
+# - Customers.notes: confirmed -- Hightower will add `notes TEXT NULL`
+#   to canonical customers; field is enabled in this mapping.
+# - STORE channel: in-store POS sales arrive via PayPal/Zettle -> BC
+#   integration as channel='BIGCOMMERCE' rows. Pusher routes them to
+#   warehouse_id=3 (STORE) with status=SHIPPED so Sentry decrements
+#   inventory but takes no pick/pack/ship action. May change in future
+#   if Zettle gains its own dedicated channel.
+# - FBA orders: push for inventory tracking only; Sentry takes no action.
+# - POs: full push to Sentry; Sentry handles vendor receiving and emits
+#   receipt events back to us.
+# - Vendor lead-time: ap_vendors.vendor_lead_time_days INT DEFAULT 14;
+#   pusher computes expected_date = order_date + lead_time.
+# - Vendor name resolution: fuzzy match in pusher; clean ap_vendors over
+#   time; unresolved vendors logged for periodic cleanup.
+#
+# =====================================================================
+# Outstanding for v1.0.0
+# =====================================================================
+#
+# 1. FEATURE REQUEST to Hightower (or fork the MIT-licensed repo):
+#    sales_orders.notes TEXT NULL -- order-level handling instructions
+#    (gift messages, "double-box", "fragile", picker-specific). Field
+#    is commented-out as canonical: above; uncomment after Sentry's
+#    schema gains it. Decide: ask v1.7.1 patch, wait for v1.8/v2.0, or
+#    fork now.
+#
+# 2. SCHEMA CHANGES to gl.dbo (avidmax-fabric repo):
+#    a) ALTER TABLE dbo.ap_vendors
+#         ADD vendor_lead_time_days INT NOT NULL
+#         CONSTRAINT DF_ap_vendors_lead_time DEFAULT 14;
+#    b) CREATE TABLE dbo.customers (...)
+#       AvidMax-owned customer master, aggregated across all channels,
+#       with notes column. Design needed -- merge keys per channel,
+#       backfill strategy, identity resolution policy.
+#
+# 3. POS detection signal on BC orders. Inspect a real Zettle/PayPal
+#    POS order in BC to identify the marker (shipping_method,
+#    payment_method, or order tag). Without a reliable signal we'll
+#    incorrectly send POS sales as warehouse_id=1 (AFC) and Sentry will
+#    queue them for picking that already happened.
+#
+# 4. Structured-address parser. Today both shipping and billing on
+#    sales_orders push the entire blob into ..._line1. A parser pass
+#    upstream (in pusher OR in a Fabric view) populates the rest of
+#    the v1.8 columns. Not blocking for May 12 cutover but should land
+#    before peak season.
