@@ -1,0 +1,38 @@
+# Repo-root .dockerignore. Keeps the api/ image build context lean even when
+# the Dockerfile is invoked from the repo root (needed so api/Dockerfile can
+# COPY db/mappings/ alongside the api source). Without this, the Docker
+# daemon would also send admin/node_modules, .git, docs/, etc. to the
+# builder — slow on local builds and wasted bandwidth on `az acr build`.
+**/.git
+**/.gitignore
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/node_modules
+**/dist
+**/build
+**/.next
+
+# Top-level dirs not needed by api or its bake-in mappings
+admin/
+mobile/
+proxy/
+tools/
+docs/
+.github/
+
+# Top-level docs/files
+*.md
+mkdocs.yml
+LICENSE
+NOTICE
+docker-compose*.yml
+package*.json
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
