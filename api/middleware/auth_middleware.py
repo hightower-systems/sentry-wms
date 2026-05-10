@@ -306,11 +306,15 @@ V150_ENDPOINT_SLUGS = {
 # Adding a new /api/v1/inbound/* route means adding one entry here plus
 # wiring it in the admin UI's inbound-resources checkbox group.
 V170_INBOUND_RESOURCE_BY_ENDPOINT = {
-    "inbound.post_sales_orders":    "sales_orders",
-    "inbound.post_items":           "items",
-    "inbound.post_customers":       "customers",
-    "inbound.post_vendors":         "vendors",
-    "inbound.post_purchase_orders": "purchase_orders",
+    "inbound.post_sales_orders":     "sales_orders",
+    "inbound.post_items":            "items",
+    "inbound.post_customers":        "customers",
+    "inbound.post_vendors":          "vendors",
+    "inbound.post_purchase_orders":  "purchase_orders",
+    # v1.8.x cutover-prep extension: state-based inventory sync from upstream
+    # (cutover seed, FBA mirror, drift correction). See routes/inbound.py
+    # _inventory_update_post + register_inventory_update_route.
+    "inbound.post_inventory_update": "inventory_update",
 }
 
 

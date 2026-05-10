@@ -23,22 +23,30 @@ Per-request shape:
   every response (success or failure).
 """
 
+import uuid
+from datetime import timezone
+
 from flask import Blueprint, current_app, g, jsonify, make_response, request
 from psycopg2.errors import IntegrityError as _PsycopgIntegrityError
 from pydantic import ValidationError
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError as _SAIntegrityError
 
 from middleware.auth_middleware import require_wms_token
 from middleware.db import with_db
 from schemas.inbound import InboundBody
+from services.audit_service import write_audit_log
+from services.events_service import emit_event, resolve_source_external_id
 from services.inbound_service import (
     HandlerError,
     HandlerOK,
     get_max_body_kb,
     handle_inbound,
 )
+from services.inventory_service import add_inventory
 from services.mapping_loader import MappingDocument
 from services.rate_limit import limiter
+from constants import ACTION_ADJUST, ADJ_APPROVED
 
 
 inbound_bp = Blueprint("inbound", __name__)
@@ -183,14 +191,16 @@ def register_inbound_resource(resource_key: str, endpoint_suffix: str) -> None:
     decorator + per-token rate limit. Future per-resource commits add
     one line here per resource.
 
-    Rate limit is env-configurable via INBOUND_RATE_LIMIT_PER_MINUTE (default 1000).
+    Rate limit is env-configurable via INBOUND_RATE_LIMIT_PER_MINUTE (default 500).
     Sentry can sustain much higher than the original "100 per minute" default —
     bulk pre-cutover pushes (item master, inventory seed, customer migration)
-    need higher ceilings without compromising steady-state safety. Lower it
-    again per-environment if you ever see resource pressure.
+    need higher ceilings without compromising steady-state safety. Single-
+    threaded pushers max out at ~12 req/sec (RTT-limited) so 500/min gives
+    ~30% headroom. Bump to 1000-2000 only if running multiple concurrent
+    pushers. Lower it again per-environment if you ever see resource pressure.
     """
     import os
-    rate_limit = os.getenv("INBOUND_RATE_LIMIT_PER_MINUTE", "1000")
+    rate_limit = os.getenv("INBOUND_RATE_LIMIT_PER_MINUTE", "500")
     handler = _resource_post(resource_key)
     handler = with_db(handler)
     handler = require_wms_token(handler)
@@ -206,5 +216,298 @@ def register_inbound_resource(resource_key: str, endpoint_suffix: str) -> None:
 register_inbound_resource("sales_orders", "sales_orders")
 register_inbound_resource("items", "items")
 register_inbound_resource("customers", "customers")
+
+
+# ----------------------------------------------------------------------
+# POST /api/v1/inbound/inventory_update
+# ----------------------------------------------------------------------
+#
+# Token-authed bulk inventory STATE-SYNC endpoint. Used for:
+#   - Cutover-day initial seed (~21K AFC + ~377 FBA + ~99 STORE)
+#   - Continuous Amazon SP-API → Sentry FBA mirror
+#   - Drift correction (when GL/Fabric and Sentry disagree, push our state in)
+#   - Bulk corrections post-cutover
+#
+# State-based semantics: caller sends the DESIRED final quantity. Server
+# computes the delta vs current quantity_on_hand and applies it as an
+# inventory_adjustments row (so the audit trail still tells the story).
+# Idempotent: pushing the same target_quantity twice is a 0-delta no-op.
+#
+# Body shape: standard InboundBody with source_payload containing:
+#   {
+#     "item_external_id": "<our SKU>",      // resolved via cross_system_mappings
+#     "bin_code": "PICK-BULK",               // resolved within warehouse_id
+#     "warehouse_id": 1,                     // 1=AFC, 2=FBA, 3=STORE
+#     "target_quantity": 50,                 // absolute; the desired state
+#     "reason_code": "cutover_seed"          // free-form, recorded in inventory_adjustments
+#   }
+#
+# Returns 201 on apply (delta != 0) with { canonical_id, applied_delta, ... }
+# Returns 200 on no-op (delta == 0) with { applied_delta: 0, current_quantity, ... }
+#
+# Bidirectional sync architecture:
+#   GL → Sentry: this endpoint (state-based)
+#   Sentry → GL: existing adjustment.applied webhook events (delta-based)
+
+
+def _inventory_update_post():
+    """POST /api/v1/inbound/inventory_update — token-authed state-based sync."""
+    cap_bytes = get_max_body_kb() * 1024
+    if request.content_length is not None and request.content_length > cap_bytes:
+        response = make_response(
+            jsonify({"error_kind": "body_too_large", "max_body_kb": get_max_body_kb()}),
+            413,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    try:
+        body = InboundBody.model_validate(request.get_json(silent=False))
+    except ValidationError as exc:
+        response = make_response(
+            jsonify({"error_kind": "validation_error", "details": exc.errors(include_url=False)}),
+            422,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    sp = body.source_payload or {}
+    required = ("item_external_id", "bin_code", "warehouse_id", "target_quantity", "reason_code")
+    missing = [k for k in required if k not in sp]
+    if missing:
+        response = make_response(
+            jsonify({"error_kind": "missing_source_payload_fields", "missing": missing}),
+            422,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    try:
+        item_external_id = str(sp["item_external_id"])
+        bin_code = str(sp["bin_code"])
+        warehouse_id = int(sp["warehouse_id"])
+        target_quantity = int(sp["target_quantity"])
+        reason_code = str(sp["reason_code"])
+    except (TypeError, ValueError) as exc:
+        response = make_response(
+            jsonify({"error_kind": "invalid_payload_types", "message": str(exc)[:200]}),
+            422,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    if target_quantity < 0:
+        response = make_response(
+            jsonify({"error_kind": "negative_target_quantity", "target_quantity": target_quantity}),
+            422,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    # Resolve our SKU to Sentry's item_id via cross_system_mappings → items.
+    # Token's source_system tells us which mapping namespace to look in.
+    source_system = g.current_token.get("source_system") if g.current_token else None
+    if not source_system:
+        response = make_response(jsonify({"error_kind": "token_missing_source_system"}), 401)
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    item_row = g.db.execute(
+        text("""
+            SELECT i.item_id, i.sku, i.external_id
+            FROM cross_system_mappings csm
+            JOIN items i ON i.external_id = csm.canonical_id
+            WHERE csm.source_system = :ss
+              AND csm.source_type = 'item'
+              AND csm.source_id = :sid
+        """),
+        {"ss": source_system, "sid": item_external_id},
+    ).fetchone()
+    if not item_row:
+        response = make_response(
+            jsonify({
+                "error_kind": "item_not_found",
+                "item_external_id": item_external_id,
+                "source_system": source_system,
+            }),
+            404,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+    item_id = item_row.item_id
+
+    # Resolve bin via (warehouse_id, bin_code).
+    bin_row = g.db.execute(
+        text("SELECT bin_id, bin_code, external_id FROM bins WHERE warehouse_id = :wh AND bin_code = :bc"),
+        {"wh": warehouse_id, "bc": bin_code},
+    ).fetchone()
+    if not bin_row:
+        response = make_response(
+            jsonify({
+                "error_kind": "bin_not_found",
+                "warehouse_id": warehouse_id,
+                "bin_code": bin_code,
+            }),
+            404,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+    bin_id = bin_row.bin_id
+
+    # Look up current state for this (item, bin) — needed to compute delta.
+    inv_row = g.db.execute(
+        text("""
+            SELECT inventory_id, quantity_on_hand FROM inventory
+            WHERE item_id = :iid AND bin_id = :bid FOR UPDATE
+        """),
+        {"iid": item_id, "bid": bin_id},
+    ).fetchone()
+    current_quantity = inv_row.quantity_on_hand if inv_row else 0
+    quantity_change = target_quantity - current_quantity
+
+    # Idempotent no-op: target already matches current. Return 200 + current
+    # state without writing an adjustment row or emitting an event.
+    if quantity_change == 0:
+        response = make_response(
+            jsonify({
+                "applied_delta": 0,
+                "current_quantity": current_quantity,
+                "target_quantity": target_quantity,
+                "warehouse_id": warehouse_id,
+                "bin_id": bin_id,
+                "item_id": item_id,
+                "noop": True,
+            }),
+            200,
+        )
+        response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+        return response
+
+    # Apply ADD or REMOVE for the computed delta.
+    try:
+        if quantity_change > 0:
+            adjustment_type = "ADD"
+            add_inventory(g.db, item_id, bin_id, warehouse_id, quantity_change)
+        else:
+            adjustment_type = "REMOVE"
+            qty_remove = abs(quantity_change)
+            new_qty = current_quantity - qty_remove
+            if new_qty == 0:
+                g.db.execute(
+                    text("DELETE FROM inventory WHERE inventory_id = :inv_id"),
+                    {"inv_id": inv_row.inventory_id},
+                )
+            else:
+                g.db.execute(
+                    text("UPDATE inventory SET quantity_on_hand = :qty, updated_at = NOW() WHERE inventory_id = :inv_id"),
+                    {"qty": new_qty, "inv_id": inv_row.inventory_id},
+                )
+    except Exception:
+        g.db.rollback()
+        raise
+
+    # Create the adjustment record (status=APPROVED — auto-applied via Pipe B).
+    adjusted_by_user_id = g.current_token.get("user_id") if g.current_token else None
+    adj_row = g.db.execute(
+        text("""
+            INSERT INTO inventory_adjustments (
+                item_id, bin_id, warehouse_id, quantity_change,
+                reason_code, reason_detail, status,
+                adjusted_by, adjusted_at, external_id
+            )
+            VALUES (
+                :iid, :bid, :wid, :qty_change,
+                :reason_code, :reason_detail, :status,
+                :user_id, NOW(), :ext_id
+            )
+            RETURNING adjustment_id, adjusted_at, external_id
+        """),
+        {
+            "iid": item_id, "bid": bin_id, "wid": warehouse_id,
+            "qty_change": quantity_change,
+            "reason_code": reason_code[:60],
+            "reason_detail": f"Pipe B inbound adjustment from upstream external_id={body.external_id}",
+            "status": ADJ_APPROVED,
+            "user_id": adjusted_by_user_id,
+            "ext_id": str(uuid.uuid4()),
+        },
+    ).fetchone()
+
+    write_audit_log(
+        g.db, ACTION_ADJUST, "ITEM", item_id,
+        user_id=adjusted_by_user_id,
+        warehouse_id=warehouse_id,
+        details={
+            "adjustment_id": adj_row.adjustment_id,
+            "adjustment_type": adjustment_type,
+            "bin_id": bin_id,
+            "quantity": quantity_change,
+            "reason_code": reason_code,
+            "source_external_id": body.external_id,
+            "source_system": source_system,
+        },
+    )
+
+    item_source_external_id = (
+        resolve_source_external_id(g.db, "item", item_row.external_id)
+        or str(item_row.external_id)
+    )
+    emit_event(
+        g.db,
+        event_type="adjustment.applied",
+        event_version=1,
+        aggregate_type="inventory_adjustment",
+        aggregate_id=adj_row.adjustment_id,
+        aggregate_external_id=adj_row.external_id,
+        warehouse_id=warehouse_id,
+        source_txn_id=getattr(g, "source_txn_id", None),
+        payload={
+            "adjustment_external_id": str(adj_row.external_id),
+            "item_external_id": item_source_external_id,
+            "bin_external_id": str(bin_row.external_id),
+            "quantity_delta": quantity_change,
+            "reason_code": reason_code,
+            "applied_by_user_external_id": None,  # Pipe B path: no Sentry user identity
+            "applied_at": adj_row.adjusted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    g.db.commit()
+
+    response = make_response(
+        jsonify({
+            "canonical_id": str(adj_row.external_id),
+            "adjustment_id": adj_row.adjustment_id,
+            "applied_delta": quantity_change,
+            "current_quantity": target_quantity,  # post-apply state
+            "target_quantity": target_quantity,
+            "warehouse_id": warehouse_id,
+            "bin_id": bin_id,
+            "item_id": item_id,
+            "noop": False,
+        }),
+        201,
+    )
+    response.headers["X-Sentry-Canonical-Model"] = "DRAFT-v1"
+    return response
+
+
+def register_inventory_update_route() -> None:
+    """Register POST /api/v1/inbound/inventory_update — state-based sync."""
+    import os
+    rate_limit = os.getenv("INBOUND_RATE_LIMIT_PER_MINUTE", "500")
+    handler = _inventory_update_post
+    handler = with_db(handler)
+    handler = require_wms_token(handler)
+    handler = limiter.limit(f"{rate_limit} per minute")(handler)
+    inbound_bp.add_url_rule(
+        "/inventory_update",
+        endpoint="post_inventory_update",
+        view_func=handler,
+        methods=["POST"],
+    )
+
+
+register_inventory_update_route()
 register_inbound_resource("vendors", "vendors")
 register_inbound_resource("purchase_orders", "purchase_orders")
