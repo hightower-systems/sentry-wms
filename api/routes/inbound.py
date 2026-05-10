@@ -181,11 +181,20 @@ def _trim(msg: str, n: int = 400) -> str:
 def register_inbound_resource(resource_key: str, endpoint_suffix: str) -> None:
     """Register POST /api/v1/inbound/<resource_key> with the wms_token
     decorator + per-token rate limit. Future per-resource commits add
-    one line here per resource."""
+    one line here per resource.
+
+    Rate limit is env-configurable via INBOUND_RATE_LIMIT_PER_MINUTE (default 1000).
+    Sentry can sustain much higher than the original "100 per minute" default —
+    bulk pre-cutover pushes (item master, inventory seed, customer migration)
+    need higher ceilings without compromising steady-state safety. Lower it
+    again per-environment if you ever see resource pressure.
+    """
+    import os
+    rate_limit = os.getenv("INBOUND_RATE_LIMIT_PER_MINUTE", "1000")
     handler = _resource_post(resource_key)
     handler = with_db(handler)
     handler = require_wms_token(handler)
-    handler = limiter.limit("100 per minute")(handler)
+    handler = limiter.limit(f"{rate_limit} per minute")(handler)
     inbound_bp.add_url_rule(
         f"/{resource_key}",
         endpoint=f"post_{endpoint_suffix}",
