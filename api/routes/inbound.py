@@ -407,7 +407,16 @@ def _inventory_update_post():
         raise
 
     # Create the adjustment record (status=APPROVED — auto-applied via Pipe B).
-    adjusted_by_user_id = g.current_token.get("user_id") if g.current_token else None
+    # adjusted_by is NOT NULL on inventory_adjustments. Pipe B WMS tokens are
+    # system-driven and don't carry a user_id — fall back to the token's
+    # creating user_id (g.current_token.get('created_by_user_id')), then to
+    # 1 (admin) as last resort. Audit trail still rich because token_name +
+    # source_external_id are recorded in audit_log.details.
+    adjusted_by_user_id = (
+        g.current_token.get("user_id")
+        or g.current_token.get("created_by_user_id")
+        or 1
+    ) if g.current_token else 1
     adj_row = g.db.execute(
         text("""
             INSERT INTO inventory_adjustments (
@@ -445,6 +454,7 @@ def _inventory_update_post():
             "reason_code": reason_code,
             "source_external_id": body.external_id,
             "source_system": source_system,
+            "token_name": g.current_token.get("token_name") if g.current_token else None,
         },
     )
 
