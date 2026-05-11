@@ -13,6 +13,8 @@ export default function Bins() {
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get('q') || '');
   const [bins, setBins] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [page, setPage] = useState(1);
   const [zones, setZones] = useState([]);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -21,16 +23,76 @@ export default function Bins() {
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
-  useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId, search]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (warehouseId) { loadBins(); loadZones(); } }, [warehouseId, search, page]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadBins() {
-    const params = new URLSearchParams({ warehouse_id: String(warehouseId) });
+    const params = new URLSearchParams({ warehouse_id: String(warehouseId), page, per_page: 50 });
     if (search) params.set('q', search);
     const res = await api.get(`/admin/bins?${params}`);
     if (res?.ok) {
       const data = await res.json();
       setBins(data.bins || []);
+      setPagination({ page: data.page, pages: data.pages, total: data.total, per_page: data.per_page });
+    }
+  }
+
+  // Walks all pages and downloads the full result set as CSV. Sentry's
+  // admin/bins endpoint caps page_size at 50 regardless of `per_page`,
+  // so we paginate server-side and concat client-side. CSV mirrors the
+  // BinImportRow schema (bin_code, bin_barcode, zone, warehouse_id,
+  // bin_type, aisle, pick_sequence, putaway_sequence, description) so
+  // an exported file is round-trip-importable via /admin/import/bins.
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const all = [];
+      let p = 1;
+      // Hard stop at 200 pages (=10k bins) to avoid runaway
+      while (p <= 200) {
+        const params = new URLSearchParams({ warehouse_id: String(warehouseId), page: p, per_page: 50 });
+        if (search) params.set('q', search);
+        const res = await api.get(`/admin/bins?${params}`);
+        if (!res?.ok) break;
+        const data = await res.json();
+        all.push(...(data.bins || []));
+        if (p >= (data.pages || 1)) break;
+        p += 1;
+      }
+      const headers = ['bin_code','bin_barcode','zone','warehouse_id','bin_type','aisle','pick_sequence','putaway_sequence','description'];
+      const csvEscape = (v) => {
+        if (v == null) return '';
+        const s = String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lines = [headers.join(',')];
+      for (const b of all) {
+        lines.push([
+          csvEscape(b.bin_code),
+          csvEscape(b.bin_barcode),
+          csvEscape(b.zone_name || b.zone || ''),
+          csvEscape(b.warehouse_id ?? warehouseId),
+          csvEscape(b.bin_type),
+          csvEscape(b.aisle ?? ''),
+          csvEscape(b.pick_sequence ?? ''),
+          csvEscape(b.putaway_sequence ?? ''),
+          csvEscape(b.description ?? ''),
+        ].join(','));
+      }
+      const csv = lines.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const today = new Date().toISOString().split('T')[0];
+      link.download = `bins_warehouse${warehouseId}_${today}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -173,11 +235,20 @@ export default function Bins() {
           style={{ maxWidth: 320, marginRight: 8 }}
           placeholder="Search by bin code or barcode"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
         />
+        <button
+          className="btn"
+          onClick={exportCsv}
+          disabled={exporting || !pagination?.total}
+          style={{ marginRight: 8 }}
+          title="Export current filter to CSV"
+        >
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </button>
         <button className="btn btn-primary" onClick={() => { setForm({ is_active: true }); setShowCreate(true); setError(''); }}>New Bin</button>
       </PageHeader>
-      <DataTable columns={columns} data={bins} onRowClick={viewBin} />
+      <DataTable columns={columns} data={bins} pagination={pagination} onPageChange={setPage} onRowClick={viewBin} />
 
       {selected && detail && !editing && (
         <Modal title={`Bin ${detail.bin_code}`} onClose={() => { setSelected(null); setDetail(null); setError(''); }}
