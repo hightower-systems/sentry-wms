@@ -75,8 +75,11 @@ class TestScopeCatalogInboundExtensions:
         # Plural keys: matches the resource-key dispatch
         # (V170_INBOUND_RESOURCE_BY_ENDPOINT.values()) and the
         # wms_tokens.inbound_resources array shape.
+        # AvidMax adds "inventory_update" (state-based inbound sync endpoint,
+        # commit 148d8c2 / PR #2 catch-up) on top of upstream's five.
         assert set(body["inbound_resources"]) == {
             "sales_orders", "items", "customers", "vendors", "purchase_orders",
+            "inventory_update",
         }
 
     def test_source_systems_reflects_allowlist(self, client, auth_headers, ss):
