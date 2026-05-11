@@ -11,7 +11,7 @@ from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.pack_verification import CompletePackingRequest, VerifyPackItemRequest
 from services.audit_service import write_audit_log
-from services.events_service import emit_event, get_user_external_id
+from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
 from constants import SO_PICKED, SO_PACKED, ACTION_PACK
 from utils.validation import validate_body
 
@@ -288,19 +288,33 @@ def complete_packing(validated):
     # synthesised entry keyed "<so_ext>-pkg-1"; dimensions_in is null
     # (not tracked). Multi-package support is v1.5.x+ once the packing
     # UI supports discrete packages.
+    # Outbound payload uses source-system external_ids; canonical UUID
+    # fallback when no upstream mapping exists. See resolve_source_external_id.
     pack_lines = g.db.execute(
         text(
             """
-            SELECT i.external_id AS item_external_id, sol.quantity_packed
+            SELECT
+                COALESCE(csm.source_id, CAST(i.external_id AS TEXT)) AS item_external_id,
+                sol.quantity_packed
               FROM sales_order_lines sol
               JOIN items i ON i.item_id = sol.item_id
+              LEFT JOIN cross_system_mappings csm
+                ON csm.canonical_id = i.external_id
+                AND csm.source_type = 'item'
              WHERE sol.so_id = :sid
              ORDER BY sol.line_number
             """
         ),
         {"sid": so_id},
     ).fetchall()
-    so_external_id_str = str(so.external_id)
+    so_canonical_str = str(so.external_id)
+    so_source_external_id = (
+        resolve_source_external_id(g.db, "sales_order", so.external_id)
+        or so_canonical_str
+    )
+    # package_external_id stays Sentry-internal (synthesised, no upstream
+    # identity); uses canonical UUID stem for traceability.
+    so_external_id_str = so_canonical_str
     emit_event(
         g.db,
         event_type="pack.confirmed",
@@ -311,7 +325,7 @@ def complete_packing(validated):
         warehouse_id=so.warehouse_id,
         source_txn_id=g.source_txn_id,
         payload={
-            "sales_order_external_id": so_external_id_str,
+            "sales_order_external_id": so_source_external_id,
             "packages": [
                 {
                     "package_external_id": f"{so_external_id_str}-pkg-1",
