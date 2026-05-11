@@ -49,7 +49,16 @@ export default function PackScreen({ navigation, route }) {
       (item) => item.sku === barcode || item.upc === barcode || item.item_barcode === barcode
     );
     if (matchedItem) {
-      const expected = matchedItem.quantity_picked || matchedItem.quantity_ordered;
+      // v1.9.0: pack against quantity_picked, not quantity_ordered. A
+      // short-picked line has quantity_picked < quantity_ordered (e.g.,
+      // 3 of 5 actually picked); the operator only has those 3 items
+      // physically, so they verify against 3, not 5. The previous
+      // `||` fallback fired on a 0-picked (fully shorted) line and
+      // demanded quantity_ordered verifications the operator could
+      // never produce. Nullish coalescing keeps the fallback for
+      // genuinely-undefined fields (legacy responses) while accepting
+      // 0 as the real picked count.
+      const expected = matchedItem.quantity_picked ?? matchedItem.quantity_ordered;
       if ((matchedItem.verified || 0) >= expected) {
         showError(`${matchedItem.sku} already fully verified`);
         return;
@@ -76,7 +85,7 @@ export default function PackScreen({ navigation, route }) {
 
   const allVerified =
     items.length > 0 &&
-    items.every((item) => (item.verified || 0) >= (item.quantity_picked || item.quantity_ordered));
+    items.every((item) => (item.verified || 0) >= (item.quantity_picked ?? item.quantity_ordered));
 
   const handleCompletePack = async () => {
     try {
@@ -121,10 +130,17 @@ export default function PackScreen({ navigation, route }) {
               <Text style={styles.tapHint}>Tap for details</Text>
             </TouchableOpacity>
 
+            {order.memo ? (
+              <View style={styles.memoBlock}>
+                <Text style={styles.memoLabel}>NOTE</Text>
+                <Text style={styles.memoText}>{order.memo}</Text>
+              </View>
+            ) : null}
+
             <ScanInput placeholder="SCAN ITEM" onScan={handleScanItem} disabled={scanDisabled} />
 
             {items.map((item, idx) => {
-              const expected = item.quantity_picked || item.quantity_ordered;
+              const expected = item.quantity_picked ?? item.quantity_ordered;
               const done = item.verified || 0;
               const complete = done >= expected;
               return (
@@ -185,6 +201,7 @@ export default function PackScreen({ navigation, route }) {
                 <View style={styles.detailRow}><Text style={styles.detailLabel}>CUSTOMER</Text><Text style={styles.detailValue}>{soDetail.customer_name || '-'}</Text></View>
                 {soDetail.customer_phone && <View style={styles.detailRow}><Text style={styles.detailLabel}>PHONE</Text><Text style={styles.detailValue}>{soDetail.customer_phone}</Text></View>}
                 {(soDetail.customer_address || soDetail.ship_address) && <View style={styles.detailRow}><Text style={styles.detailLabel}>ADDRESS</Text><Text style={styles.detailValue}>{soDetail.customer_address || soDetail.ship_address}</Text></View>}
+                {soDetail.memo && <View style={styles.detailRow}><Text style={styles.detailLabel}>NOTE</Text><Text style={styles.detailValue}>{soDetail.memo}</Text></View>}
                 <View style={styles.detailRow}><Text style={styles.detailLabel}>STATUS</Text><Text style={styles.detailValue}>{soDetail.status}</Text></View>
                 {soDetail.lines?.length > 0 && (
                   <View style={{ marginTop: 12 }}>
@@ -219,6 +236,15 @@ const styles = StyleSheet.create({
   orderInfo: { marginBottom: 16 },
   soNumber: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   customer: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  memoBlock: {
+    borderWidth: 1, borderColor: colors.warning, borderRadius: radii.badge,
+    padding: 10, marginBottom: 16, backgroundColor: '#fdf6ed',
+  },
+  memoLabel: {
+    fontFamily: fonts.mono, fontSize: 10, fontWeight: '700',
+    color: colors.warning, letterSpacing: 0.6, marginBottom: 4,
+  },
+  memoText: { fontSize: 13, color: colors.textPrimary, lineHeight: 18 },
   itemRowComplete: { borderColor: colors.success, backgroundColor: '#f0f9f0' },
   itemQty: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   itemQtyText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },

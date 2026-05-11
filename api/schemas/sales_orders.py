@@ -37,6 +37,10 @@ class CreateSalesOrderRequest(BaseModel):
     ship_method: Optional[str] = Field(None, max_length=100)
     ship_address: Optional[str] = Field(None, max_length=512)
     ship_by_date: Optional[str] = Field(None, max_length=32)
+    # v1.9.0: free-text operator-facing note. TEXT column has no
+    # length cap; the schema-level 4 KB ceiling here keeps a single
+    # bad PATCH from inflating an SO row indefinitely.
+    memo: Optional[str] = Field(None, max_length=4096)
 
 
 class UpdateSalesOrderRequest(BaseModel):
@@ -49,6 +53,7 @@ class UpdateSalesOrderRequest(BaseModel):
     ship_address: Optional[str] = Field(None, max_length=512)
     ship_by_date: Optional[str] = Field(None, max_length=32)
     priority: Optional[int] = Field(None, ge=0, le=10)
+    memo: Optional[str] = Field(None, max_length=4096)
 
 
 class UpdateSalesOrderAddressRequest(BaseModel):

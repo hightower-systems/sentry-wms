@@ -208,3 +208,35 @@ class TransferOrderImportRow(_BaseImportRow):
     @classmethod
     def _no_formula(cls, v):
         return _reject_formula_prefix(v)
+
+
+# ---------------------------------------------------------------------------
+# Inventory adjustments (v1.10.1 #329)
+# ---------------------------------------------------------------------------
+
+
+class InventoryAdjustmentImportRow(_BaseImportRow):
+    """One row in the inventory adjustment CSV import. Each row resolves
+    to a single auto-approved inventory_adjustments insert plus the
+    matching inventory on-hand mutation. qty is signed: positive adds,
+    negative subtracts (with a sufficient-stock check at apply time).
+    memo lands in inventory_adjustments.reason_detail; reason_code is
+    fixed to CORRECTION on this path."""
+
+    sku: str = Field(..., min_length=1, max_length=128)
+    warehouse: str = Field(..., min_length=1, max_length=64)
+    bin: str = Field(..., min_length=1, max_length=64)
+    qty: int = Field(..., ge=-1000000, le=1000000)
+    memo: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("sku", "warehouse", "bin", "memo", mode="before")
+    @classmethod
+    def _no_formula(cls, v):
+        return _reject_formula_prefix(v)
+
+    @field_validator("qty")
+    @classmethod
+    def _qty_nonzero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("qty must be non-zero")
+        return v

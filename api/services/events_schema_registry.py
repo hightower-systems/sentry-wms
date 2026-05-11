@@ -21,12 +21,13 @@ from typing import Dict, Tuple
 
 from jsonschema import Draft202012Validator
 
-# Seven v1.5.0 event types. Each entry is (event_type, version,
-# aggregate_type) and the registry requires a matching
-# api/schemas_v1/events/<event_type>/<version>.json file. Adding a
-# type here without shipping the file fails boot. The aggregate_type
-# value surfaces on the /api/v1/events/types endpoint so consumers
-# can build their aggregate index without parsing every schema body.
+# Seven v1.5.0 event types plus one v1.9.0 dockd event. Each entry is
+# (event_type, version, aggregate_type) and the registry requires a
+# matching api/schemas_v1/events/<event_type>/<version>.json file.
+# Adding a type here without shipping the file fails boot. The
+# aggregate_type value surfaces on the /api/v1/events/types endpoint
+# so consumers can build their aggregate index without parsing every
+# schema body.
 V150_CATALOG: Tuple[Tuple[str, int, str], ...] = (
     ("receipt.completed",    1, "item_receipt"),
     ("adjustment.applied",   1, "inventory_adjustment"),
@@ -35,6 +36,9 @@ V150_CATALOG: Tuple[Tuple[str, int, str], ...] = (
     ("pack.confirmed",       1, "sales_order"),
     ("ship.confirmed",       1, "sales_order"),
     ("cycle_count.adjusted", 1, "inventory_adjustment"),
+    # v1.9.0 dockd: emitted when a previously-shipped sales order is
+    # voided through the /api/v1/dockd/orders/{so}/void-ship route.
+    ("ship.voided",          1, "sales_order"),
 )
 
 # Resolved once at module import from api/schemas_v1/events. The

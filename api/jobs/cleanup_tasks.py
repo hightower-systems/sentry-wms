@@ -394,3 +394,46 @@ def cleanup_inbound_source_payload() -> dict:
         return {"retention_days": retention_days, "per_resource": summary}
     finally:
         session.close()
+
+
+# ============================================================
+# v1.9.0 dockd_idempotency retention
+# ============================================================
+
+# 72h covers the worst-case dockd retry storm (network partition, station
+# restart, dockd container restart). Past that, the consumer-side request
+# is gone and the cached response is dead weight. The dockd_idempotency
+# row is keyed on (token_id, idempotency_key), so a daily DELETE on
+# created_at < NOW() - 72h is the whole prune.
+DOCKD_IDEMPOTENCY_RETENTION = timedelta(hours=72)
+
+
+def _cleanup_dockd_idempotency_impl(session) -> int:
+    cutoff = datetime.now(timezone.utc) - DOCKD_IDEMPOTENCY_RETENTION
+    result = session.execute(
+        text(
+            "DELETE FROM dockd_idempotency WHERE created_at < :cutoff"
+        ),
+        {"cutoff": cutoff},
+    )
+    return result.rowcount or 0
+
+
+@celery_app.task
+def cleanup_dockd_idempotency() -> dict:
+    """Delete dockd_idempotency rows older than 72h. Daily cadence is
+    fine -- the table is small (one row per dockd HTTP request, capped
+    at the request rate of 5 stations) and the prune index is on
+    created_at."""
+    import models.database as db
+    session = db.SessionLocal()
+    try:
+        deleted = _cleanup_dockd_idempotency_impl(session)
+        session.commit()
+        logger.info("cleanup_dockd_idempotency deleted %d row(s)", deleted)
+        return {"deleted": deleted}
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

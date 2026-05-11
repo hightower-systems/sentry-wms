@@ -29,7 +29,7 @@ def get_order(barcode):
         text(
             f"""
             SELECT so_id, so_number, so_barcode, customer_name, status,
-                   ship_method, ship_address, warehouse_id
+                   ship_method, ship_address, warehouse_id, memo
             FROM sales_orders
             WHERE (so_barcode = :barcode OR so_number = :barcode)
               {scope_clause}
@@ -97,6 +97,7 @@ def get_order(barcode):
             "ship_method": so.ship_method,
             "ship_address": so.ship_address,
             "warehouse_id": so.warehouse_id,
+            "memo": so.memo,
         },
         "lines": line_list,
         "calculated_weight_lbs": round(calculated_weight, 2),
@@ -264,7 +265,8 @@ def complete_packing(validated):
         text(
             """
             SELECT COALESCE(SUM(i.weight_lbs * sol.quantity_picked), 0) AS total_weight,
-                   COALESCE(SUM(sol.quantity_picked), 0) AS total_items
+                   COALESCE(SUM(sol.quantity_picked), 0) AS total_items,
+                   COALESCE(SUM(sol.quantity_packed), 0) AS total_packed
             FROM sales_order_lines sol
             JOIN items i ON i.item_id = sol.item_id
             WHERE sol.so_id = :so_id
@@ -273,6 +275,10 @@ def complete_packing(validated):
         {"so_id": so_id},
     ).fetchone()
 
+    # total_expected mirrors total_items (sum of quantity_picked = what
+    # should be packed) but is named explicitly so the audit_log chip
+    # preview shows expected and packed up front. total_items is kept
+    # for any existing consumer.
     write_audit_log(
         g.db,
         action_type=ACTION_PACK,
@@ -280,7 +286,12 @@ def complete_packing(validated):
         entity_id=so_id,
         user_id=g.current_user["username"],
         warehouse_id=so.warehouse_id,
-        details={"so_number": so.so_number, "total_items": int(stats.total_items)},
+        details={
+            "so_number": so.so_number,
+            "total_expected": int(stats.total_items),
+            "total_packed": int(stats.total_packed),
+            "total_items": int(stats.total_items),
+        },
     )
 
     # v1.5.0 #117: emit pack.confirmed on the integration_events outbox.

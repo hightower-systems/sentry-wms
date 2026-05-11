@@ -166,6 +166,13 @@ jobs:
         run: |
           PYTHONPATH=api python tools/scripts/regenerate-inbound-openapi.py --check
 
+      - name: v1.9.0 dockd OpenAPI drift check
+        # Same shape as the inbound check above. Fails fast when
+        # docs/api/dockd-openapi.yaml has drifted from
+        # services.dockd_openapi.build_dockd_openapi().
+        run: |
+          PYTHONPATH=api python tools/scripts/regenerate-dockd-openapi.py --check
+
       - name: Validate v1.5.0 event schemas
         # #111: importing the registry forces Draft 2020-12 validation
         # of every api/schemas_v1/events/*/*.json file and asserts

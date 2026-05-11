@@ -400,6 +400,42 @@ def handle_inbound(
         canonical_payload["warehouse_id"] = int(token["warehouse_ids"][0])
         write_field_set = write_field_set | {"warehouse_id"}
 
+    # v1.9.0 #311: ERP-driven cancel detection. When the inbound
+    # canonical_payload carries status='CANCELLED' on an existing SO
+    # whose canonical row is NOT already CANCELLED, route through the
+    # shared sales_order_service.cancel_sales_order so the inventory
+    # unwind + audit_log row land identically to the admin cancel path.
+    # First-time-receipt case (no cross_system_mappings row yet) falls
+    # through to the normal upsert; a brand-new SO landing as CANCELLED
+    # just inserts with status='CANCELLED' and no inventory state to
+    # unwind. The cancel call sets status='CANCELLED' itself so the
+    # subsequent _upsert_canonical UPDATE is a no-op for that field
+    # while still applying any other field updates the mapping doc
+    # declares (customer_name, address fields, etc.).
+    if (
+        cfg.canonical_table == "sales_orders"
+        and canonical_payload.get("status") == "CANCELLED"
+    ):
+        existing_so = db.execute(
+            text(
+                "SELECT so.so_id, so.status "
+                "  FROM sales_orders so "
+                "  JOIN cross_system_mappings csm ON csm.canonical_id = so.external_id "
+                " WHERE csm.source_system = :ss "
+                "   AND csm.source_type   = :st "
+                "   AND csm.source_id     = :sid"
+            ),
+            {"ss": source_system, "st": cfg.canonical_type, "sid": external_id},
+        ).fetchone()
+        if existing_so is not None and existing_so.status != "CANCELLED":
+            from services.sales_order_service import cancel_sales_order
+            cancel_sales_order(
+                db,
+                so_id=existing_so.so_id,
+                source="inbound",
+                username=f"inbound:{source_system}",
+            )
+
     is_new, canonical_id = _upsert_canonical(
         db, cfg, source_system, external_id, canonical_payload,
         write_field_set,

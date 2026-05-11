@@ -410,14 +410,21 @@ class TestSalesOrders:
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         assert resp.status_code == 400
 
-    def test_cancel_already_cancelled_fails(self, client, auth_headers):
-        """Issue #90: admin UI only shows the Cancel button for OPEN SOs,
-        but guard the backend against a double-cancel anyway (the status
-        check rejects a CANCELLED order with 400)."""
+    def test_cancel_already_cancelled_is_idempotent(self, client, auth_headers):
+        """v1.9.0: cancel is idempotent on already-CANCELLED. The shared
+        cancel service treats a re-issue as a no-op (no second audit row,
+        no second inventory unwind) and returns 200 with pre_status =
+        'CANCELLED' so the caller can detect the idempotent path. ERP-
+        driven retries via the inbound surface depend on this; the admin
+        path inherits the same contract for consistency."""
         client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
-        assert resp.status_code == 400
-        assert "Can only cancel" in resp.get_json()["error"]
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["pre_status"] == "CANCELLED"
+        # audit_log_id is None on the idempotent re-cancel; the original
+        # cancel's audit row remains the single source of record.
+        assert body["audit_log_id"] is None
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
@@ -737,6 +744,142 @@ class TestCsvImport:
         assert resp.status_code == 400
         assert "5000" in resp.get_json()["error"]
 
+    def test_import_inventory_adjustments_positive_and_negative(self, client, auth_headers):
+        """v1.10.1 #329: bulk inventory adjustments via CSV import.
+
+        Seed has TST-001 with 50 on-hand in bin A-01-01 (warehouse APT-LAB).
+        Apply +5 then -3 to that bin; verify final on-hand = 52,
+        two APPROVED inventory_adjustments rows, and two
+        adjustment.applied events on the integration_events outbox.
+        """
+        before = _query_val(
+            "SELECT inv.quantity_on_hand FROM inventory inv "
+            "JOIN items i ON i.item_id = inv.item_id "
+            "JOIN bins b ON b.bin_id = inv.bin_id "
+            "WHERE i.sku = 'TST-001' AND b.bin_code = 'A-01-01'"
+        )
+        assert before == 50
+
+        resp = client.post(
+            "/api/admin/import/inventory-adjustments",
+            json={
+                "records": [
+                    {"sku": "TST-001", "warehouse": "APT-LAB", "bin": "A-01-01", "qty": 5, "memo": "Found extras"},
+                    {"sku": "TST-001", "warehouse": "APT-LAB", "bin": "A-01-01", "qty": -3, "memo": "Damaged"},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["imported"] == 2
+        assert data["skipped"] == 0
+
+        after = _query_val(
+            "SELECT inv.quantity_on_hand FROM inventory inv "
+            "JOIN items i ON i.item_id = inv.item_id "
+            "JOIN bins b ON b.bin_id = inv.bin_id "
+            "WHERE i.sku = 'TST-001' AND b.bin_code = 'A-01-01'"
+        )
+        assert after == 52
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT reason_code, status, quantity_change "
+            "FROM inventory_adjustments ia "
+            "JOIN items i ON i.item_id = ia.item_id "
+            "WHERE i.sku = 'TST-001' "
+            "ORDER BY adjustment_id DESC LIMIT 2"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        assert len(rows) == 2
+        for reason_code, status, _qc in rows:
+            assert reason_code == "CORRECTION"
+            assert status == "APPROVED"
+
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT (payload->>'quantity_delta')::int AS delta "
+            "FROM integration_events "
+            "WHERE event_type = 'adjustment.applied' "
+            "ORDER BY event_id DESC LIMIT 2"
+        )
+        deltas = sorted(r[0] for r in cur.fetchall())
+        cur.close()
+        assert deltas == [-3, 5]
+
+    def test_import_inventory_adjustments_unknown_sku_skips_row(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/import/inventory-adjustments",
+            json={
+                "records": [
+                    {"sku": "NO-SUCH-SKU", "warehouse": "APT-LAB", "bin": "A-01-01", "qty": 1, "memo": ""},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["imported"] == 0
+        assert data["skipped"] == 1
+        assert "Item not found" in data["errors"][0]["error"]
+
+    def test_import_inventory_adjustments_bin_must_belong_to_warehouse(self, client, auth_headers):
+        """A bin code that exists but lives in a different warehouse is
+        rejected with a row-level error, not silently applied to the
+        wrong warehouse."""
+        resp = client.post(
+            "/api/admin/import/inventory-adjustments",
+            json={
+                "records": [
+                    {"sku": "TST-001", "warehouse": "VIRTUAL", "bin": "A-01-01", "qty": 1, "memo": ""},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["imported"] == 0
+        assert data["skipped"] == 1
+        assert "not found in warehouse" in data["errors"][0]["error"]
+
+    def test_import_inventory_adjustments_insufficient_stock_skips_row(self, client, auth_headers):
+        """A negative qty exceeding available on-hand is rejected with
+        a row-level error; the inventory row is not mutated."""
+        resp = client.post(
+            "/api/admin/import/inventory-adjustments",
+            json={
+                "records": [
+                    {"sku": "TST-001", "warehouse": "APT-LAB", "bin": "A-01-01", "qty": -100000, "memo": ""},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["imported"] == 0
+        assert data["skipped"] == 1
+        assert "Insufficient inventory" in data["errors"][0]["error"]
+
+    def test_import_inventory_adjustments_zero_qty_rejected(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/import/inventory-adjustments",
+            json={
+                "records": [
+                    {"sku": "TST-001", "warehouse": "APT-LAB", "bin": "A-01-01", "qty": 0, "memo": ""},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["imported"] == 0
+        assert data["skipped"] == 1
+        assert "qty" in data["errors"][0]["error"]
+
 
 # ── Dashboard Stats ───────────────────────────────────────────────────────────
 
@@ -756,6 +899,26 @@ class TestDashboard:
         assert "ready_to_pack" in data
         assert "orders_packed" in data
         assert "ready_to_ship" in data
+        # v1.9.0 #311: cancelled count is always present.
+        assert "cancelled_orders" in data
+        assert data["cancelled_orders"] >= 0
+
+    def test_dashboard_cancelled_count_increments_on_cancel(
+        self, client, auth_headers
+    ):
+        """v1.9.0: a cancel via the admin path bumps the dashboard's
+        cancelled_orders count by one."""
+        before = client.get(
+            "/api/admin/dashboard?warehouse_id=1", headers=auth_headers,
+        ).get_json()["cancelled_orders"]
+        resp = client.post(
+            "/api/admin/sales-orders/1/cancel", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        after = client.get(
+            "/api/admin/dashboard?warehouse_id=1", headers=auth_headers,
+        ).get_json()["cancelled_orders"]
+        assert after == before + 1
 
     def test_dashboard_without_warehouse_filter(self, client, auth_headers):
         resp = client.get("/api/admin/dashboard", headers=auth_headers)

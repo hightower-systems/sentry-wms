@@ -1,0 +1,581 @@
+# =====================================================================
+# Sentry WMS v1.6.1 outbound WEBHOOK envelope -- annotated reference
+# =====================================================================
+#
+# Companion to example-template.yaml.template (the inbound mapping
+# doc). Where the inbound template tells the OPERATOR how to translate
+# their source-system payload into Sentry's canonical model, this file
+# tells the CONSUMER what the wire shape looks like when Sentry POSTs
+# events outbound to a registered webhook subscription.
+#
+# Unlike the inbound template, this file is NOT a configuration the
+# operator authors. The wire shape is server-controlled and locked by
+# the JSON Schemas at api/schemas_v1/events/<event_type>/<version>.json.
+# The .template suffix is here only to mirror the inbound naming
+# convention; the mapping-loader at api/services/mapping_loader.py
+# globs `.yaml`, `.yml`, `.json` and silently skips `.template`, so
+# this file is safe to leave alongside the inbound mapping docs in
+# /db/mappings.
+#
+# Where to read the live contract end-to-end:
+#
+#   docs/api/webhooks.md                 -- consumer integration guide
+#                                            (signature verification,
+#                                            retry schedule, dual-accept
+#                                            rotation, dedupe contract).
+#   api/schemas_v1/events/<type>/1.json  -- per-event JSON Schema (the
+#                                            authoritative shape of the
+#                                            `data` block per type).
+#   docs/events/README.md                -- dedupe-on-event_id contract
+#                                            shared with the polling
+#                                            surface.
+#
+# Setup before Sentry will POST to your endpoint:
+#
+#   1. Admin registers the subscription via the admin panel:
+#      `/webhooks` page -> Add subscription. Operator picks the URL,
+#      the event_types subset, the warehouse_ids subset, and any
+#      aggregate_external_id_allowlist. The plaintext shared secret
+#      is shown ONCE at create time; persist it to your secret store
+#      immediately.
+#
+#   2. Your endpoint must reach the public internet. Sentry's
+#      dispatcher runs an SSRF guard before every dispatch and will
+#      refuse RFC 1918 / loopback / link-local hosts at runtime
+#      (error_kind=ssrf_rejected).
+#
+#   3. Your endpoint must verify the HMAC-SHA256 signature on every
+#      request (see envelope.headers below + docs/api/webhooks.md
+#      reference verifier in Python and Node).
+#
+#   4. Your endpoint must dedupe on `event_id`. NEVER `source_txn_id`,
+#      NEVER `delivery_id`. See dedupe contract below.
+
+mapping_version: "reference-v1.6.1"
+# This is a reference document, not a mapping doc; the field is
+# carried for parity with the inbound template's frontmatter.
+
+source_system: "sentry-wms"
+# The wire is emitted BY Sentry, so source_system here names Sentry
+# itself rather than an external connector.
+
+# =====================================================================
+# Transport
+# =====================================================================
+
+transport:
+  method: "POST"
+  content_type: "application/json"
+  body_encoding: "utf-8"
+  body_canonicalization: "json.dumps(envelope, separators=(',', ':'), sort_keys=True)"
+  # The dispatcher serializes the envelope ONCE with these exact
+  # arguments and HMACs the resulting bytes. A re-serialization on
+  # the consumer side will not match the signed bytes; verify against
+  # the raw request body, not a re-parsed dict.
+  #
+  # Flask:    request.get_data(cache=True)
+  # Express:  install body-parser raw mode for the webhook route
+  # FastAPI:  await request.body()
+
+  timeouts_seconds:
+    # The dispatcher cancels and retries on any of these:
+    connect: 5      # DISPATCHER_HTTP_CONNECT_TIMEOUT_MS default 5000.
+    read: 8         # DISPATCHER_HTTP_READ_TIMEOUT_MS default 8000.
+    wall_clock: 10  # DISPATCHER_HTTP_TIMEOUT_MS default 10000. Hard
+                    # cap on the entire send, including slow trickle.
+
+  response_body_cap_bytes: 65536
+  # The dispatcher reads at most 64 KB of your response and closes
+  # the connection past that point. The body is never persisted; only
+  # the status code drives delivery state. Ship a tiny JSON ack or a
+  # bare 200; do not echo a stack trace or HTML error page.
+
+  retry_schedule:
+    # Eight attempts plus a 12-hour DLQ holding window. v1.6.1 adds
+    # +/-10% jitter per attempt to decorrelate co-located subscriptions
+    # sharing a consumer URL. See docs/api/webhooks.md for the table.
+    - {attempt: 1, delay_from_previous: "initial dispatch"}
+    - {attempt: 2, delay_from_previous: "1 second"}
+    - {attempt: 3, delay_from_previous: "4 seconds"}
+    - {attempt: 4, delay_from_previous: "15 seconds"}
+    - {attempt: 5, delay_from_previous: "60 seconds"}
+    - {attempt: 6, delay_from_previous: "5 minutes"}
+    - {attempt: 7, delay_from_previous: "30 minutes"}
+    - {attempt: 8, delay_from_previous: "2 hours"}
+    - {attempt: "DLQ", delay_from_previous: "12 hours after attempt 8 failure"}
+    cumulative_window: "~15 hours nominal, ~17 hours worst case under jitter band"
+
+  delivery_guarantee: "at-least-once"
+  ordering: "per-aggregate FIFO with head-of-line blocking"
+  # A stuck event blocks newer events on the same subscription until
+  # the head terminates (success, DLQ, or ceiling auto-pause). This
+  # is by design; per-aggregate ordering matters more than throughput
+  # when a consumer is mid-failure.
+
+  visibility_floor_seconds: 2
+  # Earliest possible delivery time for an event is `visible_at + 2s`.
+  # The 2-second floor is inherited from the v1.5 outbox commit-order
+  # cursor semantics and is non-configurable. End-to-end p95 budget
+  # for `visible_at -> POST sent` is 2.5 seconds under healthy load.
+
+# =====================================================================
+# Envelope (request body)
+# =====================================================================
+#
+# The body is a single-event JSON object. Field-by-field shape is
+# byte-for-byte identical to one element of the polling endpoint's
+# `events` array, so a consumer that already polls Sentry can reuse
+# its event-handling code path under the webhook entry point.
+
+envelope:
+  fields:
+    - name: "event_id"
+      type: "int64"
+      description: |
+        Server-side BIGSERIAL from integration_events. Monotonic in
+        commit order via the v1.5 visible_at trigger. THIS IS THE
+        ONLY SAFE DEDUPE KEY. Track the largest event_id you have
+        successfully applied; ignore any incoming event whose event_id
+        is <= that watermark.
+
+    - name: "event_type"
+      type: "string"
+      enum:
+        - "receipt.completed"
+        - "adjustment.applied"
+        - "transfer.completed"
+        - "pick.confirmed"
+        - "pack.confirmed"
+        - "ship.confirmed"
+        - "cycle_count.adjusted"
+      description: |
+        One of the seven catalog values. The full live list is also
+        available at GET /api/v1/events/types.
+
+    - name: "event_version"
+      type: "integer"
+      description: |
+        Schema version. The full JSON Schema is at
+        api/schemas_v1/events/<event_type>/<version>.json in the
+        Sentry repo, and served at
+        GET /api/v1/events/schema/<type>/<version> for runtime fetches.
+        v1 is the only version shipped through v1.8.0.
+
+    - name: "event_timestamp"
+      type: "string"
+      format: "RFC 3339 / ISO-8601 with offset"
+      description: |
+        When the warehouse operation that produced the event happened.
+        Distinct from the X-Sentry-Timestamp header, which reflects
+        DISPATCH (or replay) time on the dispatcher host.
+
+    - name: "aggregate_type"
+      type: "string"
+      enum:
+        - "item_receipt"
+        - "inventory_adjustment"
+        - "inventory_transfer"
+        - "sales_order"
+      description: |
+        The owning entity type. Per-aggregate FIFO ordering is keyed
+        on (aggregate_type, aggregate_id).
+
+    - name: "aggregate_id"
+      type: "string"
+      format: "uuid"
+      description: |
+        The owning entity's external_id. Stable across the entity's
+        lifetime; a consumer keying by aggregate gets per-aggregate
+        FIFO across events.
+
+    - name: "warehouse_id"
+      type: "integer"
+      description: |
+        The warehouse the event happened in. Filterable at
+        subscription-creation time via the warehouse_ids array.
+
+    - name: "source_txn_id"
+      type: "string"
+      format: "uuid"
+      description: |
+        Sentry-internal idempotency key. Set from the X-Request-ID
+        header on the inbound HTTP request that produced the event.
+        Exposed on the wire for distributed-tracing correlation.
+        NOT SAFE AS A DEDUPE KEY -- any authenticated caller inside
+        Sentry can steer it via X-Request-ID.
+
+    - name: "data"
+      type: "object"
+      description: |
+        Event-specific payload. Shape locked by the JSON Schema for
+        (event_type, event_version). See the per-type sections below
+        for the v1 shape of each.
+
+  # ---------------------------------------------------------------
+  # HTTP headers the dispatcher sends with every POST
+  # ---------------------------------------------------------------
+  headers:
+    - name: "X-Sentry-Signature"
+      example: "sha256=8c4e1bb1f0d9..."
+      description: |
+        HMAC-SHA256 of `f"{X-Sentry-Timestamp}.{body}"` keyed on the
+        shared secret matching X-Sentry-Signature-Generation. Hex
+        digest, lowercase. Verify with constant-time comparison.
+
+    - name: "X-Sentry-Signature-Generation"
+      example: "1"
+      description: |
+        `1` (primary, what the dispatcher signs with) or `2` (previous,
+        valid for 24 hours after rotation). During the 24-hour window,
+        both generations are valid; outside the window only generation
+        1 verifies. See "dual-accept rotation" in docs/api/webhooks.md.
+
+    - name: "X-Sentry-Delivery-Id"
+      example: "48213906:1744042927"
+      description: |
+        Per-attempt identifier of the form `<event_id>:<X-Sentry-Timestamp>`.
+        Replays of the same event get a fresh delivery_id. Useful for
+        log correlation; NEVER use for dedupe.
+
+    - name: "X-Sentry-Event-Type"
+      example: "ship.confirmed"
+      description: |
+        The `event_type` field from the body, hoisted to a header so a
+        router can dispatch without parsing JSON.
+
+    - name: "X-Sentry-Timestamp"
+      example: "1744042927"
+      description: |
+        Unix epoch seconds at dispatch time. Used in the signature
+        input AND by the 5-minute replay-protection window. Reject any
+        request whose value is more than 300 seconds from your
+        endpoint's wall clock.
+
+  dedupe_contract: |
+    Dedupe ON event_id. Never on source_txn_id. Never on delivery_id.
+
+    event_id is server-generated BIGSERIAL, made monotonic in commit
+    order by the visible_at trigger. Two deliveries of the same event
+    always carry the same event_id; two different events always carry
+    different event_ids.
+
+    source_txn_id is steerable by any authenticated Sentry caller via
+    X-Request-ID; one legitimate caller with a deterministic header
+    pattern is enough to poison downstream dedupe.
+
+    delivery_id changes on every retry and on every replay, so deduping
+    on it would process the same event multiple times.
+
+    Track the largest event_id your endpoint has successfully applied
+    (in your own database, transactionally with whatever side effect
+    the event triggers); on every incoming webhook, treat any event_id
+    less than or equal to that watermark as already-processed and ignore.
+
+# =====================================================================
+# Per-event-type `data` blocks (v1)
+# =====================================================================
+#
+# Each block below shows a representative shape for the `data` field
+# inside the envelope. The authoritative contract is the JSON Schema
+# at api/schemas_v1/events/<event_type>/1.json. Optional fields are
+# annotated; null is permitted where the schema allows it.
+
+event_types:
+
+  # -------------------------------------------------------------------
+  # receipt.completed v1   (aggregate: item_receipt)
+  # -------------------------------------------------------------------
+  receipt.completed:
+    schema_path: "api/schemas_v1/events/receipt.completed/1.json"
+    aggregate_type: "item_receipt"
+    emitted_by: "api/routes/receiving.py at PO receipt close"
+    sample_envelope:
+      event_id: 48213906
+      event_type: "receipt.completed"
+      event_version: 1
+      event_timestamp: "2026-05-02T14:22:07.413Z"
+      aggregate_type: "item_receipt"
+      aggregate_id: "2a8c34e2-7b1f-4c4d-9e2a-1a8c5b9d7e3f"
+      warehouse_id: 3
+      source_txn_id: "6f9e7c6a-aa11-4bb2-8c33-2d44e55f6677"
+      data:
+        receipt_external_id: "2a8c34e2-7b1f-4c4d-9e2a-1a8c5b9d7e3f"
+        po_external_id: "9b7c2d1e-3f4a-5c6d-7e8f-9012abcd3456"
+        lines:
+          - item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+            quantity_received: 12
+            lot_number: "LOT-2026-05-02"  # nullable
+            serial_number: null            # nullable
+        completed_by_user_external_id: "888bbbbb-9999-aaaa-bbbb-ccccddddeeee"
+        completed_at: "2026-05-02T14:22:07.413Z"
+
+  # -------------------------------------------------------------------
+  # adjustment.applied v1  (aggregate: inventory_adjustment)
+  # -------------------------------------------------------------------
+  adjustment.applied:
+    schema_path: "api/schemas_v1/events/adjustment.applied/1.json"
+    aggregate_type: "inventory_adjustment"
+    emitted_by: "api/routes/admin/admin_review_adjustments.py (APPROVED, cycle_count_id NULL) AND api/routes/admin/admin_direct_adjustment.py inline"
+    notes: |
+      applied_by_user_external_id is the APPROVER at review_adjustments
+      (g.current_user), not the submitter. At direct_adjustment the
+      two are the same admin. A v2 payload may carry
+      requested_by_user_external_id alongside; v1 has applied only.
+    sample_envelope:
+      event_id: 48213910
+      event_type: "adjustment.applied"
+      event_version: 1
+      event_timestamp: "2026-05-02T15:11:42.001Z"
+      aggregate_type: "inventory_adjustment"
+      aggregate_id: "55556666-7777-8888-9999-aaaabbbbcccc"
+      warehouse_id: 3
+      source_txn_id: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+      data:
+        adjustment_external_id: "55556666-7777-8888-9999-aaaabbbbcccc"
+        item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+        bin_external_id: "ddddeeee-ffff-aaaa-bbbb-ccccddddeeee"
+        quantity_delta: -3
+        reason_code: "DAMAGED"
+        applied_by_user_external_id: "888bbbbb-9999-aaaa-bbbb-ccccddddeeee"
+        applied_at: "2026-05-02T15:11:42.001Z"
+
+  # -------------------------------------------------------------------
+  # transfer.completed v1  (aggregate: inventory_transfer)
+  # -------------------------------------------------------------------
+  transfer.completed:
+    schema_path: "api/schemas_v1/events/transfer.completed/1.json"
+    aggregate_type: "inventory_transfer"
+    emitted_by: "api/routes/transfers.py::move (Decision K: putaway.confirm is internal, does not emit) AND v1.8.0 transfer-order admin approve"
+    sample_envelope:
+      event_id: 48213915
+      event_type: "transfer.completed"
+      event_version: 1
+      event_timestamp: "2026-05-02T16:03:18.554Z"
+      aggregate_type: "inventory_transfer"
+      aggregate_id: "ab12cd34-ef56-7890-abcd-ef1234567890"
+      warehouse_id: 3
+      source_txn_id: "deadbeef-1111-2222-3333-444455556666"
+      data:
+        transfer_external_id: "ab12cd34-ef56-7890-abcd-ef1234567890"
+        from_warehouse_id: 3
+        to_warehouse_id: 5
+        lines:
+          - item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+            quantity: 10
+        completed_at: "2026-05-02T16:03:18.554Z"
+
+  # -------------------------------------------------------------------
+  # pick.confirmed v1      (aggregate: sales_order)
+  # -------------------------------------------------------------------
+  pick.confirmed:
+    schema_path: "api/schemas_v1/events/pick.confirmed/1.json"
+    aggregate_type: "sales_order"
+    emitted_by: "api/services/picking_service.py::complete_batch -- one event per SO when the SO flips to PICKED inside a batch"
+    sample_envelope:
+      event_id: 48213920
+      event_type: "pick.confirmed"
+      event_version: 1
+      event_timestamp: "2026-05-02T16:45:09.222Z"
+      aggregate_type: "sales_order"
+      aggregate_id: "cafe1234-5678-9abc-def0-fedcba987654"
+      warehouse_id: 3
+      source_txn_id: "12340000-aaaa-bbbb-cccc-ddddeeeeffff"
+      data:
+        sales_order_external_id: "cafe1234-5678-9abc-def0-fedcba987654"
+        lines:
+          - item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+            quantity_picked: 2
+            lot_number: null       # nullable
+            serial_number: null    # nullable
+        completed_by_user_external_id: "888bbbbb-9999-aaaa-bbbb-ccccddddeeee"
+        completed_at: "2026-05-02T16:45:09.222Z"
+
+  # -------------------------------------------------------------------
+  # pack.confirmed v1      (aggregate: sales_order)
+  # -------------------------------------------------------------------
+  pack.confirmed:
+    schema_path: "api/schemas_v1/events/pack.confirmed/1.json"
+    aggregate_type: "sales_order"
+    emitted_by: "api/routes/packing.py::complete_packing"
+    notes: |
+      Sentry ships single-package today; the packages array carries a
+      synthesized entry keyed `{sales_order_external_id}-pkg-1`.
+      Multi-package support is reserved for a v1.5.x+ schema bump.
+      dimensions_in is always null today (not tracked in Sentry).
+    sample_envelope:
+      event_id: 48213925
+      event_type: "pack.confirmed"
+      event_version: 1
+      event_timestamp: "2026-05-02T17:02:33.118Z"
+      aggregate_type: "sales_order"
+      aggregate_id: "cafe1234-5678-9abc-def0-fedcba987654"
+      warehouse_id: 3
+      source_txn_id: "abcd5678-1111-2222-3333-aaaabbbbcccc"
+      data:
+        sales_order_external_id: "cafe1234-5678-9abc-def0-fedcba987654"
+        packages:
+          - package_external_id: "cafe1234-5678-9abc-def0-fedcba987654-pkg-1"
+            weight_lb: 2.4         # nullable
+            dimensions_in: null    # always null in v1
+            lines:
+              - item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+                quantity_packed: 2
+        completed_by_user_external_id: "888bbbbb-9999-aaaa-bbbb-ccccddddeeee"
+        completed_at: "2026-05-02T17:02:33.118Z"
+
+  # -------------------------------------------------------------------
+  # ship.confirmed v1      (aggregate: sales_order)
+  # -------------------------------------------------------------------
+  ship.confirmed:
+    schema_path: "api/schemas_v1/events/ship.confirmed/1.json"
+    aggregate_type: "sales_order"
+    emitted_by: "api/routes/shipping.py::fulfill"
+    notes: |
+      Sentry's internal column is item_fulfillments.ship_method;
+      renamed on the wire to service_level. service_level is nullable
+      because the FulfillRequest schema makes it optional. Address
+      detail (carrier-side ship-to) is NOT in v1; v1.9 may extend.
+    sample_envelope:
+      event_id: 48213930
+      event_type: "ship.confirmed"
+      event_version: 1
+      event_timestamp: "2026-05-02T17:33:51.992Z"
+      aggregate_type: "sales_order"
+      aggregate_id: "cafe1234-5678-9abc-def0-fedcba987654"
+      warehouse_id: 3
+      source_txn_id: "fedc0987-6543-21fe-dcba-9876543210fe"
+      data:
+        sales_order_external_id: "cafe1234-5678-9abc-def0-fedcba987654"
+        tracking_numbers:
+          - "1Z9999W99999999999"
+        carrier: "UPS"
+        service_level: "GROUND"   # nullable
+        packages:
+          - package_external_id: "cafe1234-5678-9abc-def0-fedcba987654-pkg-1"
+            weight_lb: 2.4        # nullable
+            dimensions_in: null   # nullable
+            lines:
+              - item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+                quantity_packed: 2
+        completed_by_user_external_id: "888bbbbb-9999-aaaa-bbbb-ccccddddeeee"
+        completed_at: "2026-05-02T17:33:51.992Z"
+
+  # -------------------------------------------------------------------
+  # cycle_count.adjusted v1  (aggregate: inventory_adjustment)
+  # -------------------------------------------------------------------
+  cycle_count.adjusted:
+    schema_path: "api/schemas_v1/events/cycle_count.adjusted/1.json"
+    aggregate_type: "inventory_adjustment"
+    emitted_by: "api/routes/admin/admin_review_adjustments.py at the APPROVED branch when adjustment.cycle_count_id is non-null (Decision C routing)"
+    notes: |
+      A cycle count whose variance is approved emits this event INSTEAD
+      OF adjustment.applied; subscribers wanting both buckets register
+      for both event types. quantity_delta is `counted_quantity -
+      system_quantity` and may be negative.
+    sample_envelope:
+      event_id: 48213935
+      event_type: "cycle_count.adjusted"
+      event_version: 1
+      event_timestamp: "2026-05-02T18:14:00.000Z"
+      aggregate_type: "inventory_adjustment"
+      aggregate_id: "9876fedc-ba98-7654-3210-fedcba987654"
+      warehouse_id: 3
+      source_txn_id: "11112222-3333-4444-5555-666677778888"
+      data:
+        cycle_count_external_id: "9876fedc-ba98-7654-3210-fedcba987654"
+        item_external_id: "111aaaaa-2222-3333-4444-555566667777"
+        bin_external_id: "ddddeeee-ffff-aaaa-bbbb-ccccddddeeee"
+        counted_quantity: 7
+        system_quantity: 10
+        quantity_delta: -3
+        counted_by_user_external_id: "888bbbbb-9999-aaaa-bbbb-ccccddddeeee"
+        counted_at: "2026-05-02T18:14:00.000Z"
+
+# =====================================================================
+# Subscription pause + DLQ behavior
+# =====================================================================
+#
+# Two ceilings auto-pause a subscription:
+#
+#   pending_ceiling (default 10000) -- when pending + in_flight delivery
+#       rows reach the ceiling, dispatch stops with
+#       pause_reason='pending_ceiling'.
+#
+#   dlq_ceiling     (default 1000) -- when dead-lettered rows reach
+#       the ceiling, dispatch stops with pause_reason='dlq_ceiling'.
+#
+# A paused subscription does NOT retry, does NOT advance the cursor,
+# and does NOT publish new deliveries. The admin resumes after triage;
+# resume publishes a `resumed` event on the cross-worker pubsub
+# channel and the dispatcher picks up where it stopped.
+#
+# Lifting either ceiling on a paused subscription does NOT auto-resume.
+# A separate PATCH with status=active is always required (single
+# misclick safety). The PATCH response carries a `hint` field naming
+# the pending follow-up step when the gap is detected.
+#
+# Filter edits (event_types, warehouse_ids, aggregate_external_id_allowlist)
+# are non-retroactive; the cursor never rewinds. To backfill historical
+# events under a new filter, the operator uses the admin panel's
+# replay-batch endpoint.
+
+# =====================================================================
+# Common pitfalls
+# =====================================================================
+#
+# 1. Verify the signature against the RAW request bytes. If your
+#    framework parses JSON before your handler runs, you must capture
+#    `request.get_data(cache=True)` (Flask) / `await request.body()`
+#    (FastAPI) / a raw body-parser route (Express). A re-serialized
+#    body will not match the signed bytes; your verifier will reject
+#    every legitimate request.
+#
+# 2. NEVER dedupe on source_txn_id. NEVER dedupe on delivery_id. Use
+#    event_id and a per-endpoint applied-watermark pattern.
+#
+# 3. Run NTP. The replay-protection window is +/-5 minutes against
+#    your endpoint's wall clock. A drifted clock will reject every
+#    legitimate dispatch as a replay.
+#
+# 4. Return 2xx within the 10-second wall-clock budget. Slow chunked
+#    responses are not supported; the dispatcher's watchdog cancels
+#    past the cap and classifies as `timeout`. Ship the ack and close.
+#
+# 5. Keep your response body small (<= 64 KB) and free of secrets.
+#    Sentry never persists the response body, but a misconfigured
+#    consumer can echo upstream credentials into a 5xx error page; a
+#    proxy or APM tool in front of either side may capture them.
+#
+# 6. Update both secret slots within the 24-hour dual-accept window
+#    after rotation. After the window, gen=2 is reaped and only gen=1
+#    verifies. Build a job into your secret manager that mirrors
+#    Sentry's rotation -> store.put(slot=2, store.get(slot=1)) ->
+#    store.put(slot=1, new_plaintext).
+#
+# 7. The 2-second visibility floor is non-negotiable. If your SLA
+#    requires sub-2s notification, the webhook surface is not the
+#    right channel; that is rooted in the v1.5 outbox commit-order
+#    cursor and is enforced uniformly across the polling endpoint as
+#    well. End-to-end p95 budget is 2.5 seconds under healthy load.
+#
+# 8. The dispatcher classifies your failure into one of seven
+#    error_kind values (`timeout`, `connection`, `tls`, `4xx`, `5xx`,
+#    `ssrf_rejected`, `unknown`); your response body is never stored.
+#    Specifics about why your endpoint failed live in YOUR endpoint's
+#    logs, not in Sentry's. Plan operator escalation accordingly.
+#
+# 9. Replays carry a fresh X-Sentry-Timestamp (signature recomputed
+#    against the new value) but the ORIGINAL event_timestamp from the
+#    envelope body, unchanged. If your dedupe is keyed correctly on
+#    event_id, replays are no-ops for already-applied events.
+#
+# 10. ship.confirmed in v1 carries warehouse-side ship metadata only:
+#     tracking_numbers, carrier, service_level, packages. Carrier-side
+#     ship-to address (street, city, postal) is NOT in v1; v1.9 may
+#     extend. Until then, downstream systems that need ship-to address
+#     must look up the sales_order via aggregate_id and consume the
+#     v1.8.0 structured shipping_address_* columns directly.
+#
+# See docs/api/webhooks.md for the full consumer integration guide,
+# including reference verifier code, dual-accept rotation runbook
+# pointers, and the per-error-kind operator triage hint table.

@@ -200,7 +200,13 @@ def scope_catalog():
     FK would reject.
     """
     from flask import current_app
-    from middleware.auth_middleware import V170_INBOUND_RESOURCE_BY_ENDPOINT
+    from middleware.auth_middleware import (
+        V170_INBOUND_RESOURCE_BY_ENDPOINT,
+        V190_DOCKD_SLUG,
+        _V190_DOCKD_FLASK_ENDPOINTS,
+        V1100_POS_SLUG,
+        _V1100_POS_FLASK_ENDPOINTS,
+    )
 
     event_types = sorted({entry[0] for entry in V150_CATALOG})
     registered = set(current_app.view_functions.keys())
@@ -209,6 +215,19 @@ def scope_catalog():
         for slug, flask_endpoint in V150_ENDPOINT_SLUGS.items()
         if flask_endpoint in registered
     )
+    # v1.9.0 dockd: one slug covers N Flask endpoints. Include the slug
+    # in the response when at least one of the dockd routes is
+    # registered, mirroring the V150 "filter by registered" rule so the
+    # UI never offers a slug whose target Flask endpoint was removed
+    # during a rename.
+    if registered & _V190_DOCKD_FLASK_ENDPOINTS:
+        endpoints = sorted(set(endpoints) | {V190_DOCKD_SLUG})
+    # v1.10.0 POS: same shape as the dockd block. The slug appears in
+    # the catalog only after at least one /api/v1/pos/ route registers,
+    # so admins cannot issue a pos.dispatch token before the surface
+    # exists.
+    if registered & _V1100_POS_FLASK_ENDPOINTS:
+        endpoints = sorted(set(endpoints) | {V1100_POS_SLUG})
     inbound_resources = sorted(set(V170_INBOUND_RESOURCE_BY_ENDPOINT.values()))
     source_rows = g.db.execute(
         text(

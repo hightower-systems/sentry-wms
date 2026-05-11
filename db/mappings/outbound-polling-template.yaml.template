@@ -1,0 +1,478 @@
+# =====================================================================
+# Sentry WMS v1.5.1 outbound POLLING envelope -- annotated reference
+# =====================================================================
+#
+# Companion to outbound-webhook-template.yaml.template (the push
+# surface) and example-template.yaml.template (the inbound mapping
+# doc). This file describes the wire shape a CONSUMER receives when
+# pulling events from `GET /api/v1/events` instead of registering a
+# webhook subscription.
+#
+# Both surfaces emit the SAME per-event envelope shape (byte-for-byte
+# identical to a single element of this endpoint's `events` array),
+# so a consumer that polls today can later add a webhook entry point
+# and reuse the same event-handling code path.
+#
+# Like the webhook template, this file is NOT a configuration the
+# operator authors. The wire shape is server-controlled and locked by
+# the JSON Schemas at api/schemas_v1/events/<event_type>/<version>.json.
+# The .template suffix is here only to keep the mapping-loader at
+# api/services/mapping_loader.py from picking it up.
+#
+# Where to read the live contract end-to-end:
+#
+#   docs/events/README.md                -- consumer dedupe contract
+#                                            (event_id only, never
+#                                            source_txn_id).
+#   api/schemas_v1/events/<type>/1.json  -- per-event JSON Schema
+#                                            (authoritative shape of
+#                                            the `data` block).
+#   docs/api-reference.md                -- endpoint summary + scope.
+#   api/routes/polling.py                -- handler source of truth.
+#
+# Setup before the endpoint will return events to your client:
+#
+#   1. Admin issues a WMS token via the admin panel with:
+#      - source_system  = '<your-system>'
+#      - event_types    = subset of the 7 catalog values you want.
+#      - warehouse_ids  = subset of warehouse IDs you want.
+#      - connector_id   = (optional) for cross-connector isolation.
+#
+#   2. Pick a polling MODE (mutually exclusive; sending both = 400):
+#      - client-cursor  : you persist `next_cursor` yourself between
+#                          polls and pass it back as `after`.
+#      - consumer-group : Sentry persists the cursor for you under
+#                          a `consumer_group` identifier; resumable
+#                          across processes / hosts.
+#
+#   3. Decide your dedupe persistence: track the largest applied
+#      event_id transactionally with whatever side effect the event
+#      triggers in your downstream system.
+
+mapping_version: "reference-v1.5.1"
+source_system: "sentry-wms"
+
+# =====================================================================
+# Transport
+# =====================================================================
+
+transport:
+  endpoints:
+    list:    "GET  /api/v1/events"
+    ack:     "POST /api/v1/events/ack"
+    types:   "GET  /api/v1/events/types"
+    schema:  "GET  /api/v1/events/schema/<event_type>/<version>"
+
+  authentication:
+    header: "X-WMS-Token"
+    description: |
+      Same WMS token used for inbound POSTs, but issued with
+      event_types + warehouse_ids scope arrays instead of (or in
+      addition to) inbound_resources. A token with empty event_types
+      sees nothing (`empty = no access`, plan Decision H).
+
+  rate_limit: "120 requests / minute / token"
+  # Applied via services.rate_limit._rate_limit_key which prefers
+  # g.current_token. Bursts above the limit return 429.
+
+  visibility_floor_seconds: 2
+  # Same 2-second floor as the webhook surface (rooted in the
+  # migration 020 visible_at trigger). NOT configurable, NOT a query
+  # param. Hardcoded as `visible_at IS NOT NULL AND visible_at <=
+  # NOW() - INTERVAL '2 seconds'`.
+
+  delivery_guarantee: "at-least-once"
+  ordering: "ascending event_id (commit order via visible_at trigger)"
+
+# =====================================================================
+# Request shape
+# =====================================================================
+
+request:
+  method: "GET"
+  path: "/api/v1/events"
+  query_params:
+    - name: "after"
+      type: "int64"
+      mode: "client-cursor"
+      description: |
+        Resume from this event_id (exclusive: only event_id > after
+        is returned). On the first poll, omit or pass 0 to read from
+        the start of the outbox. Mutually exclusive with
+        consumer_group.
+
+    - name: "consumer_group"
+      type: "string"
+      mode: "consumer-group"
+      description: |
+        Consumer-group identifier registered via the admin panel
+        (Consumer Groups page). Sentry reads the group's
+        last_cursor as the effective `after` and applies the group's
+        subscription JSONB as additional filtering. Mutually exclusive
+        with `after`.
+
+    - name: "types"
+      type: "string (comma-separated)"
+      required: false
+      description: |
+        Subset of event types you want for THIS request, e.g.
+        `types=ship.confirmed,pack.confirmed`. Must be a subset of the
+        token's event_types scope; a value outside that scope returns
+        403 scope_violation rather than a silent intersection.
+
+    - name: "warehouse_id"
+      type: "integer"
+      required: false
+      description: |
+        Restrict to one warehouse for THIS request. Must be in the
+        token's warehouse_ids scope; otherwise 403 scope_violation.
+
+    - name: "limit"
+      type: "integer"
+      required: false
+      default: 500
+      description: |
+        Max events per page. The handler returns up to `limit` rows
+        ordered by event_id ASC. A FULL page (events.length == limit)
+        implies more rows are available; a PARTIAL page implies you
+        are caught up. There is no `has_more` field; the consumer
+        computes catchup state from the page size.
+
+  example_request:
+    client_cursor_mode: "GET /api/v1/events?after=48213900&types=ship.confirmed,pack.confirmed&limit=500"
+    consumer_group_mode: "GET /api/v1/events?consumer_group=my-erp-group-1&limit=500"
+  example_headers: |
+    X-WMS-Token: wms_token_<base64-payload>
+
+# =====================================================================
+# Response envelope
+# =====================================================================
+#
+# 200 response is `{"events": [...], "next_cursor": <int64>}`. The
+# events array is ordered by event_id ASC. next_cursor is the largest
+# event_id in the page (or echoes the input `after` when no rows were
+# returned, so the next poll never regresses).
+#
+# Each element of `events` is byte-for-byte identical to the body the
+# webhook dispatcher would POST for the same event. See
+# outbound-webhook-template.yaml.template for the per-field
+# annotations on the envelope and per-event-type `data` shapes; the
+# fields are repeated here in summary form for completeness but are
+# NOT redefined.
+
+response:
+  status: 200
+  body_shape:
+    events:
+      type: "array of event envelopes"
+      ordering: "event_id ASC"
+      element_shape:
+        event_id:        "int64 -- only safe dedupe key (BIGSERIAL, monotonic in commit order)"
+        event_type:      "string -- one of the 7 catalog values"
+        event_version:   "integer -- v1 only through v1.8.0"
+        event_timestamp: "RFC 3339 string -- when the warehouse op happened"
+        aggregate_type:  "string -- item_receipt | inventory_adjustment | inventory_transfer | sales_order"
+        aggregate_id:    "uuid string -- entity external_id (Decision J: no join, read directly from integration_events)"
+        warehouse_id:    "integer -- the warehouse the event happened in"
+        source_txn_id:   "uuid string -- NEVER use as dedupe key (steerable via X-Request-ID)"
+        data:            "object -- shape locked by api/schemas_v1/events/<event_type>/<version>.json"
+
+    next_cursor:
+      type: "int64"
+      description: |
+        Pass this back as `after` on the next client-cursor poll. In
+        consumer-group mode this is informational; the group's
+        last_cursor is updated by `POST /api/v1/events/ack`, not by
+        the act of reading.
+
+  example_response: |
+    HTTP/1.1 200 OK
+    Content-Type: application/json
+
+    {
+      "events": [
+        {
+          "event_id": 48213906,
+          "event_type": "receipt.completed",
+          "event_version": 1,
+          "event_timestamp": "2026-05-02T14:22:07.413Z",
+          "aggregate_type": "item_receipt",
+          "aggregate_id": "2a8c34e2-7b1f-4c4d-9e2a-1a8c5b9d7e3f",
+          "warehouse_id": 3,
+          "source_txn_id": "6f9e7c6a-aa11-4bb2-8c33-2d44e55f6677",
+          "data": {
+            "receipt_external_id": "2a8c34e2-7b1f-4c4d-9e2a-1a8c5b9d7e3f",
+            "po_external_id": "9b7c2d1e-3f4a-5c6d-7e8f-9012abcd3456",
+            "lines": [
+              {
+                "item_external_id": "111aaaaa-2222-3333-4444-555566667777",
+                "quantity_received": 12,
+                "lot_number": "LOT-2026-05-02",
+                "serial_number": null
+              }
+            ],
+            "completed_by_user_external_id": "888bbbbb-9999-aaaa-bbbb-ccccddddeeee",
+            "completed_at": "2026-05-02T14:22:07.413Z"
+          }
+        },
+        {
+          "event_id": 48213907,
+          "event_type": "ship.confirmed",
+          "event_version": 1,
+          "event_timestamp": "2026-05-02T14:22:14.880Z",
+          "aggregate_type": "sales_order",
+          "aggregate_id": "cafe1234-5678-9abc-def0-fedcba987654",
+          "warehouse_id": 3,
+          "source_txn_id": "fedc0987-6543-21fe-dcba-9876543210fe",
+          "data": {
+            "sales_order_external_id": "cafe1234-5678-9abc-def0-fedcba987654",
+            "tracking_numbers": ["1Z9999W99999999999"],
+            "carrier": "UPS",
+            "service_level": "GROUND",
+            "packages": [
+              {
+                "package_external_id": "cafe1234-5678-9abc-def0-fedcba987654-pkg-1",
+                "weight_lb": 2.4,
+                "dimensions_in": null,
+                "lines": [
+                  {
+                    "item_external_id": "111aaaaa-2222-3333-4444-555566667777",
+                    "quantity_packed": 2
+                  }
+                ]
+              }
+            ],
+            "completed_by_user_external_id": "888bbbbb-9999-aaaa-bbbb-ccccddddeeee",
+            "completed_at": "2026-05-02T14:22:14.880Z"
+          }
+        }
+      ],
+      "next_cursor": 48213907
+    }
+
+# =====================================================================
+# Polling modes
+# =====================================================================
+
+modes:
+
+  client_cursor:
+    summary: |
+      Caller persists the cursor between polls. Simplest mode; the
+      server is stateless about your progress. Use this when you
+      already have durable per-consumer state on your side (e.g. a
+      cursor column on your ingestion job's row).
+    loop_pseudocode: |
+      cursor = load_cursor_from_my_db()  # 0 on first run
+      while True:
+          resp = GET /api/v1/events?after={cursor}&limit=500
+          for event in resp["events"]:
+              if event["event_id"] <= my_applied_watermark:
+                  continue   # dedupe
+              apply_side_effect(event)
+              my_applied_watermark = event["event_id"]
+          if resp["events"]:
+              cursor = resp["next_cursor"]
+              save_cursor_to_my_db(cursor)
+          if len(resp["events"]) < 500:
+              sleep(poll_interval_seconds)   # caught up
+
+  consumer_group:
+    summary: |
+      Sentry persists the cursor under a registered group identifier.
+      Resumable across processes / hosts; survives client crashes.
+      Per-group subscription JSONB carries additional filter (event_types,
+      warehouse_ids) layered on top of the token's scope.
+    loop_pseudocode: |
+      group_id = "my-erp-group-1"   # registered once via admin panel
+      while True:
+          resp = GET /api/v1/events?consumer_group={group_id}&limit=500
+          applied_max = my_applied_watermark
+          for event in resp["events"]:
+              if event["event_id"] <= applied_max:
+                  continue   # dedupe
+              apply_side_effect(event)
+              applied_max = event["event_id"]
+          if applied_max > my_applied_watermark:
+              POST /api/v1/events/ack
+                   {"consumer_group": group_id, "cursor": applied_max}
+              my_applied_watermark = applied_max
+          if len(resp["events"]) < 500:
+              sleep(poll_interval_seconds)
+    notes: |
+      The group's last_cursor advances ONLY on an explicit ack POST,
+      not on the act of reading. A consumer that reads but crashes
+      before acking will re-read on the next poll, which combined
+      with your event_id watermark dedupe yields at-least-once with
+      no event loss. Heartbeats on the group row are throttled to one
+      write per 30 seconds per group (Decision T) so heavy polling
+      does not double-write the row.
+
+# =====================================================================
+# Ack endpoint (consumer-group mode only)
+# =====================================================================
+
+ack:
+  endpoint: "POST /api/v1/events/ack"
+  body_shape: |
+    {
+      "consumer_group": "my-erp-group-1",
+      "cursor": 48213907
+    }
+  semantics:
+    - "404 consumer_group_not_found if the group does not exist."
+    - "403 consumer_group_scope_violation if the token's connector_id is set and does not match the group's connector_id (cross-connector isolation; admin / NULL-connector tokens can ack any group)."
+    - "400 cursor_beyond_horizon (V-202 / #143) if the requested cursor exceeds the greatest event_id currently in the outbox. Prevents impossible-future cursors that would silently skip every future event."
+    - "403 ack_scope_violation (V-202 / #143) if any event in (last_cursor, cursor] falls outside the token's warehouse_ids or event_types scope. 'You can only ack what you can read' applies on both axes."
+    - "Idempotent: UPDATE uses WHERE last_cursor <= :cursor so an out-of-order ack lower than the stored value is a no-op."
+    - "Response always carries the row's CURRENT last_cursor so the caller can see whether its ack advanced the pointer."
+
+# =====================================================================
+# Catalog discovery + schema fetch
+# =====================================================================
+
+catalog_endpoints:
+
+  types:
+    endpoint: "GET /api/v1/events/types"
+    description: |
+      Returns the catalog of (event_type, versions, aggregate_type)
+      tuples the deployment supports. v1.5.1 V-212 (#151): the
+      response is filtered to the intersection of the deployment's
+      catalog and the token's event_types scope. A token with empty
+      event_types returns an empty list.
+    example_response: |
+      [
+        {"event_type": "receipt.completed",    "versions": [1], "aggregate_type": "item_receipt"},
+        {"event_type": "adjustment.applied",   "versions": [1], "aggregate_type": "inventory_adjustment"},
+        {"event_type": "transfer.completed",   "versions": [1], "aggregate_type": "inventory_transfer"},
+        {"event_type": "pick.confirmed",       "versions": [1], "aggregate_type": "sales_order"},
+        {"event_type": "pack.confirmed",       "versions": [1], "aggregate_type": "sales_order"},
+        {"event_type": "ship.confirmed",       "versions": [1], "aggregate_type": "sales_order"},
+        {"event_type": "cycle_count.adjusted", "versions": [1], "aggregate_type": "inventory_adjustment"}
+      ]
+
+  schema:
+    endpoint: "GET /api/v1/events/schema/<event_type>/<version>"
+    description: |
+      Streams the JSON Schema bytes for the requested
+      (event_type, version) pair. Returns 404 when the file does not
+      exist. Use this for runtime schema fetches when you do not want
+      to bundle the schemas into your build.
+    example: "GET /api/v1/events/schema/ship.confirmed/1"
+
+# =====================================================================
+# Per-event-type `data` blocks
+# =====================================================================
+#
+# Identical to outbound-webhook-template.yaml.template; the polling
+# endpoint emits the same envelope. See that file for sample payloads
+# of all 7 v1 event types:
+#
+#   receipt.completed       -> item_receipt aggregate
+#   adjustment.applied      -> inventory_adjustment aggregate
+#   transfer.completed      -> inventory_transfer aggregate
+#   pick.confirmed          -> sales_order aggregate
+#   pack.confirmed          -> sales_order aggregate
+#   ship.confirmed          -> sales_order aggregate
+#   cycle_count.adjusted    -> inventory_adjustment aggregate
+
+# =====================================================================
+# Error contract
+# =====================================================================
+
+errors:
+  - status: 400
+    code: "after_and_consumer_group_both_set"
+    cause: "Both `after` and `consumer_group` query params present; pick one."
+  - status: 400
+    code: "limit_out_of_range"
+    cause: "`limit` outside the accepted range (1..1000)."
+  - status: 400
+    code: "cursor_beyond_horizon"
+    cause: "POST /events/ack: requested cursor exceeds greatest event_id in outbox (V-202)."
+  - status: 401
+    code: "missing_token / invalid_token"
+    cause: "X-WMS-Token header missing, malformed, expired, or revoked."
+  - status: 403
+    code: "scope_violation"
+    cause: "`types` or `warehouse_id` query param outside the token's allowed scope."
+  - status: 403
+    code: "consumer_group_scope_violation"
+    cause: "POST /events/ack: token's connector_id does not match group's connector_id."
+  - status: 403
+    code: "ack_scope_violation"
+    cause: "POST /events/ack: events in (last_cursor, cursor] include warehouses or types outside token scope (V-202)."
+  - status: 404
+    code: "consumer_group_not_found"
+    cause: "Referenced consumer_group_id does not exist."
+  - status: 409
+    code: "subscription_invalid"
+    cause: "Consumer-group's subscription JSONB has a malformed shape (e.g. warehouse_ids as string). Operator must repair via admin panel."
+  - status: 429
+    code: "rate_limit_exceeded"
+    cause: "More than 120 requests in the last minute for this token."
+
+# =====================================================================
+# Common pitfalls
+# =====================================================================
+#
+# 1. NEVER dedupe on source_txn_id. Use event_id and a per-consumer
+#    applied-watermark pattern, persisted transactionally with the
+#    downstream side effect.
+#
+# 2. The visibility floor is 2 seconds. The earliest possible event
+#    visible on this endpoint is `visible_at + 2 seconds`. If your
+#    SLA needs sub-2s latency, neither polling nor webhooks will
+#    deliver it; the floor is rooted in the v1.5 outbox commit-order
+#    cursor and is not configurable.
+#
+# 3. Mutually exclusive modes. Sending both `after` and
+#    `consumer_group` returns 400. Pick one and stick with it; mixing
+#    modes mid-stream loses cursor state.
+#
+# 4. Empty token scope = no access (`empty = no access`, Decision H).
+#    A token with `event_types: []` returns an empty events array on
+#    every poll. Issue tokens with the explicit subset you want; do
+#    not rely on `[]` as a wildcard.
+#
+# 5. Strict-subset scope. A request that asks for an event_type or
+#    warehouse_id outside the token's scope returns 403, not a silent
+#    intersection. Build your client to inspect token scope at startup
+#    (or trust your token issuer) so a misconfigured filter fails loud.
+#
+# 6. A FULL page implies more rows. The endpoint returns up to `limit`
+#    rows; `events.length == limit` means more events are available
+#    immediately (pull again without sleeping). `events.length < limit`
+#    means you are caught up; sleep your poll interval before the
+#    next pull.
+#
+# 7. Consumer-group ack is idempotent and monotonic. Acking with a
+#    cursor lower than the stored value is a no-op (does not regress
+#    the cursor), but acking past the outbox horizon returns 400.
+#    Always ack with the largest event_id you successfully applied,
+#    not the page's `next_cursor` if you skipped any events for
+#    application reasons.
+#
+# 8. ship.confirmed in v1 carries warehouse-side ship metadata only:
+#    tracking_numbers, carrier, service_level, packages. Carrier-side
+#    ship-to address (street, city, postal) is NOT in v1; v1.9 may
+#    extend. Until then, a downstream system that needs ship-to
+#    address must query the canonical sales_order via aggregate_id
+#    and read the v1.8.0 structured shipping_address_* columns
+#    directly via inbound POST mirroring or a side-channel admin API.
+#
+# 9. Heartbeats are throttled. Consumer-group last_heartbeat is
+#    written at most once per 30 seconds per group, regardless of
+#    poll cadence. A group that has not polled in 30+ minutes is
+#    surfaced as `stale` on the admin Consumer Groups page; this is
+#    a soft signal, not an automatic action.
+#
+# 10. ack endpoint uses the SAME rate limit (120/min/token) as the
+#     read endpoint. Tight ack-after-every-event loops on a fast
+#     consumer can saturate the budget; batch acks where downstream
+#     transactional semantics permit.
+#
+# See docs/events/README.md for the dedupe contract narrative,
+# docs/api-reference.md for the full endpoint matrix, and
+# api/routes/polling.py for the handler source of truth.

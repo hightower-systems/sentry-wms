@@ -167,7 +167,7 @@ def lookup_so(barcode):
         text(
             f"""
             SELECT so_id, so_number, so_barcode, customer_name, status,
-                   warehouse_id, customer_phone, customer_address, ship_address
+                   warehouse_id, customer_phone, customer_address, ship_address, memo
             FROM sales_orders
             WHERE (so_barcode = :barcode OR so_number = :barcode)
               {scope_clause}
@@ -203,6 +203,7 @@ def lookup_so(barcode):
             "customer_phone": so_row.customer_phone,
             "customer_address": so_row.customer_address,
             "ship_address": so_row.ship_address,
+            "memo": so_row.memo,
             "status": so_row.status,
             "warehouse_id": so_row.warehouse_id,
             "lines": [
