@@ -177,6 +177,32 @@ class TestConfirmPick:
         assert resp.status_code == 400
         assert "already" in resp.get_json()["error"].lower()
 
+    def test_confirm_pick_audit_details_carry_expected_and_picked(self, client, auth_headers):
+        create_resp = _create_batch(client, auth_headers)
+        batch_id = create_resp.get_json()["batch_id"]
+        next_resp = client.get(f"/api/picking/batch/{batch_id}/next", headers=auth_headers)
+        task = next_resp.get_json()
+        client.post(
+            "/api/picking/confirm",
+            json={
+                "pick_task_id": task["pick_task_id"],
+                "scanned_barcode": task["upc"],
+                "quantity_picked": task["quantity_to_pick"],
+            },
+            headers=auth_headers,
+        )
+
+        details = _query_val(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'PICK' "
+            "  AND (details->>'pick_task_id')::int = %s",
+            (task["pick_task_id"],),
+        )
+        assert details is not None
+        assert details["quantity_to_pick"] == task["quantity_to_pick"]
+        assert details["quantity_picked"] == task["quantity_to_pick"]
+        assert details["sku"] == task["sku"]
+
     def test_confirm_pick_updates_so_line(self, client, auth_headers):
         create_resp = _create_batch(client, auth_headers)
         batch_id = create_resp.get_json()["batch_id"]

@@ -101,6 +101,7 @@ export default function SalesOrders() {
       ship_address: so.ship_address || '',
       ship_method: so.ship_method || '',
       ship_by_date: so.ship_by_date ? so.ship_by_date.slice(0, 10) : '',
+      memo: so.memo || '',
     });
     setEditError('');
   }
@@ -114,6 +115,7 @@ export default function SalesOrders() {
       ship_address: editForm.ship_address || null,
       ship_method: editForm.ship_method || null,
       ship_by_date: editForm.ship_by_date || null,
+      memo: editForm.memo || null,
     };
     const res = await api.put(`/admin/sales-orders/${editing.so_id}`, body);
     if (res?.ok) {
@@ -240,6 +242,23 @@ export default function SalesOrders() {
             <span className="detail-label">Shipping Paid</span>
             <span className="mono"><NullableValue value={selectedSO.customer_shipping_paid} /></span>
           </div>
+
+          {/* v1.9.0 #315: free-text operator-facing note. Only shown
+              when populated; render with whiteSpace: pre-wrap so
+              embedded newlines from the source ERP survive. */}
+          {selectedSO.memo && (
+            <div style={{
+              marginBottom: 16, padding: 10,
+              borderLeft: '3px solid #b87333', backgroundColor: '#fdf6ed',
+              whiteSpace: 'pre-wrap',
+            }}>
+              <div style={{
+                fontSize: 11, fontWeight: 700, color: '#b87333',
+                letterSpacing: 0.4, marginBottom: 4,
+              }}>NOTE</div>
+              <div style={{ fontSize: 13, lineHeight: 1.4 }}>{selectedSO.memo}</div>
+            </div>
+          )}
 
           {/* v1.8.0 (#268) per-component billing + shipping addresses.
               Each side gets its own card so a half-populated address
@@ -412,6 +431,16 @@ export default function SalesOrders() {
           <div className="form-group">
             <label>Ship Address</label>
             <textarea className="form-input" rows={2} value={editForm.ship_address} onChange={(e) => setEditForm({ ...editForm, ship_address: e.target.value })} />
+          </div>
+          <div className="form-group">
+            <label>Note (memo)</label>
+            <textarea
+              className="form-input" rows={3}
+              placeholder="Customer notes, e.g. leave at back door, fragile, double-box"
+              maxLength={4096}
+              value={editForm.memo}
+              onChange={(e) => setEditForm({ ...editForm, memo: e.target.value })}
+            />
           </div>
         </Modal>
       )}

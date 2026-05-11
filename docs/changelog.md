@@ -6,6 +6,396 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.10.0 -- POS endpoint surface
+
+*2026-05-09.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.10.0).
+
+Sentry now serves a dedicated counter-sale API for an external POS
+Service. Four endpoints under `/api/v1/pos/` (`GET /availability`,
+`POST /validate-cart`, `POST /checkout`, `POST /refund`) authenticate
+via a new fourth direction `pos.dispatch` alongside outbound polling,
+inbound POST, and dockd. Checkout and refund are atomic single-
+transaction routes with `SELECT ... FOR UPDATE` on the inventory rows
+being decremented or re-incremented, idempotent on a per-route
+`idempotency_key` (UUID4) with a SHA-256 body hash so a retry with the
+same key + same body replays the cached response and a retry with the
+same key + different body returns 409.
+
+Refund enforces a 90-day window from the original sale's `created_at`,
+a card-vs-cash tender lock comparing the original `POS_CHECKOUT` audit
+row's `payment_method` against `body.refund_summary.method`, and a
+once-per-original-SO guard via `refunded_at` / `refund_so_id` on the
+original `sales_orders` row. Missing / out-of-scope / wrong-source /
+wrong-state original SOs conflate to 404 `original_so_not_found` to
+prevent enumeration; the 422 informational rules only fire after the
+token has proven it can see the SO.
+
+PCI-scope guard at the Pydantic boundary: `CardTender` is a strict-
+typed model with `extra='forbid'` accepting exactly `{type, amount_cents,
+card_brand, card_last4, auth_code, external_ref}`. Any other field
+(`card_pan`, `full_track`, expiry, cvv, etc.) fails 422 at the schema
+layer so Sentry never accepts PAN-shaped data on the wire.
+
+Pricing stays out of Sentry's columns: per-line `unit_price_cents` /
+`tax_cents` / `line_total_cents` ride on the wire and live exclusively
+in `audit_log.details` for archival; mig 056 added no per-line price
+columns. The POS Service owns its own pricing source. New
+`ACTION_POS_CHECKOUT` and `ACTION_POS_REFUND` audit constants extend
+the v1.4 hash chain.
+
+One migration (056). No new APK published; v1.9.0 APK
+(`sentry-wms-v1.9.0.apk`, versionCode 6) remains the working baseline
+since v1.10.0 has no mobile changes. Operators running the v1.9.0
+mobile app continue to work against a v1.10.0 backend with no upgrade.
+
+---
+
+## v1.9.0 -- Dockd shipping integration
+
+*2026-05-09.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.9.0).
+
+Sentry now serves a dedicated outbound shipping API for the in-warehouse
+dockd application. Three endpoints under
+`/api/v1/dockd/orders/<so_number>` (GET, ship, void-ship) authenticate
+via per-station bearer tokens with the new `dockd.dispatch` scope, are
+idempotent under retry through SHA-256 body-hash sentinel rows, and
+serialize concurrent ship attempts on the same SO with
+`SELECT ... FOR UPDATE`. Both ship and void-ship write through the
+existing audit-log hash chain and emit on the `integration_events`
+outbox so downstream ERPs see a fully-shipped or fully-reversed order.
+
+In parallel, the SO lifecycle gains `CANCELLED` status with end-to-end
+wiring (admin + inbound + dashboard counter); a new `sales_orders.memo`
+column inbound-mappable from connector and rendered through the picker,
+packer, and shipper flows; and a UI modernization of the Audit Log page
+with color-coded action badges, chip-style detail previews, an
+action-type select filter, and a Copy JSON button on the detail modal.
+Audit details for PICK / TO_LINE_PICKED / PACK / RECEIVE actions now
+record both expected and actual counts so investigators can reconstruct
+cumulative state from one row.
+
+Two migrations (054-055). Migration 054 adds five void columns to
+`item_fulfillments` and the `dockd_idempotency` table; 055 adds
+`sales_orders.memo TEXT`. Both forward-only.
+
+**Mobile.** The v1.8 APK
+([`sentry-wms-v1.8.0.apk`](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.8.0))
+stays a working baseline -- v1.9 backend changes are additive and v1.8
+keeps picking + packing + receiving + putaway against a v1.9.0 backend.
+The v1.9 mobile build adds a memo block on Pack / Pack-Ship / Ship
+screens (warning-tinted callout above the scan input) and fixes a
+pack-after-short-pick fallback bug where `PackScreen` and
+`PackShipScreen` used `||` against `quantity_picked`, falling back to
+`quantity_ordered` on a fully-shorted line and blocking pack
+completion. **Update to the v1.9 APK on the
+[release page](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.9.0)
+if you ship from the mobile flow or want the memo display, or stay on
+v1.8 if you don't.**
+
+## v1.8.0 -- Transfer Orders + Productivity Dashboard
+
+*2026-05-07.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.8.0).
+
+Sentry now ships its first internal warehouse-to-warehouse workflow
+end-to-end: import a TO via CSV (with shortage detection + per-line
+commit), pick through the existing mobile flow via a new
+`pick_tasks.to_id` discriminator, batch picks into an admin-approval
+row, approve to move inventory source -> destination + emit
+`transfer.completed/1` to the outbox, or reject to leave the source
+stock for re-pick. The operations-overview Dashboard is replaced
+with a per-user productivity grid (Picking units / Packing units /
+Shipped orders / Received unique SKUs / Put Away unique SKUs)
+backed by `audit_log` aggregation through a new compound covering
+index.
+
+The v1.7.0 inbound contract gains `sales_orders.order_total` +
+`customer_shipping_paid` (NUMERIC(12,2)) with per-field decimal
+bounds in mapping docs (rejected at 422 instead of silent Postgres
+rounding); structured per-component billing + shipping address
+fields (16 columns drop the v1.7 single-TEXT placeholders); inbound
+line items write through to `purchase_order_lines` +
+`sales_order_lines` so receiving + picking have something to scan
+against; per-token static `mapping_overrides` JSONB resolves the
+v1.7 deferral (#270); inbound payload `warehouse_id` falls back to
+the issuing token's primary warehouse when source omits it.
+
+Five migrations (049-053). Three security carry-forwards close the
+v1.4 deferral set: `scrub_secrets` credential pattern catalog,
+`ConnectionResult.message` scrub-before-truncate, `\r` permitted
+with JSON-escape on emit. Breaking: v1.7
+`sales_orders.billing_address` + `shipping_address` TEXT columns
+are dropped in favour of the structured fields; mapping docs that
+reference the old names fail boot loud via the #267
+canonical-column validator.
+
+**Mobile.** The v1.5.1 APK
+([`sentry-wms-v1.5.1.apk`](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.5.1))
+stays a working baseline -- backend changes in v1.6 / v1.7 / v1.8
+are additive and v1.5.1 keeps picking + packing + receiving +
+putaway against a v1.8.0 backend. The v1.8 mobile build adds two
+cosmetic improvements for the new TO surface: the picker screen
+header reads "TO {to_number}" instead of "X orders" when the active
+batch is a TO pick, and the home-screen banner flips its label to
+"ACTIVE TRANSFER" + detail line "TO {to_number}". Operators on
+v1.5.1 picking a TO batch see the legacy "X orders" text (which
+renders "0 orders" since the batch has no SO links) -- functional
+but ugly. **Update to the v1.8 APK on the
+[release page](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.8.0)
+for the new TO display, or stay on v1.5.1 if you don't run TO
+workflows.**
+
+Transfer Orders:
+
+- **Three new tables** (#281, mig 049): `transfer_orders` (header
+  with source / destination / status + UUID external_id + state-
+  machine CHECK), `transfer_order_lines` (per-item with monotonicity
+  CHECKs `committed <= requested`, `picked <= committed`,
+  `approved <= picked`), `transfer_order_approvals` (one row per
+  picker submission with `lines_snapshot` JSONB + UUID external_id
+  for outbound event idempotency). `pick_tasks` gains `to_id` +
+  `to_line_id` discriminator with an XOR `CHECK` so exactly one of
+  `(so_id, to_id)` is non-NULL; existing `so_id` / `so_line_id`
+  drop their NOT NULL so SO + TO pick rows share the same table.
+- **TO number generator** (#290) -- format `TO-{YYYYMMDDHHMMSSmmm}`
+  matching the existing `picking_service` batch numbering at
+  millisecond precision. UNIQUE on `to_number` catches the rare
+  same-millisecond burst; the route retries once with a fresh
+  timestamp before surfacing 500.
+- **CSV import** (#291). `POST /api/admin/transfer-orders/import`
+  accepts `{source_warehouse_code, destination_warehouse_code,
+  notes, records: [{sku, quantity}]}`. Pipeline: top-level Pydantic
+  + source != destination + warehouse code -> id resolution + per-row
+  `TransferOrderImportRow` validation with formula-prefix protection
+  + SKU resolution to `items.item_id` + sort by `item_id ASC` +
+  `FOR UPDATE OF inv` walk per item across bins (matches picking +
+  cancel + start-picking lock ordering) + commit `min(requested,
+  available)` distributed across bin rows. Lines with
+  `committed_qty = 0` land `SHORT_CLOSED` so they don't block
+  closure. Response carries header + shortages payload so the
+  Shortage Modal renders cleanly.
+- **Picking dispatch** (#292). `POST /api/admin/transfer-orders/<to_id>/start-picking`
+  walks TO lines with `picked_qty < committed_qty`, finds inventory
+  rows at the source warehouse, INSERTs one `pick_tasks` row per
+  `(line, bin)` with `to_id` + `to_line_id` set, anchors them under
+  a fresh `pick_batch`. `picking_service.confirm_pick` branches on
+  the discriminator: TO picks call `update_transfer_order_line_picked`
+  (atomic over-pick rejection via WHERE-clause guard) and write
+  `ACTION_TO_LINE_PICKED` audit; SO picks unchanged.
+- **Submit + approve + reject** (#293).
+  `POST /api/admin/picker/transfer-orders/<to_id>/submit` (cookie
+  auth, no role gate) snapshots lines with `picked_qty > approved_qty`
+  into a PENDING approval row + flips header to AWAITING_APPROVAL
+  when all lines fully picked.
+  `POST /api/admin/transfer-orders/<to_id>/approvals/<id>/approve`
+  enforces a self-approval gate via
+  `app_settings.transfer_order_block_self_approval` (mig 049 seeded
+  TRUE), bumps `transfer_order_lines.approved_qty`, decrements
+  source `inventory.quantity_allocated` + `quantity_on_hand`
+  distributing across bins, credits destination warehouse's first
+  Staging bin (INSERTs row when missing; 409
+  `no_destination_staging_bin` otherwise), checks closure, emits
+  `transfer.completed/1` with `aggregate_id = to_approval_id`.
+  `POST /api/admin/transfer-orders/<to_id>/approvals/<id>/reject`
+  flips status to REJECTED with optional `rejection_reason`; **no
+  inventory movement, no event emission** so source stock stays
+  available for re-pick.
+- **TO confirm_pick does not decrement source inventory** (#293).
+  v1.8 splits the SO + TO inventory semantics: TO picks update only
+  `transfer_order_lines.picked_qty` at pick time (the import-time
+  reservation persists); inventory moves source -> destination at
+  approval time. SO `confirm_pick` unchanged.
+- **Admin UI** (#294). Single-file `admin/src/pages/TransferOrders.jsx`
+  with list + status filter + source / destination filter, detail
+  modal with lines table + approvals queue, per-line Short-Close
+  + Cancel + Delete + Start Picking action buttons, CSV Import
+  modal with client-side parse + preview + per-row error feedback,
+  Shortage Modal with three actions (Download Shortage CSV,
+  Cancel TO, Create with Available), Approve / Reject buttons on
+  pending approvals. Sidebar entry under Warehouse group; existing
+  `/inter-warehouse-transfers` renamed to "Bin Transfers" to
+  disambiguate. See [`docs/transfer-orders.md`](transfer-orders.md)
+  for the full operator playbook.
+- **Mobile picker TO context** (#295). `/api/picking/active-batch`
+  + `get_batch_tasks` + `get_next_task` LEFT JOIN `transfer_orders`
+  so TO tasks resolve; response gains `kind` + `to_id` + `to_number`.
+  Mobile picker screen renders the TO context (see Mobile note
+  above).
+- **Sidebar pending-approvals badge** (#296). `/admin/dashboard`
+  returns `pending_to_approvals` warehouse-scoped to TOs whose
+  source OR destination matches the requested warehouse_id.
+
+Productivity Dashboard:
+
+- **Service** (#297, `api/services/productivity_service.py`).
+  `DASHBOARD_EVENTS` catalog maps slug -> (action_type, metric_kind):
+  `picking` (PICK / units), `packing` (PACK / units), `shipped`
+  (SHIP / orders), `received_skus` (RECEIVE / unique_skus),
+  `putaway_skus` (PUTAWAY / unique_skus). Per-event aggregator with
+  the actual JSONB field path per metric (PICK uses
+  `details.quantity_picked`, PACK uses `details.total_items`,
+  RECEIVE uses `details.item_id` for distinct count, PUTAWAY uses
+  `entity_id`). 60s in-process TTL cache keyed on `(warehouse_id,
+  start, end)`. Packing visibility honours
+  `app_settings.require_packing_before_shipping`.
+- **API endpoints** (#297). `GET /api/v1/dashboard/productivity`
+  (cookie + ADMIN, Pydantic-validated date range capped at 90 days,
+  422 on `end < start` or `range_too_large`).
+  `GET /api/v1/dashboard/preferences` (returns schema defaults when
+  no row exists). `PUT /api/v1/dashboard/preferences` (upserts,
+  partial body keeps other fields, `chart_order` validated against
+  the catalog allowlist, `user_id` derived from `g.current_user`
+  only -- never from body).
+- **Frontend** (#299, `admin/src/pages/Dashboard.jsx` rewrite).
+  5-card grid (4 when packing hidden) with per-user vertical bars
+  sorted desc by event value, top performer in Sentry red `#8e2715`
+  and others in copper `#c4722a`. Time range selector Today /
+  Yesterday / Last 7d / Last 30d / Custom. Charts (default) /
+  Table view toggle with CSV export from table view. Click-to-
+  expand replaces grid with full-size single chart + Back button.
+  Gear-icon settings panel for chart_order rearrange + default_range
+  + default_view; PUTs preferences on every change.
+
+Inbound contract extensions:
+
+- **`sales_orders.order_total` + `customer_shipping_paid`** (#282,
+  mig 050). Two `NUMERIC(12,2)` nullable columns. Forward-only --
+  existing rows have NULL after the migration.
+- **Per-field decimal bounds in mapping docs** (#285). `FieldMapping`
+  gains optional `max_digits` / `decimal_places` / `ge` / `le`
+  attributes for `type='decimal'`. `_coerce_or_default` always
+  coerces decimals to `Decimal` (safe for psycopg2) and raises
+  `ValueError` (-> 422 `mapping_apply_error`) on bound violation,
+  replacing the v1.7 silent Postgres rounding (excess scale) and
+  500 NumericValueOutOfRange (excess precision). Backward
+  compatible: existing decimal mappings without bounds keep
+  pass-through behaviour.
+- **Structured billing + shipping address** (#288, mig 053). 16
+  structured columns replace the v1.7 mig 046 `billing_address` +
+  `shipping_address` TEXT placeholders. CSV import + admin SO
+  detail render + admin SO `PATCH /address` endpoint with status
+  gate (ADMIN any status / non-admin OPEN only) +
+  `ACTION_SO_ADDRESS_EDITED` audit with field-level delta. Operator
+  template gets 16 worked examples replacing the 2 TEXT examples.
+- **Inbound line item write-through** (#289). `purchase_orders` +
+  `sales_orders` inbound now writes line items to the relational
+  `*_lines` tables (v1.7 stored them only in
+  `inbound_*.canonical_payload` JSONB). Item resolution via
+  `cross_system_lookup` (line declares `item_id` with `source_type:
+  item`); helper dereferences the canonical UUID to the integer
+  `items.item_id`. Re-POST replaces lines via DELETE + INSERT only
+  when no downstream activity exists; PO `quantity_received > 0`
+  or SO `quantity_(allocated|picked|packed|shipped) > 0` returns
+  409 `lines_in_flight`. Empty `line_items` array on re-POST
+  preserves existing lines (header-only update is allowed).
+  Items must be pre-loaded so the lookup resolves; unresolved item
+  -> 409 `cross_system_lookup_miss`.
+- **Per-token static `mapping_overrides`** (#270, mig 052).
+  `wms_tokens` gains `mapping_overrides JSONB NOT NULL DEFAULT '{}'`.
+  The existing `mapping_override BOOLEAN` capability flag stays as
+  the gate; per-token overrides apply only when both the boolean is
+  TRUE and the JSONB is non-empty. Admin issue route validates
+  every override key against the columns of the token's
+  `inbound_resources` canonical tables via `information_schema`
+  (422 `unknown_mapping_overrides_keys`). Audit shape uniform: every
+  TOKEN_ISSUE / TOKEN_ROTATE / TOKEN_DELETE row carries
+  `mapping_overrides_keys` (sorted, **never values**). See
+  [`docs/erp-integration.md`](erp-integration.md) for the
+  operator-facing reference.
+- **`warehouse_id` token fallback** (#300). When source omits
+  `warehouse_id` and the token's `warehouse_ids` array carries at
+  least one entry, the inbound handler fills in
+  `token.warehouse_ids[0]`. Single-warehouse tokens (the common
+  case for connector authors) get the natural fallback;
+  multi-warehouse tokens take the first entry.
+
+Security carry-forward:
+
+- **`scrub_secrets` credential pattern catalog** (#52). New
+  `CREDENTIAL_PATTERNS` covers Sentry's own bearer tokens, AWS
+  access keys, generic Bearer headers, key=value connection-string
+  fragments, NetSuite OAuth fragments, JWT-shaped strings, and a
+  heuristic catch-all for long base64-ish strings near credential
+  keywords. `scrub_secrets` composes URL scrubbing + the new
+  catalog and is idempotent.
+- **`ConnectionResult.message` credential scrubbing** (#53). Runs
+  `scrub_secrets` between the printable-character filter and the
+  500-char length cap so multi-character redaction tags
+  (`<REDACTED>`, `<JWT_REDACTED>`) cannot be split.
+- **Carriage return in `ConnectionResult.message` allowlist** (#55).
+  `\r` stays in `_ALLOWED_MESSAGE_CHARS` so Windows-origin upstream
+  errors (`\r\n` line endings) survive intact. Safety on emit
+  guaranteed by JSON encoding (Pydantic `model_dump_json` escapes
+  `\r` to `\\r`).
+
+Migrations:
+
+- **049** -- transfer orders (`transfer_orders` +
+  `transfer_order_lines` + `transfer_order_approvals` + `pick_tasks`
+  `to_id` / `to_line_id` discriminator with XOR CHECK +
+  `app_settings.transfer_order_block_self_approval`). XOR CHECK
+  lands `NOT VALID` then `VALIDATE` outside the BEGIN/COMMIT so
+  the validation lock is `SHARE UPDATE EXCLUSIVE` rather than
+  `ACCESS EXCLUSIVE`.
+- **050** -- `sales_orders.order_total` + `customer_shipping_paid`
+  (NUMERIC(12,2), nullable).
+- **051** -- `user_dashboard_preferences` table +
+  `ix_audit_log_dashboard` covering index +
+  `warehouses.timezone` (default `'America/Denver'`).
+- **052** -- `wms_tokens.mapping_overrides JSONB NOT NULL DEFAULT '{}'`.
+- **053** -- structured billing + shipping address columns (16 VARCHAR
+  columns replacing the v1.7 `billing_address` + `shipping_address`
+  TEXT).
+
+All five declare `SET lock_timeout = '5s'` + `SET statement_timeout
+= '60s'` at the top so a bad migration fails fast (new v1.8
+convention). `BEGIN/COMMIT`-wrapped per V-213.
+
+Breaking changes:
+
+- **`sales_orders.billing_address` + `shipping_address` TEXT
+  columns dropped** (mig 053). Replaced with 16 structured
+  per-component columns. Mapping docs that still reference the old
+  names fail boot loud via the #267 canonical-column validator with
+  the offending file path + field name.
+- **Old operations-overview Dashboard removed** (#299).
+  `/admin/dashboard` (legacy ops-overview JSON) stays for sidebar
+  badge counts, but the admin panel's `/` route now renders the
+  per-user productivity grid; the previous open SOs / open POs /
+  short-picks tables are dropped from the dashboard surface.
+  Operators find them on `/sales-orders`, `/purchase-orders`, and
+  `/audit-log`.
+
+Reserved for v1.9:
+
+- **Power User role** (#298). Third role tier between USER and
+  ADMIN that admits admin panel login but locks the System sidebar
+  group.
+- **`ship.confirmed/1` event payload extension for structured
+  shipping address** (deferred from #289). v1.9 dockd integration is
+  the actual consumer.
+- **Per-request body `mapping_overrides`** (#270 follow-up).
+  Per-token static config (Option B) is the v1.8 surface;
+  per-request body (Option A) and per-mapping-document escape
+  hatches (Option C) remain deferred until real demand surfaces.
+
+Operator notes:
+
+- After deploy: restart api workers so the new `mapping_overrides`
+  column is in the token cache shape. Existing tokens auto-populate
+  with `'{}'` from the migration's NOT NULL DEFAULT.
+- TO inventory locking pattern: import + cancel + start-picking +
+  approve + short-close all walk inventory rows in `inventory_id
+  ASC` so concurrent SO + TO operations on the same item stay
+  deadlock-free.
+- Productivity Dashboard cache: 60s TTL per `(warehouse_id, start,
+  end)` per worker. Restart workers if you need fresh reads inside
+  the TTL.
+- Transfer Order destination warehouse: must have at least one
+  Staging bin. Approve fires 409 `no_destination_staging_bin`
+  otherwise.
+
+---
+
 ## v1.7.0 -- Inbound (Pipe B)
 
 *2026-05-06.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.7.0).

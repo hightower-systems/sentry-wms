@@ -62,6 +62,15 @@ describe('CSV import templates', () => {
     expect(cols).toContain('customer_address');
   });
 
+  it('inventory-adjustments template carries the five fields the server schema requires', () => {
+    const cols = headers('inventory-adjustments');
+    expect(cols).toContain('sku');
+    expect(cols).toContain('warehouse');
+    expect(cols).toContain('bin');
+    expect(cols).toContain('qty');
+    expect(cols).toContain('memo');
+  });
+
   it('every template has at least one example row after the header', () => {
     for (const key of Object.keys(CSV_TEMPLATES)) {
       const lines = CSV_TEMPLATES[key].split('\n').filter(Boolean);

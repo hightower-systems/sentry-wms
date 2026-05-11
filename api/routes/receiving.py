@@ -258,6 +258,10 @@ def receive_items(validated):
         add_inventory(g.db, item_id, bin_id, warehouse_id, quantity, lot_number)
 
         # 5. Audit log
+        # quantity_ordered + quantity_received_before make the row
+        # self-contained: ordered total / cumulative-before-this-call /
+        # this transaction. Investigators can reconstruct PO progress
+        # from one row without joining purchase_order_lines.
         write_audit_log(
             g.db,
             action_type=ACTION_RECEIVE,
@@ -265,7 +269,14 @@ def receive_items(validated):
             entity_id=po_id,
             user_id=username,
             warehouse_id=warehouse_id,
-            details={"item_id": item_id, "quantity": quantity, "bin_id": bin_id, "receipt_id": receipt_id},
+            details={
+                "quantity_ordered": po_line.quantity_ordered,
+                "quantity_received_before": po_line.quantity_received,
+                "quantity": quantity,
+                "item_id": item_id,
+                "bin_id": bin_id,
+                "receipt_id": receipt_id,
+            },
         )
 
         # 6. v1.5.0 #112: emit receipt.completed on the integration_events

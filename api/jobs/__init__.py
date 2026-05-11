@@ -55,6 +55,12 @@ celery_app.conf.beat_schedule = {
         "task": "jobs.cleanup_tasks.cleanup_inbound_source_payload",
         "schedule": 24 * 3600.0,
     },
+    # v1.9.0 dockd: prune dockd_idempotency rows past the 72h TTL.
+    # Daily cadence; the table is bounded by request rate of 5 stations.
+    "cleanup-dockd-idempotency-daily": {
+        "task": "jobs.cleanup_tasks.cleanup_dockd_idempotency",
+        "schedule": 24 * 3600.0,
+    },
 }
 
 # Auto-discover task modules in the jobs package

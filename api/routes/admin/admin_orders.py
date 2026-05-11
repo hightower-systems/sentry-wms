@@ -24,6 +24,10 @@ from schemas.sales_orders import (
     UpdateSalesOrderRequest,
 )
 from services.audit_service import write_audit_log
+from services.sales_order_service import (
+    CancelNotAllowed,
+    cancel_sales_order as _cancel_so,
+)
 from utils.validation import validate_body
 
 
@@ -293,7 +297,7 @@ def list_sales_orders():
             SELECT so_id, so_number, so_barcode, customer_name, customer_phone, customer_address,
                    status, priority, warehouse_id,
                    ship_method, ship_address, order_date, ship_by_date, created_at, created_by,
-                   carrier, tracking_number, shipped_at
+                   carrier, tracking_number, shipped_at, memo
             FROM sales_orders {where_sql} ORDER BY so_id DESC LIMIT :limit OFFSET :offset
         """),
         params,
@@ -309,7 +313,8 @@ def list_sales_orders():
              "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,
              "created_at": r.created_at.isoformat() if r.created_at else None, "created_by": r.created_by,
              "carrier": r.carrier, "tracking_number": r.tracking_number,
-             "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None}
+             "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None,
+             "memo": r.memo}
             for r in rows
         ],
         "total": total, "page": page, "per_page": per_page, "pages": pages,
@@ -327,7 +332,7 @@ def get_sales_order(so_id):
                    warehouse_id, ship_method, ship_address,
                    order_date, ship_by_date, created_at, picked_at, packed_at,
                    shipped_at, created_by,
-                   order_total, customer_shipping_paid,
+                   order_total, customer_shipping_paid, memo,
                    billing_address_name, billing_address_line1, billing_address_line2,
                    billing_address_city, billing_address_state,
                    billing_address_postal_code, billing_address_country,
@@ -370,6 +375,8 @@ def get_sales_order(so_id):
                 str(so.customer_shipping_paid)
                 if so.customer_shipping_paid is not None else None
             ),
+            # v1.9.0: free-text operator-facing note (mig 055).
+            "memo": so.memo,
             # v1.8.0 (#288): structured billing/shipping address fields.
             **{name: getattr(so, name) for name in ADDRESS_FIELD_NAMES},
         },
@@ -404,8 +411,8 @@ def create_sales_order(validated):
 
     result = g.db.execute(
         text("""
-            INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, order_date, created_by, status, external_id)
-            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, NOW(), :created_by, :status, :ext_id)
+            INSERT INTO sales_orders (so_number, so_barcode, customer_name, customer_phone, customer_address, warehouse_id, ship_method, ship_address, ship_by_date, memo, order_date, created_by, status, external_id)
+            VALUES (:sn, :sb, :cust, :phone, :caddr, :wid, :ship, :addr, :ship_by, :memo, NOW(), :created_by, :status, :ext_id)
             RETURNING so_id
         """),
         {
@@ -414,7 +421,8 @@ def create_sales_order(validated):
             "caddr": data.get("customer_address"),
             "wid": data["warehouse_id"],
             "ship": data.get("ship_method"), "addr": data.get("ship_address"),
-            "ship_by": data.get("ship_by_date"), "created_by": g.current_user["username"],
+            "ship_by": data.get("ship_by_date"), "memo": data.get("memo"),
+            "created_by": g.current_user["username"],
             "status": SO_OPEN,
             "ext_id": str(uuid.uuid4()),
         },
@@ -450,7 +458,7 @@ def update_sales_order(so_id, validated):
     if so.status != SO_OPEN:
         return jsonify({"error": f"Can only update SOs with OPEN status. Current: {so.status}"}), 400
 
-    ALLOWED_FIELDS = {"so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority"}
+    ALLOWED_FIELDS = {"so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority", "memo"}
     fields, params = [], {"sid": so_id}
     for col in ALLOWED_FIELDS:
         if col in data:
@@ -555,44 +563,27 @@ def update_sales_order_address(so_id, validated):
 @require_role("ADMIN")
 @with_db
 def cancel_sales_order(so_id):
-    so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
-    if not so:
-        return jsonify({"error": "Sales order not found"}), 404
-    if so.status not in (SO_OPEN, "ALLOCATED", SO_PICKING):
-        return jsonify({"error": f"Can only cancel OPEN, ALLOCATED, or PICKING orders. Current: {so.status}"}), 400
-
-    # If ALLOCATED or PICKING, release allocated inventory
-    if so.status in ("ALLOCATED", SO_PICKING):
-        lines = g.db.execute(
-            text("SELECT so_line_id, item_id, quantity_allocated FROM sales_order_lines WHERE so_id = :sid AND quantity_allocated > 0"),
-            {"sid": so_id},
-        ).fetchall()
-
-        for line in lines:
-            # Find the inventory rows that were allocated via pick_tasks
-            tasks = g.db.execute(
-                text("SELECT bin_id, quantity_to_pick FROM pick_tasks WHERE so_line_id = :sol_id AND status = :task_status"),
-                {"sol_id": line.so_line_id, "task_status": TASK_PENDING},
-            ).fetchall()
-
-            for task in tasks:
-                g.db.execute(
-                    text("UPDATE inventory SET quantity_allocated = quantity_allocated - :qty WHERE item_id = :iid AND bin_id = :bid"),
-                    {"qty": task.quantity_to_pick, "iid": line.item_id, "bid": task.bin_id},
-                )
-
-            g.db.execute(
-                text("UPDATE sales_order_lines SET quantity_allocated = 0 WHERE so_line_id = :sol_id"),
-                {"sol_id": line.so_line_id},
-            )
-
-        # Clean up pick batch data
-        g.db.execute(text("DELETE FROM pick_tasks WHERE so_id = :sid"), {"sid": so_id})
-        g.db.execute(text("DELETE FROM pick_batch_orders WHERE so_id = :sid"), {"sid": so_id})
-
-    g.db.execute(text("UPDATE sales_orders SET status = :status WHERE so_id = :sid"), {"sid": so_id, "status": SO_CANCELLED})
+    """Operator-initiated cancel. Delegates to the shared
+    sales_order_service.cancel_sales_order so audit-log writing,
+    per-status unwind, and SHIPPED rejection match the inbound path."""
+    username = g.current_user["username"]
+    try:
+        result = _cancel_so(
+            g.db, so_id=so_id, source="admin", username=username,
+        )
+    except CancelNotAllowed as exc:
+        if exc.current_status == "UNKNOWN":
+            return jsonify({"error": "Sales order not found"}), 404
+        return jsonify({
+            "error": str(exc),
+            "current_status": exc.current_status,
+        }), 400
     g.db.commit()
-    return jsonify({"message": "Sales order cancelled"})
+    return jsonify({
+        "message": "Sales order cancelled",
+        "pre_status": result["pre_status"],
+        "audit_log_id": result["audit_log_id"],
+    })
 
 
 # ── Short Picks Report ────────────────────────────────────────────────────────

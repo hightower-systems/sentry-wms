@@ -392,6 +392,9 @@ def dashboard():
 
     picked_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_picked {wh_filter}"), {**wh_params, "so_picked": SO_PICKED}).scalar()
     packed_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_packed {wh_filter}"), {**wh_params, "so_packed": SO_PACKED}).scalar()
+    # v1.9.0 #311: surface cancelled count so operators have visibility
+    # into cancellation rate alongside the other lifecycle counters.
+    cancelled_count = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = 'CANCELLED' {wh_filter}"), wh_params).scalar()
 
     if require_packing:
         ready_to_pack = picked_count
@@ -468,6 +471,7 @@ def dashboard():
         "orders_ready_to_pick": ready_to_pick,
         "orders_in_picking": in_picking,
         "ready_to_ship": ready_to_ship,
+        "cancelled_orders": cancelled_count,
         "require_packing": require_packing,
         "total_skus": total_skus,
         "total_bins": total_bins,

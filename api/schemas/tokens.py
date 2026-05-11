@@ -8,10 +8,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from middleware.auth_middleware import (
     V150_ENDPOINT_SLUGS,
     V170_INBOUND_RESOURCE_BY_ENDPOINT,
+    V190_DOCKD_SLUG,
+    V1100_POS_SLUG,
 )
 
 
 _INBOUND_RESOURCE_KEYS = frozenset(V170_INBOUND_RESOURCE_BY_ENDPOINT.values())
+
+# Direction-bearing slugs accepted by the create/update token validators.
+# V150 outbound slugs map 1:1 to a Flask endpoint; V190 dockd and V1100
+# POS each cover a 1:N surface under a single slug. Listed together so
+# the validator's "unknown slug" message is honest about every value the
+# auth middleware will actually honor at request time.
+_KNOWN_ENDPOINT_SLUGS = (
+    frozenset(V150_ENDPOINT_SLUGS.keys())
+    | {V190_DOCKD_SLUG, V1100_POS_SLUG}
+)
 
 
 class CreateTokenRequest(BaseModel):
@@ -47,11 +59,11 @@ class CreateTokenRequest(BaseModel):
     @field_validator("endpoints")
     @classmethod
     def _known_slugs_only(cls, v: List[str]) -> List[str]:
-        unknown = sorted({s for s in v if s not in V150_ENDPOINT_SLUGS})
+        unknown = sorted({s for s in v if s not in _KNOWN_ENDPOINT_SLUGS})
         if unknown:
             raise ValueError(
                 f"unknown endpoint slugs: {unknown}. "
-                f"valid: {sorted(V150_ENDPOINT_SLUGS.keys())}"
+                f"valid: {sorted(_KNOWN_ENDPOINT_SLUGS)}"
             )
         return v
 
@@ -134,10 +146,10 @@ class UpdateTokenRequest(BaseModel):
             return v
         if not v:
             raise ValueError("endpoints must be non-empty when provided")
-        unknown = sorted({s for s in v if s not in V150_ENDPOINT_SLUGS})
+        unknown = sorted({s for s in v if s not in _KNOWN_ENDPOINT_SLUGS})
         if unknown:
             raise ValueError(
                 f"unknown endpoint slugs: {unknown}. "
-                f"valid: {sorted(V150_ENDPOINT_SLUGS.keys())}"
+                f"valid: {sorted(_KNOWN_ENDPOINT_SLUGS)}"
             )
         return v

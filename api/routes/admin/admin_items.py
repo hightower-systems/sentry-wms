@@ -11,13 +11,20 @@ from pydantic import ValidationError
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
+from datetime import timezone
+
+from constants import ACTION_ADJUST, ADJ_APPROVED
 from schemas.csv_import import (
     BinImportRow,
+    InventoryAdjustmentImportRow,
     ItemImportRow,
     PurchaseOrderImportRow,
     SalesOrderImportRow,
 )
 from schemas.items import CreateItemRequest, CreatePreferredBinRequest, UpdateItemRequest, UpdatePreferredBinRequest
+from services.audit_service import write_audit_log
+from services.events_service import emit_event, get_user_external_id
+from services.inventory_service import add_inventory
 from utils.validation import validate_body
 
 
@@ -365,6 +372,7 @@ _IMPORT_ROW_SCHEMAS = {
     "bins": BinImportRow,
     "purchase-orders": PurchaseOrderImportRow,
     "sales-orders": SalesOrderImportRow,
+    "inventory-adjustments": InventoryAdjustmentImportRow,
 }
 
 
@@ -419,6 +427,8 @@ def csv_import(entity_type):
                 _import_purchase_order(g.db, row, default_warehouse_id)
             elif entity_type == "sales-orders":
                 _import_sales_order(g.db, row, default_warehouse_id)
+            elif entity_type == "inventory-adjustments":
+                _import_inventory_adjustment(g.db, row)
             imported += 1
         except _SkipRow as e:
             errors.append({"row": idx, "error": str(e)})
@@ -630,6 +640,129 @@ def _import_sales_order(db, row: SalesOrderImportRow, default_warehouse_id=None)
     db.execute(
         text("INSERT INTO sales_order_lines (so_id, item_id, quantity_ordered, line_number) VALUES (:sid, :iid, :qty, :ln)"),
         {"sid": so_id, "iid": item_row.item_id, "qty": quantity, "ln": max_ln + 1},
+    )
+
+
+def _import_inventory_adjustment(db, row: InventoryAdjustmentImportRow):
+    """Resolve sku/warehouse/bin, apply the on-hand change, write the
+    inventory_adjustments row as APPROVED, audit-log it, and emit
+    adjustment.applied/1. Mirrors the auto-approve direct-adjustment
+    endpoint (admin_users.create_inventory_adjustment) one-row-per-call
+    so subscribers receive one event per imported correction."""
+    item = db.execute(
+        text("SELECT item_id, external_id FROM items WHERE sku = :sku"),
+        {"sku": row.sku},
+    ).fetchone()
+    if not item:
+        raise _SkipRow(f"Item not found for sku '{row.sku}'")
+
+    wh = db.execute(
+        text("SELECT warehouse_id FROM warehouses WHERE warehouse_code = :code"),
+        {"code": row.warehouse},
+    ).fetchone()
+    if not wh:
+        raise _SkipRow(f"Warehouse not found for code '{row.warehouse}'")
+
+    bin_row = db.execute(
+        text(
+            "SELECT bin_id, external_id FROM bins "
+            "WHERE bin_code = :code AND warehouse_id = :wid"
+        ),
+        {"code": row.bin, "wid": wh.warehouse_id},
+    ).fetchone()
+    if not bin_row:
+        raise _SkipRow(
+            f"Bin '{row.bin}' not found in warehouse '{row.warehouse}'"
+        )
+
+    qty_change = row.qty
+    if qty_change > 0:
+        add_inventory(db, item.item_id, bin_row.bin_id, wh.warehouse_id, qty_change)
+    else:
+        inv = db.execute(
+            text(
+                "SELECT inventory_id, quantity_on_hand FROM inventory "
+                "WHERE item_id = :iid AND bin_id = :bid FOR UPDATE"
+            ),
+            {"iid": item.item_id, "bid": bin_row.bin_id},
+        ).fetchone()
+        available = inv.quantity_on_hand if inv else 0
+        if available < -qty_change:
+            raise _SkipRow(
+                f"Insufficient inventory at bin '{row.bin}' for sku "
+                f"'{row.sku}': available {available}, requested {-qty_change}"
+            )
+        new_qty = available + qty_change
+        if new_qty == 0:
+            db.execute(
+                text("DELETE FROM inventory WHERE inventory_id = :inv_id"),
+                {"inv_id": inv.inventory_id},
+            )
+        else:
+            db.execute(
+                text(
+                    "UPDATE inventory SET quantity_on_hand = :qty, "
+                    "updated_at = NOW() WHERE inventory_id = :inv_id"
+                ),
+                {"qty": new_qty, "inv_id": inv.inventory_id},
+            )
+
+    adj = db.execute(
+        text(
+            """
+            INSERT INTO inventory_adjustments
+                (item_id, bin_id, warehouse_id, quantity_change,
+                 reason_code, reason_detail, status, adjusted_by,
+                 adjusted_at, external_id)
+            VALUES (:iid, :bid, :wid, :qty_change, 'CORRECTION', :detail,
+                    :status, :user_id, NOW(), :ext_id)
+            RETURNING adjustment_id, adjusted_at, external_id
+            """
+        ),
+        {
+            "iid": item.item_id,
+            "bid": bin_row.bin_id,
+            "wid": wh.warehouse_id,
+            "qty_change": qty_change,
+            "detail": row.memo,
+            "status": ADJ_APPROVED,
+            "user_id": g.current_user["user_id"],
+            "ext_id": str(uuid.uuid4()),
+        },
+    ).fetchone()
+
+    write_audit_log(
+        db, ACTION_ADJUST, "ITEM", item.item_id,
+        user_id=g.current_user["user_id"],
+        warehouse_id=wh.warehouse_id,
+        details={
+            "adjustment_id": adj.adjustment_id,
+            "source": "csv_import",
+            "bin_id": bin_row.bin_id,
+            "quantity_change": qty_change,
+            "reason_code": "CORRECTION",
+            "memo": row.memo,
+        },
+    )
+
+    emit_event(
+        db,
+        event_type="adjustment.applied",
+        event_version=1,
+        aggregate_type="inventory_adjustment",
+        aggregate_id=adj.adjustment_id,
+        aggregate_external_id=adj.external_id,
+        warehouse_id=wh.warehouse_id,
+        source_txn_id=g.source_txn_id,
+        payload={
+            "adjustment_external_id": str(adj.external_id),
+            "item_external_id": str(item.external_id),
+            "bin_external_id": str(bin_row.external_id),
+            "quantity_delta": qty_change,
+            "reason_code": "CORRECTION",
+            "applied_by_user_external_id": get_user_external_id(db, g.current_user["username"]),
+            "applied_at": adj.adjusted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        },
     )
 
 

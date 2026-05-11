@@ -35,7 +35,8 @@ export default function PackShipScreen({ navigation }) {
       (item) => item.sku === barcode || item.upc === barcode || item.item_barcode === barcode
     );
     if (matchedItem) {
-      const expected = matchedItem.quantity_picked || matchedItem.quantity_ordered;
+      // v1.9.0: see PackScreen.js for the short-pick rationale.
+      const expected = matchedItem.quantity_picked ?? matchedItem.quantity_ordered;
       if ((matchedItem.verified || 0) >= expected) {
         showError(`${matchedItem.sku} already fully verified`);
         return;
@@ -60,7 +61,7 @@ export default function PackShipScreen({ navigation }) {
   };
 
   const allVerified = items.length > 0 && items.every(
-    (item) => (item.verified || 0) >= (item.quantity_picked || item.quantity_ordered)
+    (item) => (item.verified || 0) >= (item.quantity_picked ?? item.quantity_ordered)
   );
 
   const handleCompletePack = async () => {
@@ -114,10 +115,17 @@ export default function PackShipScreen({ navigation }) {
               <Text style={styles.customer}>{order.customer_name}</Text>
             </View>
 
+            {order.memo ? (
+              <View style={styles.memoBlock}>
+                <Text style={styles.memoLabel}>NOTE</Text>
+                <Text style={styles.memoText}>{order.memo}</Text>
+              </View>
+            ) : null}
+
             <ScanInput placeholder="SCAN ITEM" onScan={handleScanItem} disabled={scanDisabled} />
 
             {items.map((item, idx) => {
-              const expected = item.quantity_picked || item.quantity_ordered;
+              const expected = item.quantity_picked ?? item.quantity_ordered;
               const done = item.verified || 0;
               const complete = done >= expected;
               return (
@@ -191,6 +199,15 @@ const styles = StyleSheet.create({
   soNumber: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   customer: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   packedLabel: { fontFamily: fonts.mono, fontSize: 12, color: colors.success, letterSpacing: 0.3, marginTop: 4 },
+  memoBlock: {
+    borderWidth: 1, borderColor: colors.warning, borderRadius: radii.badge,
+    padding: 10, marginBottom: 16, backgroundColor: '#fdf6ed',
+  },
+  memoLabel: {
+    fontFamily: fonts.mono, fontSize: 10, fontWeight: '700',
+    color: colors.warning, letterSpacing: 0.6, marginBottom: 4,
+  },
+  memoText: { fontSize: 13, color: colors.textPrimary, lineHeight: 18 },
   itemRowComplete: { borderColor: colors.success, backgroundColor: '#f0f9f0' },
   itemQty: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   itemQtyText: { fontFamily: fonts.mono, fontSize: 14, fontWeight: '700', color: colors.textPrimary },
