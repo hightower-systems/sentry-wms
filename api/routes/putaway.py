@@ -13,7 +13,7 @@ from middleware.db import with_db
 from schemas.putaway import ConfirmPutawayRequest, UpdatePreferredRequest
 from services.audit_service import write_audit_log
 from services.inventory_service import move_inventory
-from constants import ACTION_PUTAWAY, BIN_STAGING
+from constants import ACTION_PUTAWAY, BIN_STAGING, BIN_PICKABLE_STAGING
 from utils.validation import validate_body
 
 putaway_bp = Blueprint("putaway", __name__)
@@ -27,6 +27,11 @@ def pending_putaway(warehouse_id):
     if not ok:
         return denied
 
+    # Putaway sources include both pure Staging bins (RECV-01 etc.) and
+    # PickableStaging bins (OWTRAY01..76, OWSTICKERED) — the latter are
+    # used by AvidMax's receive flow as tray-staging-before-putaway and
+    # remain Pickable for sales-pick concurrency. Mirrors the receive
+    # screen's set in mobile/src/screens/ReceiveScreen.js:66.
     rows = g.db.execute(
         text(
             """
@@ -36,12 +41,16 @@ def pending_putaway(warehouse_id):
             FROM inventory inv
             JOIN items i ON i.item_id = inv.item_id
             JOIN bins b ON b.bin_id = inv.bin_id
-            WHERE b.bin_type = :bin_staging
+            WHERE b.bin_type IN (:bin_staging, :bin_pickable_staging)
               AND inv.quantity_on_hand > 0
               AND inv.warehouse_id = :warehouse_id
             """
         ),
-        {"warehouse_id": warehouse_id, "bin_staging": BIN_STAGING},
+        {
+            "warehouse_id": warehouse_id,
+            "bin_staging": BIN_STAGING,
+            "bin_pickable_staging": BIN_PICKABLE_STAGING,
+        },
     ).fetchall()
 
     return jsonify({
