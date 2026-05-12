@@ -450,13 +450,20 @@ def create_sales_order(validated):
 @validate_body(UpdateSalesOrderRequest)
 @with_db
 def update_sales_order(so_id, validated):
+    """Admin edit of SO non-line fields.
+
+    Status policy: admin can edit at any status. Real-world use case is
+    customer callbacks requesting address / ship-method / memo corrections
+    after picking has started. Mirrors the looser status policy on the
+    /address PATCH endpoint below (admin bypasses the OPEN-only gate there).
+    Endpoint remains @require_role("ADMIN") so non-admin roles cannot
+    invoke it regardless of SO status.
+    """
     data = validated.model_dump(exclude_unset=True)
 
     so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
     if not so:
         return jsonify({"error": "Sales order not found"}), 404
-    if so.status != SO_OPEN:
-        return jsonify({"error": f"Can only update SOs with OPEN status. Current: {so.status}"}), 400
 
     ALLOWED_FIELDS = {"so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority", "memo"}
     fields, params = [], {"sid": so_id}
