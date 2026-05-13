@@ -465,7 +465,20 @@ def update_sales_order(so_id, validated):
     if not so:
         return jsonify({"error": "Sales order not found"}), 404
 
-    ALLOWED_FIELDS = {"so_number", "so_barcode", "customer_name", "customer_phone", "customer_address", "ship_method", "ship_address", "ship_by_date", "priority", "memo"}
+    ALLOWED_FIELDS = {
+        "so_number", "so_barcode",
+        "customer_name", "customer_phone", "customer_address",
+        "ship_method", "ship_address", "ship_by_date",
+        "priority", "memo",
+        # v1.10.4: shipment-state edits for backfill of orders shipped via
+        # external systems (legacy ShipRush bridge) so the warehouse view
+        # reflects the right status without going through the dockd
+        # PICKED -> PACKED -> SHIPPED chain. Direct UPDATE — does NOT
+        # write inventory_movements or outbox events; for one-off data
+        # corrections only. Routine fulfillment still flows through
+        # /api/v1/dockd/orders/<so_number>/ship.
+        "status", "carrier", "tracking_number", "shipped_at",
+    }
     fields, params = [], {"sid": so_id}
     for col in ALLOWED_FIELDS:
         if col in data:

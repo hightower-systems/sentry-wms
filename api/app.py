@@ -530,11 +530,13 @@ def create_app():
     @_require_auth
     @_require_role("ADMIN")
     def system_info():
+        from version import __version__ as _code_version
         return _jsonify(
             {
                 "proxy_fix_active": app.config.get(
                     "PROXY_FIX_ACTIVE", False
                 ),
+                "version": _code_version,
             }
         )
 

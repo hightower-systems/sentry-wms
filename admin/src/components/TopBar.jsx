@@ -41,9 +41,29 @@ export default function TopBar({ forced = false }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchHighlight, setSearchHighlight] = useState(-1);
+  const [serverVersion, setServerVersion] = useState(null);
   const menuRef = useRef(null);
   const whRef = useRef(null);
   const searchRef = useRef(null);
+
+  useEffect(() => {
+    // Fetch the running api version once after login so the operator can
+    // tell at a glance whether a deploy landed. /api/admin/system-info is
+    // admin-gated, so no fingerprinting concern. Silent on failure — the
+    // version label is informational, not load-bearing.
+    if (forced || !user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get('/admin/system-info');
+        if (res?.ok && !cancelled) {
+          const data = await res.json();
+          setServerVersion(data?.version || null);
+        }
+      } catch (_) { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [forced, user]);
 
   const initials = user?.full_name
     ? user.full_name.split(' ').map(n => n[0]).join('').toUpperCase()
@@ -142,6 +162,21 @@ export default function TopBar({ forced = false }) {
           <line x1="19" y1="20" x2="23.5" y2="20" stroke="#FCF4E3" strokeWidth="1" opacity="0.4"/>
         </svg>
         Sentry WMS
+        {serverVersion && (
+          <span
+            className="topbar-version"
+            title={`API version ${serverVersion}`}
+            style={{
+              marginLeft: 8,
+              fontSize: 11,
+              fontWeight: 400,
+              opacity: 0.55,
+              letterSpacing: 0.2,
+            }}
+          >
+            v{serverVersion}
+          </span>
+        )}
       </div>
       {!forced && <div className="topbar-breadcrumb" ref={whRef} style={{ position: 'relative' }}>
         <span
