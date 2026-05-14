@@ -1,0 +1,143 @@
+/* Picking ticket / packing slip layout. Mirrors the NetSuite Advanced
+   PDF output via the AvidMax local prototype. Scoped to .pt-root so
+   the admin SPA's typography never bleeds in. */
+
+.pt-root {
+  font-family: Helvetica, Arial, sans-serif;
+  color: #111;
+  background: #f0f0f0;
+  padding: 40px 0;
+}
+
+.pt-toolbar {
+  width: 8.5in;
+  margin: 0 auto 12px auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+.pt-toolbar .pt-back {
+  font-size: 10pt;
+  color: #333;
+  text-decoration: none;
+  margin-right: auto;
+}
+.pt-toolbar .pt-back:hover { text-decoration: underline; }
+.pt-toolbar button {
+  font-family: inherit;
+  font-size: 10pt;
+  padding: 6px 14px;
+  border: 1px solid #999;
+  background: white;
+  cursor: pointer;
+}
+.pt-toolbar button:hover { background: #f5f5f5; }
+
+.pt-page {
+  background: white;
+  width: 8.5in;
+  min-height: 11in;
+  margin: 0 auto;
+  padding: 0.5in;
+  box-sizing: border-box;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.pt-page table {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 9pt;
+  margin-top: 10px;
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pt-page th {
+  font-weight: bold;
+  font-size: 8pt;
+  padding: 5px 6px 3px 6px;
+  background-color: #e3e3e3;
+  color: #333;
+  text-align: left;
+}
+
+.pt-page td { padding: 4px 6px; vertical-align: top; }
+.pt-page b { font-weight: bold; color: #333; }
+
+.pt-header td { padding: 0; font-size: 10pt; vertical-align: top; }
+.pt-header .pt-logo-cell { width: 60%; }
+.pt-header .pt-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.pt-header .pt-logo {
+  height: 90px;
+  flex-shrink: 0;
+}
+.pt-header .pt-nameandaddress { line-height: 1.5; }
+.pt-title { font-size: 28pt; }
+.pt-number { font-size: 16pt; }
+
+.pt-address-header { font-size: 8pt; padding-top: 6px; padding-bottom: 2px; }
+.pt-address { padding-top: 0; line-height: 1.4; }
+
+.pt-body td { padding-top: 2px; }
+
+.pt-itemtable th { padding: 6px 6px 4px 6px; }
+.pt-itemtable td { padding: 2px 6px; }
+.pt-itemname {
+  font-weight: bold;
+  line-height: 130%;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.pt-itemtable tr {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.pt-right { text-align: right; }
+.pt-center { text-align: center; }
+
+.pt-returns {
+  margin-top: 8px;
+  font-size: 10pt;
+  line-height: 1.4;
+}
+
+.pt-review { margin: 12px 0 8px 0; text-align: center; }
+.pt-review img { max-width: 100%; height: auto; }
+
+.pt-tail {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.pt-footer {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid #d3d3d3;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 8pt;
+}
+.pt-memo { font-size: 12pt; font-weight: bold; }
+
+.pt-barcode-large { width: 220px; height: 40px; }
+.pt-barcode-small { width: 180px; height: 32px; }
+
+@media print {
+  @page { size: letter; margin: 0.5in; }
+  .pt-root { background: white; padding: 0; }
+  .pt-page {
+    box-shadow: none;
+    margin: 0;
+    padding: 0;
+    width: auto;
+    min-height: 0;
+  }
+  .pt-no-print { display: none !important; }
+}
