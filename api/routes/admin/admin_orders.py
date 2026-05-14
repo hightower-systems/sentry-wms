@@ -391,6 +391,83 @@ def get_sales_order(so_id):
     })
 
 
+@admin_bp.route("/sales-orders/<int:so_id>/picking-ticket", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def get_picking_ticket(so_id):
+    """Picking-ticket view of an SO: header + lines with the top-priority
+    preferred bin for each item, scoped to the SO's warehouse. Used by
+    the Outbound > Picking Tickets print page."""
+    so = g.db.execute(
+        text("""
+            SELECT so_id, so_number, customer_name, status,
+                   warehouse_id, ship_method,
+                   order_date, ship_by_date, created_at,
+                   shipping_address_name, shipping_address_line1, shipping_address_line2,
+                   shipping_address_city, shipping_address_state,
+                   shipping_address_postal_code, shipping_address_country
+              FROM sales_orders WHERE so_id = :sid
+        """),
+        {"sid": so_id},
+    ).fetchone()
+    if not so:
+        return jsonify({"error": "Sales order not found"}), 404
+
+    # Per line, fetch the top-priority preferred bin scoped to the SO's
+    # warehouse. A LEFT JOIN LATERAL keeps the row when there is no
+    # preferred bin so the picker still sees the SKU with a blank bin
+    # column rather than the line dropping out entirely.
+    lines = g.db.execute(
+        text("""
+            SELECT sol.so_line_id, sol.line_number, sol.item_id,
+                   i.sku, i.item_name, i.upc,
+                   sol.quantity_ordered, sol.quantity_shipped,
+                   pref.bin_code AS preferred_bin_code
+            FROM sales_order_lines sol
+            JOIN items i ON i.item_id = sol.item_id
+            LEFT JOIN LATERAL (
+                SELECT b.bin_code
+                  FROM preferred_bins pb
+                  JOIN bins b ON b.bin_id = pb.bin_id
+                 WHERE pb.item_id = sol.item_id
+                   AND b.warehouse_id = :wid
+                 ORDER BY pb.priority ASC
+                 LIMIT 1
+            ) pref ON TRUE
+            WHERE sol.so_id = :sid
+            ORDER BY sol.line_number
+        """),
+        {"sid": so_id, "wid": so.warehouse_id},
+    ).fetchall()
+
+    return jsonify({
+        "sales_order": {
+            "so_id": so.so_id, "so_number": so.so_number,
+            "customer_name": so.customer_name, "status": so.status,
+            "warehouse_id": so.warehouse_id, "ship_method": so.ship_method,
+            "order_date": so.order_date.isoformat() if so.order_date else None,
+            "ship_by_date": so.ship_by_date.isoformat() if so.ship_by_date else None,
+            "created_at": so.created_at.isoformat() if so.created_at else None,
+            "shipping_address_name": so.shipping_address_name,
+            "shipping_address_line1": so.shipping_address_line1,
+            "shipping_address_line2": so.shipping_address_line2,
+            "shipping_address_city": so.shipping_address_city,
+            "shipping_address_state": so.shipping_address_state,
+            "shipping_address_postal_code": so.shipping_address_postal_code,
+            "shipping_address_country": so.shipping_address_country,
+        },
+        "lines": [
+            {"so_line_id": l.so_line_id, "line_number": l.line_number,
+             "sku": l.sku, "item_name": l.item_name, "upc": l.upc,
+             "quantity_ordered": l.quantity_ordered,
+             "quantity_shipped": l.quantity_shipped,
+             "preferred_bin_code": l.preferred_bin_code}
+            for l in lines
+        ],
+    })
+
+
 @admin_bp.route("/sales-orders", methods=["POST"])
 @require_auth
 @require_role("ADMIN")
