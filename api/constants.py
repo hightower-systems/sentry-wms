@@ -21,6 +21,10 @@ SO_PACKING = "PACKING"
 SO_PACKED = "PACKED"
 SO_SHIPPED = "SHIPPED"
 SO_CANCELLED = "CANCELLED"
+# mig 054: SOs auto-flagged at fabric ingest when billing/shipping
+# differ. Held out of the picking queue until a CSR clears via the
+# Outbound > Fraud page (POST /admin/sales-orders/<id>/push-to-queue).
+SO_FRAUD_REVIEW = "FRAUD_REVIEW"
 
 # Pick Batch statuses
 BATCH_OPEN = "OPEN"
@@ -129,6 +133,13 @@ ACTION_WEBHOOK_SUBSCRIPTION_AUTO_PAUSE = "WEBHOOK_SUBSCRIPTION_AUTO_PAUSE"
 # 16-column row diff. PII-careful: only changed fields are recorded,
 # not the full address.
 ACTION_SO_ADDRESS_EDITED = "SO_ADDRESS_EDITED"
+
+# mig 054 fraud queue. The auto-flag at ingest does NOT get its own
+# audit row -- the existing inbound CREATE audit row plus the SO's
+# resulting status='FRAUD_REVIEW' already capture that forensically.
+# These two cover the CSR-driven mutations on the Fraud page.
+ACTION_SO_FRAUD_CLEARED = "SO_FRAUD_CLEARED"
+ACTION_SO_MEMO_EDITED = "SO_MEMO_EDITED"
 
 # v1.8.0 (#290) transfer order lifecycle. Same audit shape as the
 # cycle count adjustment surface: one row per state transition;

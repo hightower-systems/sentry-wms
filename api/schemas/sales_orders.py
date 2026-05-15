@@ -100,3 +100,12 @@ class UpdateSalesOrderAddressRequest(BaseModel):
                 "send an empty string to clear a field."
             )
         return self
+
+
+class UpdateSalesOrderMemoRequest(BaseModel):
+    """mig 054: PATCH body for the free-form memo on a sales_order.
+    An empty string is treated as an explicit clear (NULL). Length
+    cap matches the operational reality -- memos are CSR notes,
+    not log dumps."""
+
+    memo: Optional[str] = Field(..., max_length=4000)

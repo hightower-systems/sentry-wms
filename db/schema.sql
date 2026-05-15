@@ -185,7 +185,7 @@ CREATE TABLE sales_orders (
     customer_id VARCHAR(50),
     customer_phone VARCHAR(50),
     customer_address TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED', 'FRAUD_REVIEW'
     priority INT DEFAULT 0,                -- higher = pick first
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
@@ -236,6 +236,7 @@ CREATE TABLE sales_orders (
     -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
     -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
     latest_inbound_id BIGINT,
+<<<<<<< HEAD
     -- v1.10.0 Pipe C: POS endpoint surface columns. Web orders carry
     -- order_source='web' / order_type='sale' (defaults). POS-source
     -- orders carry external_txn_ref + idempotency_key + cached_response_body
@@ -254,6 +255,10 @@ CREATE TABLE sales_orders (
     parent_so_id            INT REFERENCES sales_orders(so_id),
     refunded_at             TIMESTAMPTZ,
     refund_so_id            INT REFERENCES sales_orders(so_id)
+=======
+    -- mig 054: free-form CSR note shown on the Outbound > Fraud page.
+    memo TEXT
+>>>>>>> 3e11a9c (feat(fraud-review): auto-flag SOs with billing != shipping at ingest)
 );
 
 CREATE TABLE sales_order_lines (
