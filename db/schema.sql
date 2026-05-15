@@ -185,7 +185,7 @@ CREATE TABLE sales_orders (
     customer_id VARCHAR(50),
     customer_phone VARCHAR(50),
     customer_address TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED', 'FRAUD_REVIEW'
     priority INT DEFAULT 0,                -- higher = pick first
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
@@ -254,6 +254,10 @@ CREATE TABLE sales_orders (
     parent_so_id            INT REFERENCES sales_orders(so_id),
     refunded_at             TIMESTAMPTZ,
     refund_so_id            INT REFERENCES sales_orders(so_id)
+    -- mig 054 (fraud-review) adds `memo TEXT` via ALTER TABLE on
+    -- existing deploys. The column is already declared above (line
+    -- 225, v1.9.0 introduction) so the schema.sql initial-load is
+    -- a no-op for the fraud-review migration's memo addition.
 );
 
 CREATE TABLE sales_order_lines (

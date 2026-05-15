@@ -68,6 +68,126 @@ function BarcodeSvg({ value, className, modulePx, height }) {
   );
 }
 
+export function TicketDocument({ so, lines }) {
+  const orderNumber = so.so_number || '';
+  const addressLines = shippingAddressLines(so);
+  return (
+    <div className="pt-page">
+      <table className="pt-header">
+        <tbody>
+          <tr>
+            <td rowSpan={3} className="pt-logo-cell">
+              <div className="pt-logo-row">
+                <img src="/picking-tickets/avidmax_logo.png" className="pt-logo" alt="AvidMax" />
+                <div className="pt-nameandaddress">
+                  7399 S Tucson Way<br />
+                  Ste A3<br />
+                  Centennial CO, 80112<br />
+                  866-454-5523
+                </div>
+              </div>
+            </td>
+            <td className="pt-right"><span className="pt-title">Packing Slip</span></td>
+          </tr>
+          <tr>
+            <td className="pt-right"><span className="pt-number">Order #{orderNumber}</span></td>
+          </tr>
+          <tr>
+            <td className="pt-right">Must ship by: {formatUSDate(so.ship_by_date)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <br />
+
+      <table>
+        <tbody>
+          <tr>
+            <td className="pt-address-header"><b>Shipping Address</b></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td className="pt-address">
+              <b>Ship To:</b><br />
+              {addressLines.map((l, i) => (
+                <span key={i}>{l}{i < addressLines.length - 1 ? <br /> : null}</span>
+              ))}
+            </td>
+            <td className="pt-right">
+              <BarcodeSvg
+                value={orderNumber}
+                className="pt-barcode-small"
+                modulePx={1}
+                height={32}
+              />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <table className="pt-body">
+        <tbody>
+          <tr><th>Shipping Method</th><th>Order Date</th></tr>
+          <tr>
+            <td>{so.ship_method || ''}</td>
+            <td>{formatUSDate(so.order_date || so.created_at)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <table className="pt-itemtable">
+        <thead>
+          <tr>
+            <th className="pt-center" colSpan={3}>Qty</th>
+            <th className="pt-center" colSpan={3}>Shipped</th>
+            <th colSpan={16}>Item</th>
+            <th colSpan={3}>Box</th>
+            <th className="pt-right" colSpan={5}>Bin</th>
+            <th className="pt-right" colSpan={4}>UPC</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.so_line_id}>
+              <td className="pt-center" colSpan={3} style={{ lineHeight: '150%' }}>{l.quantity_ordered}</td>
+              <td className="pt-center" colSpan={3} style={{ lineHeight: '150%' }}>{l.quantity_shipped}</td>
+              <td colSpan={16}>
+                <span className="pt-itemname">{l.sku} {l.item_name}</span>
+              </td>
+              <td colSpan={3}></td>
+              <td className="pt-right" colSpan={5}>{l.preferred_bin_code || ''}</td>
+              <td className="pt-right" colSpan={4}>{l.upc || ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="pt-tail">
+        <div className="pt-returns">
+          Returns or exchanges can be made up to 30 days after purchase. Go to www.avidmax.com/returns for details. Or email us at returns@avidmax.com.
+        </div>
+
+        <div className="pt-review">
+          <img src="/picking-tickets/howdidwedo_block.jpg" alt="How Did We Do - Leave us a Google Review" />
+        </div>
+
+        <div className="pt-footer">
+          <div>
+            <BarcodeSvg
+              value={orderNumber}
+              className="pt-barcode-large"
+              modulePx={1.2}
+              height={40}
+            />
+          </div>
+          <div></div>
+          <div></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PickingTicketPrint() {
   const { soId } = useParams();
   const [so, setSo] = useState(null);
@@ -131,129 +251,13 @@ export default function PickingTicketPrint() {
     );
   }
 
-  const orderNumber = so.so_number || '';
-  const addressLines = shippingAddressLines(so);
-
   return (
     <div className="pt-root">
       <div className="pt-toolbar pt-no-print">
         <Link to="/picking-tickets" className="pt-back">&larr; Back</Link>
         <button onClick={() => window.print()}>Print</button>
       </div>
-
-      <div className="pt-page">
-        <table className="pt-header">
-          <tbody>
-            <tr>
-              <td rowSpan={3} className="pt-logo-cell">
-                <div className="pt-logo-row">
-                  <img src="/picking-tickets/avidmax_logo.png" className="pt-logo" alt="AvidMax" />
-                  <div className="pt-nameandaddress">
-                    7399 S Tucson Way<br />
-                    Ste A3<br />
-                    Centennial CO, 80112<br />
-                    866-454-5523
-                  </div>
-                </div>
-              </td>
-              <td className="pt-right"><span className="pt-title">Packing Slip</span></td>
-            </tr>
-            <tr>
-              <td className="pt-right"><span className="pt-number">Order #{orderNumber}</span></td>
-            </tr>
-            <tr>
-              <td className="pt-right">Must ship by: {formatUSDate(so.ship_by_date)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <br />
-
-        <table>
-          <tbody>
-            <tr>
-              <td className="pt-address-header"><b>Shipping Address</b></td>
-              <td></td>
-            </tr>
-            <tr>
-              <td className="pt-address">
-                <b>Ship To:</b><br />
-                {addressLines.map((l, i) => (
-                  <span key={i}>{l}{i < addressLines.length - 1 ? <br /> : null}</span>
-                ))}
-              </td>
-              <td className="pt-right">
-                <BarcodeSvg
-                  value={orderNumber}
-                  className="pt-barcode-small"
-                  modulePx={1}
-                  height={32}
-                />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        <table className="pt-body">
-          <tbody>
-            <tr><th>Shipping Method</th><th>Order Date</th></tr>
-            <tr>
-              <td>{so.ship_method || ''}</td>
-              <td>{formatUSDate(so.order_date || so.created_at)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <table className="pt-itemtable">
-          <thead>
-            <tr>
-              <th className="pt-center" colSpan={3}>Qty</th>
-              <th className="pt-center" colSpan={3}>Shipped</th>
-              <th colSpan={16}>Item</th>
-              <th colSpan={3}>Box</th>
-              <th className="pt-right" colSpan={5}>Bin</th>
-              <th className="pt-right" colSpan={4}>UPC</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={l.so_line_id}>
-                <td className="pt-center" colSpan={3} style={{ lineHeight: '150%' }}>{l.quantity_ordered}</td>
-                <td className="pt-center" colSpan={3} style={{ lineHeight: '150%' }}>{l.quantity_shipped}</td>
-                <td colSpan={16}>
-                  <span className="pt-itemname">{l.sku} {l.item_name}</span>
-                </td>
-                <td colSpan={3}></td>
-                <td className="pt-right" colSpan={5}>{l.preferred_bin_code || ''}</td>
-                <td className="pt-right" colSpan={4}>{l.upc || ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="pt-tail">
-          <div className="pt-returns">
-            Returns or exchanges can be made up to 30 days after purchase. Go to www.avidmax.com/returns for details. Or email us at returns@avidmax.com.
-          </div>
-
-          <div className="pt-review">
-            <img src="/picking-tickets/howdidwedo_block.jpg" alt="How Did We Do - Leave us a Google Review" />
-          </div>
-
-          <div className="pt-footer">
-            <div>
-              <BarcodeSvg
-                value={orderNumber}
-                className="pt-barcode-large"
-                modulePx={1.2}
-                height={40}
-              />
-            </div>
-            <div></div>
-            <div></div>
-          </div>
-        </div>
-      </div>
+      <TicketDocument so={so} lines={lines} />
     </div>
   );
 }
