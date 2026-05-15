@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { TicketDocument } from './PickingTicketPrint.jsx';
 import './pickingTicket.css';
 
 const PICKABLE_STATUSES = ['OPEN', 'ALLOCATED', 'PICKING', 'PICKED'];
 
+// Standalone print-queue view. Opened in a new tab from the picking
+// tickets page; renders every ticket in the current status filter
+// stacked one per page so the user can hit Ctrl/Cmd+P natively. No
+// toolbar, no auto-print, no admin Layout chrome.
 export default function PickingTicketPrintAll() {
   const [params] = useSearchParams();
   const status = params.get('status') || 'OPEN';
@@ -13,7 +17,6 @@ export default function PickingTicketPrintAll() {
   const [tickets, setTickets] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const printedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,9 +57,7 @@ export default function PickingTicketPrintAll() {
         }
       }
       if (cancelled) return;
-      if (out.length === 0) {
-        setError('No tickets could be loaded.');
-      }
+      if (out.length === 0) setError('No tickets could be loaded.');
       setTickets(out);
       setLoading(false);
     }
@@ -64,49 +65,47 @@ export default function PickingTicketPrintAll() {
     return () => { cancelled = true; };
   }, [status, warehouseId]);
 
-  // Auto-trigger the print dialog once tickets are rendered. Guarded
-  // by a ref so React's StrictMode double-invoke doesn't fire it twice.
+  // Update the tab title once we know the count, so the user can
+  // tell the queue tabs apart.
   useEffect(() => {
-    if (loading || error || tickets.length === 0) return;
-    if (printedRef.current) return;
-    printedRef.current = true;
-    // Defer to next tick so the DOM has flushed all ticket pages
-    // before the browser snapshots them for print preview.
-    const t = setTimeout(() => window.print(), 100);
-    return () => clearTimeout(t);
-  }, [loading, error, tickets.length]);
+    if (loading) {
+      document.title = 'Loading picking tickets…';
+    } else if (error) {
+      document.title = 'Picking tickets — error';
+    } else {
+      document.title = `Picking tickets (${tickets.length}) — ${status}`;
+    }
+  }, [loading, error, tickets.length, status]);
 
-  return (
-    <div className="pt-root">
-      <div className="pt-toolbar pt-no-print">
-        <Link to="/picking-tickets" className="pt-back">&larr; Back</Link>
-        <span style={{ fontSize: '10pt', color: '#333' }}>
-          {loading
-            ? 'Loading tickets…'
-            : `${tickets.length} ticket${tickets.length === 1 ? '' : 's'} (${status})`}
-        </span>
-        <button onClick={() => window.print()} disabled={loading || tickets.length === 0}>
-          Print
-        </button>
-      </div>
+  if (loading) {
+    return <div className="pt-root"><div className="pt-page">Loading tickets…</div></div>;
+  }
 
-      {loading && <div className="pt-page">Loading tickets…</div>}
-
-      {!loading && error && (
+  if (error) {
+    return (
+      <div className="pt-root">
         <div className="pt-page">
           <h2>Could not render tickets</h2>
           <p>{error}</p>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {!loading && !error && tickets.length === 0 && (
+  if (tickets.length === 0) {
+    return (
+      <div className="pt-root">
         <div className="pt-page">
           <h2>No tickets to print</h2>
           <p>No sales orders matched status {status}.</p>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {!loading && tickets.map(({ so, lines }) => (
+  return (
+    <div className="pt-root">
+      {tickets.map(({ so, lines }) => (
         <TicketDocument key={so.so_id} so={so} lines={lines} />
       ))}
     </div>
