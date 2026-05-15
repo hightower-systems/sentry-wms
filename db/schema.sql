@@ -253,10 +253,11 @@ CREATE TABLE sales_orders (
                             CHECK (order_type IN ('sale','refund')),
     parent_so_id            INT REFERENCES sales_orders(so_id),
     refunded_at             TIMESTAMPTZ,
-    refund_so_id            INT REFERENCES sales_orders(so_id),
-
-    -- mig 054 (fraud-review): free-form CSR note shown on the Outbound > Fraud page.
-    memo TEXT
+    refund_so_id            INT REFERENCES sales_orders(so_id)
+    -- mig 054 (fraud-review) adds `memo TEXT` via ALTER TABLE on
+    -- existing deploys. The column is already declared above (line
+    -- 225, v1.9.0 introduction) so the schema.sql initial-load is
+    -- a no-op for the fraud-review migration's memo addition.
 );
 
 CREATE TABLE sales_order_lines (
