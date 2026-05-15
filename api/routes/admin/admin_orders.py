@@ -8,9 +8,12 @@ from sqlalchemy import text
 
 from constants import (
     PO_OPEN, PO_CLOSED, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_CANCELLED,
+    SO_FRAUD_REVIEW,
     TASK_PENDING, ADJ_PENDING,
     ACTION_PICK,
     ACTION_SO_ADDRESS_EDITED,
+    ACTION_SO_FRAUD_CLEARED,
+    ACTION_SO_MEMO_EDITED,
     ROLE_ADMIN,
 )
 from middleware.auth_middleware import require_auth, require_role
@@ -21,6 +24,7 @@ from schemas.sales_orders import (
     ADDRESS_FIELD_NAMES,
     CreateSalesOrderRequest,
     UpdateSalesOrderAddressRequest,
+    UpdateSalesOrderMemoRequest,
     UpdateSalesOrderRequest,
 )
 from services.audit_service import write_audit_log
@@ -293,7 +297,13 @@ def list_sales_orders():
             SELECT so_id, so_number, so_barcode, customer_name, customer_phone, customer_address,
                    status, priority, warehouse_id,
                    ship_method, ship_address, order_date, ship_by_date, created_at, created_by,
-                   carrier, tracking_number, shipped_at
+                   carrier, tracking_number, shipped_at, memo,
+                   billing_address_name, billing_address_line1, billing_address_line2,
+                   billing_address_city, billing_address_state,
+                   billing_address_postal_code, billing_address_country,
+                   shipping_address_name, shipping_address_line1, shipping_address_line2,
+                   shipping_address_city, shipping_address_state,
+                   shipping_address_postal_code, shipping_address_country
             FROM sales_orders {where_sql} ORDER BY so_id DESC LIMIT :limit OFFSET :offset
         """),
         params,
@@ -309,7 +319,22 @@ def list_sales_orders():
              "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,
              "created_at": r.created_at.isoformat() if r.created_at else None, "created_by": r.created_by,
              "carrier": r.carrier, "tracking_number": r.tracking_number,
-             "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None}
+             "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None,
+             "memo": r.memo,
+             "billing_address_name": r.billing_address_name,
+             "billing_address_line1": r.billing_address_line1,
+             "billing_address_line2": r.billing_address_line2,
+             "billing_address_city": r.billing_address_city,
+             "billing_address_state": r.billing_address_state,
+             "billing_address_postal_code": r.billing_address_postal_code,
+             "billing_address_country": r.billing_address_country,
+             "shipping_address_name": r.shipping_address_name,
+             "shipping_address_line1": r.shipping_address_line1,
+             "shipping_address_line2": r.shipping_address_line2,
+             "shipping_address_city": r.shipping_address_city,
+             "shipping_address_state": r.shipping_address_state,
+             "shipping_address_postal_code": r.shipping_address_postal_code,
+             "shipping_address_country": r.shipping_address_country}
             for r in rows
         ],
         "total": total, "page": page, "per_page": per_page, "pages": pages,
@@ -327,7 +352,7 @@ def get_sales_order(so_id):
                    warehouse_id, ship_method, ship_address,
                    order_date, ship_by_date, created_at, picked_at, packed_at,
                    shipped_at, created_by,
-                   order_total, customer_shipping_paid,
+                   order_total, customer_shipping_paid, memo,
                    billing_address_name, billing_address_line1, billing_address_line2,
                    billing_address_city, billing_address_state,
                    billing_address_postal_code, billing_address_country,
@@ -370,6 +395,7 @@ def get_sales_order(so_id):
                 str(so.customer_shipping_paid)
                 if so.customer_shipping_paid is not None else None
             ),
+            "memo": so.memo,
             # v1.8.0 (#288): structured billing/shipping address fields.
             **{name: getattr(so, name) for name in ADDRESS_FIELD_NAMES},
         },
@@ -625,6 +651,81 @@ def update_sales_order_address(so_id, validated):
         "so_id": so_id,
         "edited_fields": [e[0] for e in edits],
     })
+
+
+@admin_bp.route("/sales-orders/<int:so_id>/memo", methods=["PATCH"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(UpdateSalesOrderMemoRequest)
+@with_db
+def update_sales_order_memo(so_id, validated):
+    """mig 054: edit the free-form memo on an SO. Empty string = clear
+    to NULL. One audit row per actual change carrying old/new for
+    forensic diff."""
+    so = g.db.execute(
+        text("SELECT so_id, memo, warehouse_id FROM sales_orders WHERE so_id = :sid FOR UPDATE"),
+        {"sid": so_id},
+    ).fetchone()
+    if not so:
+        return jsonify({"error": "Sales order not found"}), 404
+
+    new_memo = validated.memo if validated.memo != "" else None
+    if so.memo == new_memo:
+        return jsonify({"unchanged": True, "memo": so.memo}), 200
+
+    g.db.execute(
+        text("UPDATE sales_orders SET memo = :memo WHERE so_id = :sid"),
+        {"memo": new_memo, "sid": so_id},
+    )
+    write_audit_log(
+        g.db,
+        action_type=ACTION_SO_MEMO_EDITED,
+        entity_type="SO",
+        entity_id=so_id,
+        user_id=g.current_user["username"],
+        warehouse_id=so.warehouse_id,
+        details={"old_value": so.memo, "new_value": new_memo},
+    )
+    g.db.commit()
+    return jsonify({"so_id": so_id, "memo": new_memo})
+
+
+@admin_bp.route("/sales-orders/<int:so_id>/push-to-queue", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def push_sales_order_to_queue(so_id):
+    """mig 054: clear an auto-flagged fraud SO and put it back into
+    the picking queue. Only valid when status=FRAUD_REVIEW; any
+    other current status is a 409 because nothing here knows how to
+    transition out of (e.g.) PICKING. Status moves to OPEN."""
+    so = g.db.execute(
+        text("SELECT so_id, status, warehouse_id FROM sales_orders WHERE so_id = :sid FOR UPDATE"),
+        {"sid": so_id},
+    ).fetchone()
+    if not so:
+        return jsonify({"error": "Sales order not found"}), 404
+    if so.status != SO_FRAUD_REVIEW:
+        return jsonify({
+            "error": f"Can only push FRAUD_REVIEW orders to the queue. Current: {so.status}",
+            "current_status": so.status,
+        }), 409
+
+    g.db.execute(
+        text("UPDATE sales_orders SET status = :status WHERE so_id = :sid"),
+        {"status": SO_OPEN, "sid": so_id},
+    )
+    write_audit_log(
+        g.db,
+        action_type=ACTION_SO_FRAUD_CLEARED,
+        entity_type="SO",
+        entity_id=so_id,
+        user_id=g.current_user["username"],
+        warehouse_id=so.warehouse_id,
+        details={"from_status": SO_FRAUD_REVIEW, "to_status": SO_OPEN},
+    )
+    g.db.commit()
+    return jsonify({"so_id": so_id, "status": SO_OPEN})
 
 
 @admin_bp.route("/sales-orders/<int:so_id>/cancel", methods=["POST"])
