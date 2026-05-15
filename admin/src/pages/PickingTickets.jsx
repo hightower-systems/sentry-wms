@@ -78,7 +78,10 @@ export default function PickingTickets() {
   function printAll() {
     const qs = new URLSearchParams({ status });
     if (warehouseId) qs.set('warehouse_id', String(warehouseId));
-    navigate(`/picking-tickets/print-all?${qs.toString()}`);
+    // Open in a new tab so the print queue renders standalone (no
+    // admin Layout chrome) and the user can leave it open while
+    // continuing to work in the original tab.
+    window.open(`/picking-tickets/print-all?${qs.toString()}`, '_blank', 'noopener');
   }
 
   const columns = [
