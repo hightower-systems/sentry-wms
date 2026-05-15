@@ -15,6 +15,8 @@ import PutAway from './pages/PutAway.jsx';
 import Picking from './pages/Picking.jsx';
 import PickingTickets from './pages/PickingTickets.jsx';
 import PickingTicketPrint from './pages/PickingTicketPrint.jsx';
+import PickingTicketPrintAll from './pages/PickingTicketPrintAll.jsx';
+import Fraud from './pages/Fraud.jsx';
 import Packing from './pages/Packing.jsx';
 import Shipping from './pages/Shipping.jsx';
 import Bins from './pages/Bins.jsx';
@@ -54,6 +56,20 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Standalone print views: rendered without the admin Layout
+          chrome so they fill the full window and the per-ticket page
+          break CSS doesn't have to fight a sidebar/header parent.
+          Still gated by ProtectedRoute so auth is required. */}
+      <Route
+        path="/picking-tickets/print-all"
+        element={
+          <ProtectedRoute>
+            <ErrorBoundary fallbackMessage="Could not render picking tickets.">
+              <PickingTicketPrintAll />
+            </ErrorBoundary>
+          </ProtectedRoute>
+        }
+      />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/change-password" element={<ErrorBoundary fallbackMessage="Could not load change-password form."><ChangePassword /></ErrorBoundary>} />
         <Route path="/" element={<ErrorBoundary fallbackMessage="Could not load dashboard."><Dashboard /></ErrorBoundary>} />
@@ -65,6 +81,7 @@ export default function App() {
         <Route path="/putaway" element={<ErrorBoundary fallbackMessage="Could not load put-away."><PutAway /></ErrorBoundary>} />
         <Route path="/sales-orders" element={<ErrorBoundary fallbackMessage="Could not load sales orders."><SalesOrders /></ErrorBoundary>} />
         <Route path="/picking" element={<ErrorBoundary fallbackMessage="Could not load picking."><Picking /></ErrorBoundary>} />
+        <Route path="/fraud" element={<ErrorBoundary fallbackMessage="Could not load fraud queue."><Fraud /></ErrorBoundary>} />
         <Route path="/picking-tickets" element={<ErrorBoundary fallbackMessage="Could not load picking tickets."><PickingTickets /></ErrorBoundary>} />
         <Route path="/picking-tickets/:soId/print" element={<ErrorBoundary fallbackMessage="Could not render picking ticket."><PickingTicketPrint /></ErrorBoundary>} />
         <Route path="/packing" element={<ErrorBoundary fallbackMessage="Could not load packing."><Packing /></ErrorBoundary>} />

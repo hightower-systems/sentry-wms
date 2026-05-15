@@ -129,6 +129,12 @@
 .pt-barcode-large { width: 220px; height: 40px; }
 .pt-barcode-small { width: 180px; height: 32px; }
 
+/* When multiple tickets are stacked (print-all view), force each
+   subsequent ticket onto its own page on screen too, with a visible
+   gap between them. The first .pt-page gets no rule so it sits flush
+   with the toolbar. */
+.pt-page + .pt-page { margin-top: 24px; }
+
 @media print {
   @page { size: letter; margin: 0.5in; }
   .pt-root { background: white; padding: 0; }
@@ -138,6 +144,12 @@
     padding: 0;
     width: auto;
     min-height: 0;
+  }
+  /* Hard page break between consecutive tickets in print-all mode. */
+  .pt-page + .pt-page {
+    margin-top: 0;
+    page-break-before: always;
+    break-before: page;
   }
   .pt-no-print { display: none !important; }
 }

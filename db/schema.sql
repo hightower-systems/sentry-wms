@@ -185,7 +185,7 @@ CREATE TABLE sales_orders (
     customer_id VARCHAR(50),
     customer_phone VARCHAR(50),
     customer_address TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED', 'FRAUD_REVIEW'
     priority INT DEFAULT 0,                -- higher = pick first
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
@@ -230,7 +230,9 @@ CREATE TABLE sales_orders (
     external_id UUID UNIQUE NOT NULL,
     -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
     -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
-    latest_inbound_id BIGINT
+    latest_inbound_id BIGINT,
+    -- mig 054: free-form CSR note shown on the Outbound > Fraud page.
+    memo TEXT
 );
 
 CREATE TABLE sales_order_lines (
