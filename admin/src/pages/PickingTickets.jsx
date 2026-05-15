@@ -7,13 +7,17 @@ import PageHeader from '../components/PageHeader.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 
 // Statuses that still have something useful to put on a printed
-// picking ticket. SHIPPED/CANCELLED orders are skipped from the queue
-// so we don't accidentally hand a picker a slip for a done order.
+// picking ticket. SHIPPED/CANCELLED orders are skipped from the
+// switcher so we don't accidentally hand a picker a slip for a done
+// order. OPEN is the default because that's what the warehouse pulls
+// from first thing in the morning.
 const PICKABLE_STATUSES = ['OPEN', 'ALLOCATED', 'PICKING', 'PICKED'];
+const STATUS_OPTIONS = [...PICKABLE_STATUSES, 'ALL'];
 
 export default function PickingTickets() {
   const navigate = useNavigate();
   const { warehouseId } = useWarehouse();
+  const [status, setStatus] = useState('OPEN');
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [lookupError, setLookupError] = useState('');
@@ -22,9 +26,10 @@ export default function PickingTickets() {
     if (!warehouseId) return;
     let cancelled = false;
     (async () => {
+      const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const responses = await Promise.all(
-        PICKABLE_STATUSES.map((status) =>
-          api.get(`/admin/sales-orders?status=${status}&warehouse_id=${warehouseId}&per_page=50`),
+        statuses.map((s) =>
+          api.get(`/admin/sales-orders?status=${s}&warehouse_id=${warehouseId}&per_page=50`),
         ),
       );
       const all = [];
@@ -37,7 +42,7 @@ export default function PickingTickets() {
       if (!cancelled) setOrders(all);
     })();
     return () => { cancelled = true; };
-  }, [warehouseId]);
+  }, [warehouseId, status]);
 
   async function openTicket() {
     const term = search.trim();
@@ -68,6 +73,12 @@ export default function PickingTickets() {
       e.preventDefault();
       openTicket();
     }
+  }
+
+  function printAll() {
+    const qs = new URLSearchParams({ status });
+    if (warehouseId) qs.set('warehouse_id', String(warehouseId));
+    navigate(`/picking-tickets/print-all?${qs.toString()}`);
   }
 
   const columns = [
@@ -119,7 +130,37 @@ export default function PickingTickets() {
       </div>
 
       <div className="section">
-        <div className="section-title">Orders ready to pick</div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            marginBottom: 8,
+          }}
+        >
+          <div className="section-title" style={{ marginBottom: 0 }}>Orders ready to pick</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label style={{ fontSize: 13, color: '#555' }}>Status</label>
+            <select
+              className="form-input"
+              style={{ width: 'auto' }}
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            <button
+              className="btn btn-primary"
+              onClick={printAll}
+              disabled={orders.length === 0}
+            >
+              Print All ({orders.length})
+            </button>
+          </div>
+        </div>
         <DataTable
           columns={columns}
           data={orders}
