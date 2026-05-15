@@ -21,10 +21,18 @@ export default function PickingTickets() {
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [lookupError, setLookupError] = useState('');
+  // Bump this to force a refetch of the list under the current filters.
+  // Lets a manual Refresh button pull fresh sales-order data without
+  // requiring the user to navigate away and back (e.g. after the daily
+  // Amazon name+address backfill push updates customer details on
+  // already-pushed SOs).
+  const [refreshCounter, setRefreshCounter] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!warehouseId) return;
     let cancelled = false;
+    setRefreshing(true);
     (async () => {
       const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const responses = await Promise.all(
@@ -39,10 +47,13 @@ export default function PickingTickets() {
           all.push(...(data.sales_orders || []));
         }
       }
-      if (!cancelled) setOrders(all);
+      if (!cancelled) {
+        setOrders(all);
+        setRefreshing(false);
+      }
     })();
     return () => { cancelled = true; };
-  }, [warehouseId, status]);
+  }, [warehouseId, status, refreshCounter]);
 
   async function openTicket() {
     const term = search.trim();
@@ -155,6 +166,14 @@ export default function PickingTickets() {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setRefreshCounter((c) => c + 1)}
+              disabled={refreshing}
+              title="Re-fetch the list from the server (e.g. to pick up just-pushed customer name + shipping address)"
+            >
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
             <button
               className="btn btn-primary"
               onClick={printAll}
