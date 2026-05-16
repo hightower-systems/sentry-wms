@@ -120,9 +120,6 @@ export default function PurchaseOrders() {
     )},
   ];
 
-  const thStyle = { textAlign: 'left', padding: '6px 8px', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 };
-  const tdStyle = { padding: '6px 8px' };
-
   return (
     <div>
       <PageHeader title="Purchase Orders" />
@@ -157,41 +154,48 @@ export default function PurchaseOrders() {
           footer={<button className="btn" onClick={() => { setSelectedPO(null); setPOLines([]); }}>Close</button>}
           size="wide"
         >
-          <div className="detail-grid" style={{ marginBottom: 16 }}>
-            <span className="detail-label">Vendor</span><span>{selectedPO.vendor || '-'}</span>
-            <span className="detail-label">Status</span><span><StatusTag status={selectedPO.status} /></span>
-            <span className="detail-label">Expected Date</span><span className="mono">{selectedPO.expected_date ? new Date(selectedPO.expected_date).toLocaleDateString() : '-'}</span>
-          </div>
+          <section className="section">
+            <div className="section-title">PO Summary</div>
+            <div className="detail-grid detail-grid-2col" style={{ marginBottom: 0 }}>
+              <span className="detail-label">Vendor</span><span>{selectedPO.vendor || '-'}</span>
+              <span className="detail-label">Status</span><span><StatusTag status={selectedPO.status} /></span>
+              <span className="detail-label">Expected Date</span><span className="mono">{selectedPO.expected_date ? new Date(selectedPO.expected_date).toLocaleDateString() : '-'}</span>
+              <span className="detail-label">Notes</span><span>{selectedPO.notes || '-'}</span>
+            </div>
+          </section>
 
-          {poLines.length > 0 ? (
-            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  <th style={thStyle}>SKU</th>
-                  <th style={thStyle}>Item Name</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Ordered</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Received</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Remaining</th>
-                </tr>
-              </thead>
-              <tbody>
-                {poLines.map((l, i) => {
-                  const remaining = (l.quantity_ordered || 0) - (l.quantity_received || 0);
-                  return (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td className="mono" style={tdStyle}>{l.sku}</td>
-                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{l.item_name}</td>
-                      <td className="mono" style={{ ...tdStyle, textAlign: 'right' }}>{l.quantity_ordered}</td>
-                      <td className="mono" style={{ ...tdStyle, textAlign: 'right' }}>{l.quantity_received}</td>
-                      <td className="mono" style={{ ...tdStyle, textAlign: 'right', color: remaining > 0 ? 'var(--copper)' : 'var(--text-secondary)', fontWeight: remaining > 0 ? 600 : 400 }}>{remaining}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          ) : (
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No line items</p>
-          )}
+          <section className="section" style={{ marginBottom: 0 }}>
+            <div className="section-title">Line Items</div>
+            {poLines.length > 0 ? (
+              <table className="lines-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Item Name</th>
+                    <th style={{ textAlign: 'right' }}>Ordered</th>
+                    <th style={{ textAlign: 'right' }}>Received</th>
+                    <th style={{ textAlign: 'right' }}>Remaining</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {poLines.map((l, i) => {
+                    const remaining = (l.quantity_ordered || 0) - (l.quantity_received || 0);
+                    return (
+                      <tr key={i}>
+                        <td className="mono">{l.sku}</td>
+                        <td style={{ color: 'var(--text-secondary)' }}>{l.item_name}</td>
+                        <td className="mono" style={{ textAlign: 'right' }}>{l.quantity_ordered}</td>
+                        <td className="mono" style={{ textAlign: 'right' }}>{l.quantity_received}</td>
+                        <td className="mono" style={{ textAlign: 'right', color: remaining > 0 ? 'var(--copper)' : 'var(--text-secondary)', fontWeight: remaining > 0 ? 600 : 400 }}>{remaining}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No line items</p>
+            )}
+          </section>
         </Modal>
       )}
 

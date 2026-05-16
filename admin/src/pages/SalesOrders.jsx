@@ -192,9 +192,6 @@ export default function SalesOrders() {
     )},
   ];
 
-  const thStyle = { textAlign: 'left', padding: '6px 8px', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 };
-  const tdStyle = { padding: '6px 8px' };
-
   return (
     <div>
       <PageHeader title="Sales Orders" />
@@ -229,107 +226,116 @@ export default function SalesOrders() {
           footer={<button className="btn" onClick={() => { setSelectedSO(null); setSOLines([]); }}>Close</button>}
           size="wide"
         >
-          <div className="detail-grid" style={{ marginBottom: 16 }}>
-            <span className="detail-label">Customer</span><span>{selectedSO.customer_name || '-'}</span>
-            <span className="detail-label">Status</span><span><StatusTag status={selectedSO.status} /></span>
-            <span className="detail-label">Ship By</span><span className="mono">{selectedSO.ship_by_date ? new Date(selectedSO.ship_by_date).toLocaleDateString() : '-'}</span>
-            <span className="detail-label">Ship Method</span><span>{selectedSO.ship_method || '-'}</span>
-            <span className="detail-label">Ship Address</span><span>{selectedSO.ship_address || '-'}</span>
-            {/* v1.8.0 (#282) per-order cost fields. order_total +
-                customer_shipping_paid arrive as strings on the wire to
-                preserve Decimal precision; render literal. */}
-            <span className="detail-label">Order Total</span>
-            <span className="mono"><NullableValue value={selectedSO.order_total} /></span>
-            <span className="detail-label">Shipping Paid</span>
-            <span className="mono"><NullableValue value={selectedSO.customer_shipping_paid} /></span>
-          </div>
+          <section className="section">
+            <div className="section-title">Order Summary</div>
+            <div className="detail-grid detail-grid-2col" style={{ marginBottom: 0 }}>
+              <span className="detail-label">Customer</span><span>{selectedSO.customer_name || '-'}</span>
+              <span className="detail-label">Status</span><span><StatusTag status={selectedSO.status} /></span>
+              <span className="detail-label">Ship By</span><span className="mono">{selectedSO.ship_by_date ? new Date(selectedSO.ship_by_date).toLocaleDateString() : '-'}</span>
+              <span className="detail-label">Ship Method</span><span>{selectedSO.ship_method || '-'}</span>
+              {/* v1.8.0 (#282) per-order cost fields. order_total +
+                  customer_shipping_paid arrive as strings on the wire to
+                  preserve Decimal precision; render literal. */}
+              <span className="detail-label">Order Total</span>
+              <span className="mono"><NullableValue value={selectedSO.order_total} /></span>
+              <span className="detail-label">Shipping Paid</span>
+              <span className="mono"><NullableValue value={selectedSO.customer_shipping_paid} /></span>
+              <span className="detail-label">Ship Address</span>
+              <span style={{ gridColumn: 'span 3' }}>{selectedSO.ship_address || '-'}</span>
+            </div>
+          </section>
 
           {/* v1.9.0 #315: free-text operator-facing note. Only shown
               when populated; render with whiteSpace: pre-wrap so
               embedded newlines from the source ERP survive. */}
           {selectedSO.memo && (
-            <div style={{
-              marginBottom: 16, padding: 10,
-              borderLeft: '3px solid #b87333', backgroundColor: '#fdf6ed',
-              whiteSpace: 'pre-wrap',
-            }}>
+            <section className="section">
               <div style={{
-                fontSize: 11, fontWeight: 700, color: '#b87333',
-                letterSpacing: 0.4, marginBottom: 4,
-              }}>NOTE</div>
-              <div style={{ fontSize: 13, lineHeight: 1.4 }}>{selectedSO.memo}</div>
-            </div>
+                padding: 10,
+                borderLeft: '3px solid #b87333', backgroundColor: '#fdf6ed',
+                whiteSpace: 'pre-wrap',
+              }}>
+                <div style={{
+                  fontSize: 11, fontWeight: 700, color: '#b87333',
+                  letterSpacing: 0.4, marginBottom: 4,
+                }}>NOTE</div>
+                <div style={{ fontSize: 13, lineHeight: 1.4 }}>{selectedSO.memo}</div>
+              </div>
+            </section>
           )}
 
           {/* v1.8.0 (#268) per-component billing + shipping addresses.
               Each side gets its own card so a half-populated address
               renders cleanly without column shifts. */}
-          <div style={{
-            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16,
-            marginBottom: 16,
-          }}>
-            <div>
-              <div style={{
-                display: 'flex', justifyContent: 'space-between',
-                alignItems: 'center', marginBottom: 8,
-              }}>
-                <strong style={{ fontSize: 13 }}>Billing Address</strong>
-                <button
-                  className="btn btn-sm"
-                  onClick={() => openAddressEdit(selectedSO)}
-                  title="Edit billing + shipping addresses"
-                >Edit Addresses</button>
+          <section className="section">
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', marginBottom: 12,
+            }}>
+              <div className="section-title" style={{ marginBottom: 0 }}>Addresses</div>
+              <button
+                className="btn btn-sm"
+                onClick={() => openAddressEdit(selectedSO)}
+                title="Edit billing + shipping addresses"
+              >Edit Addresses</button>
+            </div>
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16,
+            }}>
+              <div className="card">
+                <div className="card-title">Billing Address</div>
+                <div className="detail-grid" style={{ marginBottom: 0 }}>
+                  {ADDRESS_FIELD_KEYS.filter((k) => k.startsWith('billing_')).map((k) => (
+                    <span key={k} style={{ display: 'contents' }}>
+                      <span className="detail-label">{ADDRESS_FIELD_LABELS[k]}</span>
+                      <span><NullableValue value={selectedSO[k]} /></span>
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="detail-grid">
-                {ADDRESS_FIELD_KEYS.filter((k) => k.startsWith('billing_')).map((k) => (
-                  <span key={k} style={{ display: 'contents' }}>
-                    <span className="detail-label">{ADDRESS_FIELD_LABELS[k]}</span>
-                    <span><NullableValue value={selectedSO[k]} /></span>
-                  </span>
-                ))}
+              <div className="card">
+                <div className="card-title">Shipping Address</div>
+                <div className="detail-grid" style={{ marginBottom: 0 }}>
+                  {ADDRESS_FIELD_KEYS.filter((k) => k.startsWith('shipping_')).map((k) => (
+                    <span key={k} style={{ display: 'contents' }}>
+                      <span className="detail-label">{ADDRESS_FIELD_LABELS[k]}</span>
+                      <span><NullableValue value={selectedSO[k]} /></span>
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
-            <div>
-              <strong style={{
-                fontSize: 13, marginBottom: 8, display: 'block',
-              }}>Shipping Address</strong>
-              <div className="detail-grid">
-                {ADDRESS_FIELD_KEYS.filter((k) => k.startsWith('shipping_')).map((k) => (
-                  <span key={k} style={{ display: 'contents' }}>
-                    <span className="detail-label">{ADDRESS_FIELD_LABELS[k]}</span>
-                    <span><NullableValue value={selectedSO[k]} /></span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
+          </section>
 
-          {soLines.length > 0 ? (
-            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  <th style={thStyle}>SKU</th>
-                  <th style={thStyle}>Item Name</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Ordered</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Picked</th>
-                  <th style={{ ...thStyle, textAlign: 'right' }}>Shipped</th>
-                </tr>
-              </thead>
-              <tbody>
-                {soLines.map((l, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td className="mono" style={tdStyle}>{l.sku}</td>
-                    <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{l.item_name}</td>
-                    <td className="mono" style={{ ...tdStyle, textAlign: 'right' }}>{l.quantity_ordered}</td>
-                    <td className="mono" style={{ ...tdStyle, textAlign: 'right' }}>{l.quantity_picked}</td>
-                    <td className="mono" style={{ ...tdStyle, textAlign: 'right' }}>{l.quantity_shipped}</td>
+          <section className="section" style={{ marginBottom: 0 }}>
+            <div className="section-title">Line Items</div>
+            {soLines.length > 0 ? (
+              <table className="lines-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Item Name</th>
+                    <th style={{ textAlign: 'right' }}>Ordered</th>
+                    <th style={{ textAlign: 'right' }}>Picked</th>
+                    <th style={{ textAlign: 'right' }}>Shipped</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No line items</p>
-          )}
+                </thead>
+                <tbody>
+                  {soLines.map((l, i) => (
+                    <tr key={i}>
+                      <td className="mono">{l.sku}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{l.item_name}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{l.quantity_ordered}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{l.quantity_picked}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{l.quantity_shipped}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No line items</p>
+            )}
+          </section>
         </Modal>
       )}
 
