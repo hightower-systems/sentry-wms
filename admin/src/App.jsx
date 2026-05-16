@@ -22,6 +22,7 @@ import Shipping from './pages/Shipping.jsx';
 import Bins from './pages/Bins.jsx';
 import Zones from './pages/Zones.jsx';
 import Items from './pages/Items.jsx';
+import Vendors from './pages/Vendors.jsx';
 import Warehouses from './pages/Warehouses.jsx';
 import Users from './pages/Users.jsx';
 import Tokens from './pages/Tokens.jsx';
@@ -104,6 +105,7 @@ export default function App() {
         <Route path="/bins" element={<ErrorBoundary fallbackMessage="Could not load bins."><Bins /></ErrorBoundary>} />
         <Route path="/zones" element={<ErrorBoundary fallbackMessage="Could not load zones."><Zones /></ErrorBoundary>} />
         <Route path="/items" element={<ErrorBoundary fallbackMessage="Could not load items."><Items /></ErrorBoundary>} />
+        <Route path="/vendors" element={<ErrorBoundary fallbackMessage="Could not load vendors."><Vendors /></ErrorBoundary>} />
         <Route path="/warehouses" element={<ErrorBoundary fallbackMessage="Could not load warehouses."><Warehouses /></ErrorBoundary>} />
         <Route path="/preferred-bins" element={<ErrorBoundary fallbackMessage="Could not load preferred bins."><PreferredBins /></ErrorBoundary>} />
         <Route path="/users" element={<ErrorBoundary fallbackMessage="Could not load users."><Users /></ErrorBoundary>} />

@@ -37,6 +37,7 @@ const NAV = [
     label: 'Warehouse',
     items: [
       { to: '/items', label: 'Items' },
+      { to: '/vendors', label: 'Vendors' },
       { to: '/adjustments', label: 'Inventory Adjustments' },
       { to: '/inter-warehouse-transfers', label: 'Inventory Transfers' },
       { to: '/transfer-orders', label: 'Transfer Orders' },
