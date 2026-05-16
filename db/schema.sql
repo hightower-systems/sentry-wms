@@ -236,6 +236,11 @@ CREATE TABLE sales_orders (
     -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
     -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
     latest_inbound_id BIGINT,
+    -- avid-overhaul-mk1 P7 (mig 060): denormalised source_system tag so
+    -- the admin SO edit surface can repoint an order whose ERP-supplied
+    -- system tag was wrong, without rewriting inbound history. NULL on
+    -- admin-created and POS-created SOs that never went through inbound.
+    source_system VARCHAR(64) REFERENCES inbound_source_systems_allowlist(source_system),
     -- v1.10.0 Pipe C: POS endpoint surface columns. Web orders carry
     -- order_source='web' / order_type='sale' (defaults). POS-source
     -- orders carry external_txn_ref + idempotency_key + cached_response_body
@@ -671,6 +676,10 @@ CREATE INDEX ix_purchase_orders_warehouse ON purchase_orders(warehouse_id);
 CREATE INDEX ix_purchase_order_lines_po ON purchase_order_lines(po_id);
 CREATE INDEX ix_sales_orders_warehouse ON sales_orders(warehouse_id);
 CREATE INDEX ix_sales_order_lines_so ON sales_order_lines(so_id);
+-- avid-overhaul-mk1 P7 (mig 060): partial index because POS-created
+-- and admin-created SOs leave source_system NULL.
+CREATE INDEX IF NOT EXISTS ix_sales_orders_source_system
+    ON sales_orders (source_system) WHERE source_system IS NOT NULL;
 -- v1.10.0 Pipe C: POS replay + refund lookup paths. Partial indexes
 -- because the columns are NULL for the historical web-order majority.
 CREATE INDEX idx_so_idempotency

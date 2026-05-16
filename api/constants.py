@@ -199,3 +199,30 @@ ALL_PAGE_KEYS = (
     "users", "api-tokens", "inbound", "consumer-groups",
     "webhooks", "audit-log", "imports", "integrations", "settings",
 )
+
+# avid-overhaul-mk1 P7: feature-flag grants that ride on the same
+# user_page_permissions table but are not pages in the sidebar. Granting
+# one lifts the status gate on PO/SO edits so a non-admin operator can
+# repair an order past the OPEN window (e.g. fix a customer-supplied
+# typo on a CLOSED PO or repoint an SO's source_system after an ERP
+# mis-tag). ADMIN bypasses these checks; non-admins must hold the
+# override key. Kept out of ALL_PAGE_KEYS so the sidebar permission
+# grid renders them in a separate "Overrides" group.
+OVERRIDE_PO_FULL_EDIT = "po-full-edit"
+OVERRIDE_SO_FULL_EDIT = "so-full-edit"
+ALL_OVERRIDE_KEYS = (
+    OVERRIDE_PO_FULL_EDIT,
+    OVERRIDE_SO_FULL_EDIT,
+)
+
+# avid-overhaul-mk1 P7: SO mutation audit actions. Mirror the PO line
+# CRUD coverage so the "what was on this order before it shipped"
+# question survives any post-OPEN edit. details JSONB carries the
+# before/after diff so an investigator can reconstruct the change
+# without scanning the row itself.
+ACTION_SO_LINE_ADDED = "SO_LINE_ADDED"
+ACTION_SO_LINE_UPDATED = "SO_LINE_UPDATED"
+ACTION_SO_LINE_REMOVED = "SO_LINE_REMOVED"
+ACTION_SO_HEADER_EDITED = "SO_HEADER_EDITED"
+ACTION_SO_SOURCE_SYSTEM_REASSIGNED = "SO_SOURCE_SYSTEM_REASSIGNED"
+ACTION_SO_ALLOCATION_RELEASED = "SO_ALLOCATION_RELEASED"

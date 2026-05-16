@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from constants import (
     PO_OPEN, PO_PARTIAL, PO_RECEIVED, PO_CLOSED, PO_ARCHIVED,
-    SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_CANCELLED,
+    SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_SHIPPED, SO_CANCELLED,
     SO_FRAUD_REVIEW,
     TASK_PENDING, ADJ_PENDING,
     ACTION_PICK,
@@ -19,9 +19,21 @@ from constants import (
     ACTION_SO_ADDRESS_EDITED,
     ACTION_SO_FRAUD_CLEARED,
     ACTION_SO_MEMO_EDITED,
+    ACTION_SO_HEADER_EDITED,
+    ACTION_SO_LINE_ADDED,
+    ACTION_SO_LINE_UPDATED,
+    ACTION_SO_LINE_REMOVED,
+    ACTION_SO_SOURCE_SYSTEM_REASSIGNED,
+    ACTION_SO_ALLOCATION_RELEASED,
+    OVERRIDE_PO_FULL_EDIT,
+    OVERRIDE_SO_FULL_EDIT,
     ROLE_ADMIN,
 )
-from middleware.auth_middleware import require_admin_or_page_permission, require_auth
+from middleware.auth_middleware import (
+    has_override,
+    require_admin_or_page_permission,
+    require_auth,
+)
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.purchase_orders import (
@@ -32,9 +44,11 @@ from schemas.purchase_orders import (
 )
 from schemas.sales_orders import (
     ADDRESS_FIELD_NAMES,
+    AddSalesOrderLineRequest,
     CreateSalesOrderRequest,
     MarkSalesOrdersPrintedRequest,
     UpdateSalesOrderAddressRequest,
+    UpdateSalesOrderLineRequest,
     UpdateSalesOrderMemoRequest,
     UpdateSalesOrderRequest,
 )
@@ -202,6 +216,17 @@ PO_STATUS_VALUES = {PO_OPEN, PO_PARTIAL, PO_RECEIVED, PO_CLOSED, PO_ARCHIVED}
 PO_EDIT_BLOCKED_STATUSES = {PO_CLOSED, PO_ARCHIVED}
 
 
+def _po_edit_blocked(po_status: str) -> bool:
+    """avid-overhaul-mk1 P7: PO_EDIT_BLOCKED_STATUSES check that yields
+    to the po-full-edit override. ADMIN bypasses via has_override.
+
+    Returns True iff the current user CANNOT edit a PO in po_status.
+    """
+    if po_status not in PO_EDIT_BLOCKED_STATUSES:
+        return False
+    return not has_override(OVERRIDE_PO_FULL_EDIT)
+
+
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["PUT"])
 @require_auth
 @require_admin_or_page_permission("purchase-orders")
@@ -234,10 +259,15 @@ def update_purchase_order(po_id, validated):
     header_data = {k: v for k, v in data.items() if k in HEADER_FIELDS}
     # Header edits are blocked when the PO is locked (CLOSED or
     # ARCHIVED). The status field itself is still editable so an admin
-    # can transition out of CLOSED before resuming line work.
-    if header_data and po.status in PO_EDIT_BLOCKED_STATUSES:
+    # can transition out of CLOSED before resuming line work. The
+    # po-full-edit override (P7) lifts this restriction for users who
+    # hold the grant; ADMIN bypasses via has_override.
+    if header_data and _po_edit_blocked(po.status):
         return jsonify({
-            "error": f"Header edits are not allowed while the PO is {po.status}",
+            "error": (
+                f"Header edits are not allowed while the PO is {po.status} "
+                "without the po-full-edit override"
+            ),
         }), 400
 
     set_fragments, params = [], {"pid": po_id}
@@ -298,9 +328,12 @@ def add_purchase_order_line(po_id, validated):
     ).fetchone()
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
-    if po.status in PO_EDIT_BLOCKED_STATUSES:
+    if _po_edit_blocked(po.status):
         return jsonify({
-            "error": f"Cannot add lines while the PO is {po.status}",
+            "error": (
+                f"Cannot add lines while the PO is {po.status} "
+                "without the po-full-edit override"
+            ),
         }), 400
 
     item = g.db.execute(
@@ -382,9 +415,12 @@ def update_purchase_order_line(po_id, po_line_id, validated):
     ).fetchone()
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
-    if po.status in PO_EDIT_BLOCKED_STATUSES:
+    if _po_edit_blocked(po.status):
         return jsonify({
-            "error": f"Cannot edit lines while the PO is {po.status}",
+            "error": (
+                f"Cannot edit lines while the PO is {po.status} "
+                "without the po-full-edit override"
+            ),
         }), 400
 
     line = g.db.execute(
@@ -444,9 +480,12 @@ def delete_purchase_order_line(po_id, po_line_id):
     ).fetchone()
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
-    if po.status in PO_EDIT_BLOCKED_STATUSES:
+    if _po_edit_blocked(po.status):
         return jsonify({
-            "error": f"Cannot remove lines while the PO is {po.status}",
+            "error": (
+                f"Cannot remove lines while the PO is {po.status} "
+                "without the po-full-edit override"
+            ),
         }), 400
 
     line = g.db.execute(
@@ -685,6 +724,7 @@ def get_sales_order(so_id):
                    order_date, ship_by_date, created_at, picked_at, packed_at,
                    shipped_at, created_by,
                    order_total, customer_shipping_paid, memo,
+                   source_system,
                    billing_address_name, billing_address_line1, billing_address_line2,
                    billing_address_city, billing_address_state,
                    billing_address_postal_code, billing_address_country,
@@ -729,6 +769,9 @@ def get_sales_order(so_id):
             ),
             # v1.9.0: free-text operator-facing note (mig 055).
             "memo": so.memo,
+            # avid-overhaul-mk1 P7 (mig 060): denormalised source_system
+            # tag. NULL for admin-created and POS-created SOs.
+            "source_system": so.source_system,
             # v1.8.0 (#288): structured billing/shipping address fields.
             **{name: getattr(so, name) for name in ADDRESS_FIELD_NAMES},
         },
@@ -914,54 +957,142 @@ def create_sales_order(validated):
 def update_sales_order(so_id, validated):
     """Admin edit of SO non-line fields.
 
-    Status policy: admin can edit at any status. Real-world use case is
-    customer callbacks requesting address / ship-method / memo corrections
-    after picking has started. Mirrors the looser status policy on the
-    /address PATCH endpoint below (admin bypasses the OPEN-only gate there).
-    Endpoint requires the sales-orders page permission (or ADMIN) so
-    non-permitted roles cannot invoke it regardless of SO status.
+    Status policy (avid-overhaul-mk1 P7):
+      * ADMIN: edit at any status (including SHIPPED for legacy
+        ShipRush backfill, unchanged from v1.10.4).
+      * USER with so-full-edit override: edit at any status except
+        SHIPPED.
+      * USER without override: edit only when status = OPEN.
+
+    Source-system reassignment (mig 060) is gated to ADMIN or
+    so-full-edit because it changes which ERP a downstream replay
+    would target. The 16 address fields stay on /address PATCH so the
+    address-only edit path keeps its own audit shape.
+
+    Per-field audit rows mirror the address surface: one row per
+    actually-changed field carrying old/new so a post-edit forensic
+    diff does not require scanning row state.
     """
     data = validated.model_dump(exclude_unset=True)
 
-    so = g.db.execute(text("SELECT so_id, status FROM sales_orders WHERE so_id = :sid"), {"sid": so_id}).fetchone()
+    so = g.db.execute(
+        text(
+            "SELECT so_id, status, warehouse_id, source_system, "
+            "       so_number, so_barcode, "
+            "       customer_name, customer_phone, customer_address, "
+            "       ship_method, ship_address, ship_by_date, "
+            "       priority, memo, "
+            "       status AS cur_status, carrier, tracking_number, shipped_at "
+            "  FROM sales_orders WHERE so_id = :sid FOR UPDATE"
+        ),
+        {"sid": so_id},
+    ).fetchone()
     if not so:
         return jsonify({"error": "Sales order not found"}), 404
+
+    role = g.current_user.get("role")
+    is_admin = role == ROLE_ADMIN
+    has_so_override = has_override(OVERRIDE_SO_FULL_EDIT)
+
+    if not is_admin:
+        # Non-admin status gate. Without override: only OPEN. With
+        # override: any non-SHIPPED status.
+        if has_so_override:
+            if so.status == SO_SHIPPED:
+                return jsonify({
+                    "error": "Cannot edit a SHIPPED order; void the shipment first",
+                    "current_status": so.status,
+                }), 403
+        elif so.status != SO_OPEN:
+            return jsonify({
+                "error": "non-admin can only edit OPEN sales orders without the so-full-edit override",
+                "current_status": so.status,
+            }), 403
+
+    # source_system reassignment is the riskier knob: ADMIN-or-override.
+    # If the field was sent by a caller lacking authority, reject before
+    # the UPDATE so partial writes never land.
+    if "source_system" in data and not (is_admin or has_so_override):
+        return jsonify({
+            "error": "source_system reassignment requires ADMIN or so-full-edit override",
+        }), 403
 
     ALLOWED_FIELDS = {
         "so_number", "so_barcode",
         "customer_name", "customer_phone", "customer_address",
         "ship_method", "ship_address", "ship_by_date",
-        "priority", "memo",
+        "priority", "memo", "source_system",
         # v1.10.4: shipment-state edits for backfill of orders shipped via
-        # external systems (legacy ShipRush bridge) so the warehouse view
-        # reflects the right status without going through the dockd
-        # PICKED -> PACKED -> SHIPPED chain. Direct UPDATE — does NOT
-        # write inventory_movements or outbox events; for one-off data
-        # corrections only. Routine fulfillment still flows through
-        # /api/v1/dockd/orders/<so_number>/ship.
+        # external systems (legacy ShipRush bridge). Routine fulfillment
+        # still flows through dockd ship.
         "status", "carrier", "tracking_number", "shipped_at",
     }
-    fields, params = [], {"sid": so_id}
+    fields, params, edits = [], {"sid": so_id}, []
     for col in ALLOWED_FIELDS:
-        if col in data:
-            fields.append(f"{col} = :{col}")
-            params[col] = data[col]
+        if col not in data:
+            continue
+        new_value = data[col]
+        # source_system empty string -> NULL so a CSR can clear an
+        # ERP mis-tag without picking a placeholder system. Other
+        # text fields keep their existing semantics.
+        if col == "source_system" and new_value == "":
+            new_value = None
+        old_value = getattr(so, col)
+        # Coerce dates / ints on the audit side so the JSON details
+        # match the wire representation operators sent.
+        if old_value == new_value:
+            continue
+        fields.append(f"{col} = :{col}")
+        params[col] = new_value
+        edits.append((col, old_value, new_value))
 
     if not fields:
-        return jsonify({"error": "No valid fields provided"}), 400
+        return jsonify({"unchanged": True}), 200
 
-    g.db.execute(text(f"UPDATE sales_orders SET {', '.join(fields)} WHERE so_id = :sid"), params)
+    g.db.execute(
+        text(f"UPDATE sales_orders SET {', '.join(fields)} WHERE so_id = :sid"),
+        params,
+    )
+
+    user_id = g.current_user["user_id"]
+    for field_changed, old_value, new_value in edits:
+        action = (
+            ACTION_SO_SOURCE_SYSTEM_REASSIGNED
+            if field_changed == "source_system"
+            else ACTION_SO_HEADER_EDITED
+        )
+        write_audit_log(
+            g.db,
+            action_type=action,
+            entity_type="SO",
+            entity_id=so_id,
+            user_id=user_id,
+            warehouse_id=so.warehouse_id,
+            details={
+                "field_changed": field_changed,
+                "old_value": str(old_value) if old_value is not None else None,
+                "new_value": str(new_value) if new_value is not None else None,
+            },
+        )
+
     g.db.commit()
 
     row = g.db.execute(
-        text("SELECT so_id, so_number, so_barcode, customer_name, status, warehouse_id, ship_method, ship_address, created_at FROM sales_orders WHERE so_id = :sid"),
+        text(
+            "SELECT so_id, so_number, so_barcode, customer_name, status, "
+            "       warehouse_id, ship_method, ship_address, source_system, "
+            "       created_at "
+            "  FROM sales_orders WHERE so_id = :sid"
+        ),
         {"sid": so_id},
     ).fetchone()
     return jsonify({
         "so_id": row.so_id, "so_number": row.so_number, "so_barcode": row.so_barcode,
         "customer_name": row.customer_name, "status": row.status,
         "warehouse_id": row.warehouse_id, "ship_method": row.ship_method,
-        "ship_address": row.ship_address, "created_at": row.created_at.isoformat() if row.created_at else None,
+        "ship_address": row.ship_address, "source_system": row.source_system,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "edited_fields": [e[0] for e in edits],
     })
 
 
@@ -1140,6 +1271,385 @@ def cancel_sales_order(so_id):
         "message": "Sales order cancelled",
         "pre_status": result["pre_status"],
         "audit_log_id": result["audit_log_id"],
+    })
+
+
+# ── Sales Order Lines (add / update / remove) ────────────────────────────────
+#
+# avid-overhaul-mk1 P7. Mirrors the PO line CRUD shape but layers an
+# allocation-release pass because SO lines can have inventory committed
+# to them post-OPEN. Status gate is the same three-tier model as
+# update_sales_order: OPEN for any sales-orders user, anything else
+# requires so-full-edit override, SHIPPED + CANCELLED are terminal.
+#
+# Pick / pack / ship state on the line is treated as a hard wall:
+# quantity_picked > 0 means units have already left their source bin;
+# quantity_shipped > 0 means the load has left the building. Either
+# blocks edits even with the override because reconciling them needs
+# the unwind paths in sales_order_service, not a direct line mutation.
+
+SO_LINE_EDIT_TERMINAL_STATUSES = {SO_SHIPPED, SO_CANCELLED}
+
+
+def _so_line_edit_gate(so):
+    """Returns (allowed: bool, error_response_tuple_or_None).
+
+    Encapsulates the status-tier + override check that all SO line
+    CRUD endpoints share so the three handlers stay in lock-step.
+    """
+    if so.status in SO_LINE_EDIT_TERMINAL_STATUSES:
+        return False, (jsonify({
+            "error": f"Cannot edit lines on a {so.status} order",
+            "current_status": so.status,
+        }), 400)
+    role = g.current_user.get("role")
+    if role == ROLE_ADMIN:
+        return True, None
+    if so.status == SO_OPEN:
+        return True, None
+    if has_override(OVERRIDE_SO_FULL_EDIT):
+        return True, None
+    return False, (jsonify({
+        "error": "Line edits past OPEN require ADMIN or so-full-edit override",
+        "current_status": so.status,
+    }), 403)
+
+
+def _release_so_line_allocation(db, so_line_id: int, warehouse_id: int) -> int:
+    """Release allocations attached to a single SO line.
+
+    Walks the line's pending pick_tasks, decrements
+    inventory.quantity_allocated by each task's quantity_to_pick, zeroes
+    out sales_order_lines.quantity_allocated, then deletes the line's
+    pending pick_tasks rows. The pick_batch_orders row is left
+    untouched because it may still cover the SO's other lines.
+
+    Returns the total quantity released. Caller is responsible for
+    writing the audit row and for committing the transaction.
+
+    Mirrors the per-line subset of _unwind_allocated in
+    sales_order_service so the bin-level effect of a line shrink/delete
+    is identical to a full-SO cancel at the OPEN/PICKING boundary.
+    """
+    line = db.execute(
+        text(
+            "SELECT so_line_id, item_id, quantity_allocated "
+            "  FROM sales_order_lines WHERE so_line_id = :sol_id"
+        ),
+        {"sol_id": so_line_id},
+    ).fetchone()
+    if not line or line.quantity_allocated == 0:
+        return 0
+
+    tasks = db.execute(
+        text(
+            "SELECT bin_id, quantity_to_pick FROM pick_tasks "
+            " WHERE so_line_id = :sol_id AND status = :task_status"
+        ),
+        {"sol_id": so_line_id, "task_status": TASK_PENDING},
+    ).fetchall()
+    released_total = 0
+    for task in tasks:
+        db.execute(
+            text(
+                "UPDATE inventory "
+                "   SET quantity_allocated = GREATEST(0, quantity_allocated - :qty) "
+                " WHERE item_id = :iid AND bin_id = :bid"
+            ),
+            {"qty": task.quantity_to_pick, "iid": line.item_id, "bid": task.bin_id},
+        )
+        released_total += task.quantity_to_pick
+
+    db.execute(
+        text(
+            "DELETE FROM pick_tasks "
+            " WHERE so_line_id = :sol_id AND status = :task_status"
+        ),
+        {"sol_id": so_line_id, "task_status": TASK_PENDING},
+    )
+    db.execute(
+        text(
+            "UPDATE sales_order_lines SET quantity_allocated = 0 "
+            " WHERE so_line_id = :sol_id"
+        ),
+        {"sol_id": so_line_id},
+    )
+    return released_total
+
+
+@admin_bp.route("/sales-orders/<int:so_id>/lines", methods=["POST"])
+@require_auth
+@require_admin_or_page_permission("sales-orders")
+@validate_body(AddSalesOrderLineRequest)
+@with_db
+def add_sales_order_line(so_id, validated):
+    data = validated.model_dump()
+
+    so = g.db.execute(
+        text("SELECT so_id, status, warehouse_id FROM sales_orders WHERE so_id = :sid FOR UPDATE"),
+        {"sid": so_id},
+    ).fetchone()
+    if not so:
+        return jsonify({"error": "Sales order not found"}), 404
+
+    allowed, err = _so_line_edit_gate(so)
+    if not allowed:
+        return err
+
+    item = g.db.execute(
+        text("SELECT item_id, sku FROM items WHERE item_id = :iid"),
+        {"iid": data["item_id"]},
+    ).fetchone()
+    if not item:
+        return jsonify({"error": f"Item {data['item_id']} not found"}), 400
+
+    # Duplicate-item guard mirrors the PO surface: allocation +
+    # pick-batch creation paths fetch by (so_id, item_id) and cannot
+    # disambiguate two rows with the same item_id.
+    dup = g.db.execute(
+        text("SELECT 1 FROM sales_order_lines WHERE so_id = :sid AND item_id = :iid"),
+        {"sid": so_id, "iid": data["item_id"]},
+    ).fetchone()
+    if dup:
+        return jsonify({"error": f"Item {item.sku} is already on this SO"}), 400
+
+    next_ln = g.db.execute(
+        text("SELECT COALESCE(MAX(line_number), 0) + 1 FROM sales_order_lines WHERE so_id = :sid"),
+        {"sid": so_id},
+    ).scalar()
+
+    result = g.db.execute(
+        text(
+            """
+            INSERT INTO sales_order_lines
+                (so_id, item_id, quantity_ordered, line_number)
+            VALUES (:sid, :iid, :qty, :ln)
+            RETURNING so_line_id
+            """
+        ),
+        {
+            "sid": so_id, "iid": data["item_id"],
+            "qty": data["quantity_ordered"], "ln": next_ln,
+        },
+    )
+    so_line_id = result.fetchone()[0]
+
+    write_audit_log(
+        g.db,
+        ACTION_SO_LINE_ADDED,
+        "SO_LINE",
+        so_line_id,
+        g.current_user["user_id"],
+        so.warehouse_id,
+        details={
+            "so_id": so_id, "sku": item.sku,
+            "quantity_ordered": data["quantity_ordered"],
+        },
+    )
+    g.db.commit()
+
+    return jsonify({
+        "so_line_id": so_line_id, "so_id": so_id,
+        "item_id": data["item_id"], "sku": item.sku,
+        "quantity_ordered": data["quantity_ordered"],
+        "quantity_allocated": 0, "quantity_picked": 0,
+        "quantity_packed": 0, "quantity_shipped": 0,
+        "line_number": next_ln,
+    }), 201
+
+
+@admin_bp.route("/sales-orders/<int:so_id>/lines/<int:so_line_id>", methods=["PATCH"])
+@require_auth
+@require_admin_or_page_permission("sales-orders")
+@validate_body(UpdateSalesOrderLineRequest)
+@with_db
+def update_sales_order_line(so_id, so_line_id, validated):
+    data = validated.model_dump()
+
+    so = g.db.execute(
+        text("SELECT so_id, status, warehouse_id FROM sales_orders WHERE so_id = :sid FOR UPDATE"),
+        {"sid": so_id},
+    ).fetchone()
+    if not so:
+        return jsonify({"error": "Sales order not found"}), 404
+
+    allowed, err = _so_line_edit_gate(so)
+    if not allowed:
+        return err
+
+    line = g.db.execute(
+        text(
+            """
+            SELECT sol.so_line_id, sol.quantity_ordered, sol.quantity_allocated,
+                   sol.quantity_picked, sol.quantity_packed, sol.quantity_shipped,
+                   i.sku
+              FROM sales_order_lines sol JOIN items i ON i.item_id = sol.item_id
+             WHERE sol.so_line_id = :sol_id AND sol.so_id = :sid
+            """
+        ),
+        {"sol_id": so_line_id, "sid": so_id},
+    ).fetchone()
+    if not line:
+        return jsonify({"error": "Line not found"}), 404
+
+    new_qty = data["quantity_ordered"]
+    # Picked / packed / shipped units already left their source bin or
+    # the building. Going below those numbers would orphan physical
+    # movements; require the operator to unwind via the dedicated paths
+    # (short-pick / void-ship) before shrinking the line.
+    picked_or_packed = max(line.quantity_picked, line.quantity_packed)
+    if new_qty < picked_or_packed:
+        return jsonify({
+            "error": (
+                f"quantity_ordered ({new_qty}) cannot be less than "
+                f"already-picked/packed quantity ({picked_or_packed})"
+            ),
+        }), 400
+    if new_qty < line.quantity_shipped:
+        return jsonify({
+            "error": (
+                f"quantity_ordered ({new_qty}) cannot be less than "
+                f"already-shipped quantity ({line.quantity_shipped})"
+            ),
+        }), 400
+
+    released = 0
+    # Shrinking below quantity_allocated releases the full line
+    # allocation; re-allocation happens at next pick-batch create.
+    # Going from N to a smaller N' that is still >= quantity_allocated
+    # leaves the existing allocation in place because the picker can
+    # still fulfil it.
+    if new_qty < line.quantity_allocated and line.quantity_allocated > 0:
+        released = _release_so_line_allocation(g.db, so_line_id, so.warehouse_id)
+        if released > 0:
+            write_audit_log(
+                g.db,
+                ACTION_SO_ALLOCATION_RELEASED,
+                "SO_LINE",
+                so_line_id,
+                g.current_user["user_id"],
+                so.warehouse_id,
+                details={
+                    "so_id": so_id, "sku": line.sku,
+                    "released_quantity": released,
+                    "reason": "line_quantity_reduced",
+                },
+            )
+
+    g.db.execute(
+        text(
+            "UPDATE sales_order_lines SET quantity_ordered = :qty "
+            " WHERE so_line_id = :sol_id"
+        ),
+        {"qty": new_qty, "sol_id": so_line_id},
+    )
+
+    write_audit_log(
+        g.db,
+        ACTION_SO_LINE_UPDATED,
+        "SO_LINE",
+        so_line_id,
+        g.current_user["user_id"],
+        so.warehouse_id,
+        details={
+            "so_id": so_id, "sku": line.sku,
+            "old_quantity_ordered": line.quantity_ordered,
+            "new_quantity_ordered": new_qty,
+        },
+    )
+    g.db.commit()
+    return jsonify({
+        "so_line_id": so_line_id,
+        "quantity_ordered": new_qty,
+        "released_allocation": released,
+    })
+
+
+@admin_bp.route("/sales-orders/<int:so_id>/lines/<int:so_line_id>", methods=["DELETE"])
+@require_auth
+@require_admin_or_page_permission("sales-orders")
+@with_db
+def delete_sales_order_line(so_id, so_line_id):
+    so = g.db.execute(
+        text("SELECT so_id, status, warehouse_id FROM sales_orders WHERE so_id = :sid FOR UPDATE"),
+        {"sid": so_id},
+    ).fetchone()
+    if not so:
+        return jsonify({"error": "Sales order not found"}), 404
+
+    allowed, err = _so_line_edit_gate(so)
+    if not allowed:
+        return err
+
+    line = g.db.execute(
+        text(
+            """
+            SELECT sol.so_line_id, sol.quantity_ordered, sol.quantity_allocated,
+                   sol.quantity_picked, sol.quantity_packed, sol.quantity_shipped,
+                   i.sku
+              FROM sales_order_lines sol JOIN items i ON i.item_id = sol.item_id
+             WHERE sol.so_line_id = :sol_id AND sol.so_id = :sid
+            """
+        ),
+        {"sol_id": so_line_id, "sid": so_id},
+    ).fetchone()
+    if not line:
+        return jsonify({"error": "Line not found"}), 404
+
+    # Picked / packed / shipped units block deletion at any tier. To
+    # remove these the operator must unwind through the dedicated
+    # surfaces (short-pick / void-ship) so inventory movements stay
+    # consistent.
+    if line.quantity_picked > 0 or line.quantity_packed > 0 or line.quantity_shipped > 0:
+        return jsonify({
+            "error": (
+                "Line has picked/packed/shipped units; unwind via the "
+                "ship-void or short-pick path before removing the line"
+            ),
+            "quantity_picked": line.quantity_picked,
+            "quantity_packed": line.quantity_packed,
+            "quantity_shipped": line.quantity_shipped,
+        }), 400
+
+    released = 0
+    if line.quantity_allocated > 0:
+        released = _release_so_line_allocation(g.db, so_line_id, so.warehouse_id)
+        if released > 0:
+            write_audit_log(
+                g.db,
+                ACTION_SO_ALLOCATION_RELEASED,
+                "SO_LINE",
+                so_line_id,
+                g.current_user["user_id"],
+                so.warehouse_id,
+                details={
+                    "so_id": so_id, "sku": line.sku,
+                    "released_quantity": released,
+                    "reason": "line_deleted",
+                },
+            )
+
+    g.db.execute(
+        text("DELETE FROM sales_order_lines WHERE so_line_id = :sol_id"),
+        {"sol_id": so_line_id},
+    )
+
+    write_audit_log(
+        g.db,
+        ACTION_SO_LINE_REMOVED,
+        "SO_LINE",
+        so_line_id,
+        g.current_user["user_id"],
+        so.warehouse_id,
+        details={
+            "so_id": so_id, "sku": line.sku,
+            "quantity_ordered": line.quantity_ordered,
+        },
+    )
+    g.db.commit()
+    return jsonify({
+        "so_line_id": so_line_id, "deleted": True,
+        "released_allocation": released,
     })
 
 
