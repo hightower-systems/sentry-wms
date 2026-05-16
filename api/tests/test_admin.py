@@ -35,14 +35,23 @@ def _picker_headers(client):
 def _web_user_with_pages(client, page_keys, username="webuser1"):
     """Create a USER role with the given web-admin page grants and
     return auth headers. Used by P6.1 tests to drive the permission
-    decorator and the /auth/me allowed_pages payload."""
+    decorator and the /auth/me allowed_pages payload.
+
+    warehouse_ids is populated alongside the legacy warehouse_id so
+    require_auth's warehouse-scope check passes when a test endpoint
+    is called with warehouse_id=1 - otherwise the middleware would
+    reject the request with 403 before the page-permission gate runs
+    and the test would not actually be exercising what it claims to.
+    """
     conn = get_raw_connection()
     cur = conn.cursor()
     import bcrypt
     pw_hash = bcrypt.hashpw(b"webuser123", bcrypt.gensalt()).decode("utf-8")
     cur.execute(
-        "INSERT INTO users (username, password_hash, full_name, role, warehouse_id, external_id) "
-        "VALUES (%s, %s, 'Web User', 'USER', 1, gen_random_uuid()) RETURNING user_id",
+        "INSERT INTO users (username, password_hash, full_name, role, "
+        "warehouse_id, warehouse_ids, external_id) "
+        "VALUES (%s, %s, 'Web User', 'USER', 1, ARRAY[1], gen_random_uuid()) "
+        "RETURNING user_id",
         (username, pw_hash),
     )
     user_id = cur.fetchone()[0]
