@@ -37,6 +37,10 @@ class CreateSalesOrderRequest(BaseModel):
     ship_method: Optional[str] = Field(None, max_length=100)
     ship_address: Optional[str] = Field(None, max_length=512)
     ship_by_date: Optional[str] = Field(None, max_length=32)
+    # v1.9.0: free-text operator-facing note. TEXT column has no
+    # length cap; the schema-level 4 KB ceiling here keeps a single
+    # bad PATCH from inflating an SO row indefinitely.
+    memo: Optional[str] = Field(None, max_length=4096)
 
 
 class UpdateSalesOrderRequest(BaseModel):
@@ -49,6 +53,17 @@ class UpdateSalesOrderRequest(BaseModel):
     ship_address: Optional[str] = Field(None, max_length=512)
     ship_by_date: Optional[str] = Field(None, max_length=32)
     priority: Optional[int] = Field(None, ge=0, le=10)
+    memo: Optional[str] = Field(None, max_length=4096)
+    # v1.10.4: shipment-state fields editable by ADMIN. Used to backfill
+    # SOs that shipped via a retiring external system (legacy ShipRush
+    # bridge) so the warehouse view reflects accurate status. Status is
+    # one of the canonical SO statuses; carrier/tracking_number/shipped_at
+    # are the same values the dockd ship endpoint writes through the
+    # service layer. Free-text NotificationOrigin column unchanged.
+    status: Optional[str] = Field(None, max_length=32)
+    carrier: Optional[str] = Field(None, max_length=64)
+    tracking_number: Optional[str] = Field(None, max_length=128)
+    shipped_at: Optional[str] = Field(None, max_length=64)
 
 
 class UpdateSalesOrderAddressRequest(BaseModel):

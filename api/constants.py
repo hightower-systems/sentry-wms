@@ -56,6 +56,18 @@ ACTION_PUTAWAY = "PUTAWAY"
 ACTION_PICK = "PICK"
 ACTION_PACK = "PACK"
 ACTION_SHIP = "SHIP"
+# v1.9.0 dockd: void of a previously-shipped order. Reverts the SO and
+# the matching item_fulfillment row to pre_ship_status (PICKED or PACKED).
+ACTION_SHIP_VOID = "SHIP_VOID"
+# v1.10.0 POS endpoint surface. Counter sale (atomic SO-create +
+# inventory decrement) and refund (credit-memo SO + inventory re-
+# increment). One audit_log row per successful checkout / refund.
+ACTION_POS_CHECKOUT = "POS_CHECKOUT"
+ACTION_POS_REFUND = "POS_REFUND"
+# v1.9.0: SO cancellation. Initiated by ERP via inbound or by an admin
+# operator. Pre-PICKED states release allocation; PICKED/PACKED states
+# revert inventory to the default receiving bin.
+ACTION_CANCEL = "CANCEL"
 ACTION_TRANSFER = "TRANSFER"
 ACTION_ADJUST = "ADJUST"
 ACTION_COUNT = "COUNT"

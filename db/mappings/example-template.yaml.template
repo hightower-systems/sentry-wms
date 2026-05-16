@@ -340,6 +340,20 @@ resources:
         required: false
         default: 0                # used when source resolves to null.
 
+      - canonical: "memo"
+        # canonical column: sales_orders.memo TEXT (v1.9.0).
+        # Free-text operator-facing note; rendered on picker / packer /
+        # shipper screens and the dockd load-on-scan endpoint so the
+        # warehouse staff see customer notes before they handle the
+        # order. Typical values: "leave at back door", "call before
+        # delivery", "fragile, double-box". TEXT (uncapped) on the
+        # column; declare a length bound here only if your source
+        # system emits free-text comments where the operator-facing
+        # screens benefit from a hard cap.
+        source_path: "$.memo"
+        type: "string"
+        required: false
+
       # ----- ADVANCED: derived expressions -----
       # `derived` evaluates a Python expression against the source
       # payload at apply-time. The expression sees a flat `source`

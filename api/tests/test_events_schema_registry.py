@@ -45,7 +45,7 @@ def scoped_token(seed_data):
 @pytest.fixture()
 def broad_scope_token(seed_data):
     """A token with every V150 event type in scope so catalog
-    coverage assertions still have all seven entries to check."""
+    coverage assertions still have every entry to check."""
     plaintext = f"broad-token-{uuid.uuid4()}"
     token_id = insert_token(
         plaintext,
@@ -58,13 +58,14 @@ def broad_scope_token(seed_data):
             "pack.confirmed",
             "ship.confirmed",
             "cycle_count.adjusted",
+            "ship.voided",
         ],
     )
     return {"plaintext": plaintext, "token_id": token_id}
 
 
 class TestTypesEndpoint:
-    def test_broad_token_sees_all_seven_v150_event_types(
+    def test_broad_token_sees_every_v150_event_type(
         self, client, broad_scope_token
     ):
         resp = client.get(
@@ -82,6 +83,7 @@ class TestTypesEndpoint:
             "pack.confirmed",
             "ship.confirmed",
             "cycle_count.adjusted",
+            "ship.voided",
         }
 
     def test_each_entry_exposes_versions_and_aggregate_type(

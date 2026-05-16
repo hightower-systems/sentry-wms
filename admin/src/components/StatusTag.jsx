@@ -9,7 +9,7 @@ const STATUS_MAP = {
   COMPLETED: 'tag-success',
   COMPLETE: 'tag-success',
   RECEIVED: 'tag-success',
-  SHIPPED: 'tag-gray',
+  SHIPPED: 'tag-success',
   CLOSED: 'tag-gray',
   CANCELLED: 'tag-gray',
   INACTIVE: 'tag-gray',

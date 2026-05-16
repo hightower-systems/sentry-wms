@@ -13,7 +13,7 @@ from middleware.auth_middleware import require_auth, check_warehouse_access
 from middleware.db import with_db
 from schemas.bin_transfer import MoveRequest
 from services.audit_service import write_audit_log
-from services.events_service import emit_event
+from services.events_service import emit_event, resolve_source_external_id
 from services.inventory_service import move_inventory
 from utils.validation import validate_body
 
@@ -132,6 +132,14 @@ def move(validated):
     # per transfer today, so a future multi-line expansion does not
     # break consumer parsers. Decision K: putaway.confirm does NOT
     # emit, only transfers.move does.
+    # Resolve item canonical UUID to source-system external_id (the SKU
+    # the upstream pusher used at Pipe B time). transfer_external_id stays
+    # canonical: transfers originate inside Sentry — there's no upstream
+    # source identity to resolve.
+    item_source_external_id = (
+        resolve_source_external_id(g.db, "item", item.external_id)
+        or str(item.external_id)
+    )
     emit_event(
         g.db,
         event_type="transfer.completed",
@@ -147,7 +155,7 @@ def move(validated):
             "to_warehouse_id": to_bin.warehouse_id,
             "lines": [
                 {
-                    "item_external_id": str(item.external_id),
+                    "item_external_id": item_source_external_id,
                     "quantity": quantity,
                 },
             ],

@@ -17,7 +17,7 @@ from middleware.auth_middleware import require_auth, warehouse_scope_clause
 from middleware.db import with_db
 from schemas.receiving import CancelReceivingRequest, ReceiveItemsRequest
 from services.audit_service import write_audit_log
-from services.events_service import emit_event, get_user_external_id
+from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
 from services.inventory_service import add_inventory
 from utils.validation import validate_body
 
@@ -225,14 +225,20 @@ def receive_items(validated):
         receipt_at = receipt_row.received_at
         receipt_ids.append(receipt_id)
 
-        # Look up the item's external_id for the wire payload. Cheap,
-        # one round-trip per receipt; a higher-volume emit site would
-        # memoize per-request.
+        # Look up the item's canonical UUID, then resolve it to the
+        # source-system external_id (the SKU the upstream pusher used at
+        # Pipe B time) for the wire payload. Falls back to canonical UUID
+        # when no upstream mapping exists. Cheap, two round-trips per
+        # receipt; a higher-volume emit site would memoize per-request.
         item_row = g.db.execute(
             text("SELECT external_id FROM items WHERE item_id = :iid"),
             {"iid": item_id},
         ).fetchone()
-        item_external_id = str(item_row.external_id) if item_row else None
+        item_canonical = item_row.external_id if item_row else None
+        item_external_id = (
+            resolve_source_external_id(g.db, "item", item_canonical)
+            or (str(item_canonical) if item_canonical else None)
+        )
 
         # 2 & 3. Update PO line quantity and status
         new_qty_received = po_line.quantity_received + quantity
@@ -252,6 +258,10 @@ def receive_items(validated):
         add_inventory(g.db, item_id, bin_id, warehouse_id, quantity, lot_number)
 
         # 5. Audit log
+        # quantity_ordered + quantity_received_before make the row
+        # self-contained: ordered total / cumulative-before-this-call /
+        # this transaction. Investigators can reconstruct PO progress
+        # from one row without joining purchase_order_lines.
         write_audit_log(
             g.db,
             action_type=ACTION_RECEIVE,
@@ -259,7 +269,14 @@ def receive_items(validated):
             entity_id=po_id,
             user_id=username,
             warehouse_id=warehouse_id,
-            details={"item_id": item_id, "quantity": quantity, "bin_id": bin_id, "receipt_id": receipt_id},
+            details={
+                "quantity_ordered": po_line.quantity_ordered,
+                "quantity_received_before": po_line.quantity_received,
+                "quantity": quantity,
+                "item_id": item_id,
+                "bin_id": bin_id,
+                "receipt_id": receipt_id,
+            },
         )
 
         # 6. v1.5.0 #112: emit receipt.completed on the integration_events
@@ -277,8 +294,15 @@ def receive_items(validated):
             warehouse_id=warehouse_id,
             source_txn_id=g.source_txn_id,
             payload={
+                # receipt_external_id stays canonical (no upstream system
+                # creates receipts; they originate inside Sentry).
                 "receipt_external_id": str(receipt_external_id),
-                "po_external_id": str(po.external_id),
+                # po_external_id resolves to the source-system PO identifier
+                # (e.g. our PO number) when one was Pipe-B'd in.
+                "po_external_id": (
+                    resolve_source_external_id(g.db, "purchase_order", po.external_id)
+                    or str(po.external_id)
+                ),
                 "lines": [
                     {
                         "item_external_id": item_external_id,

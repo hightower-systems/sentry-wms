@@ -28,6 +28,10 @@ SO-5002,1,Jane Doe,555-0102,456 Oak Ave,WIDGET-002,3`,
 C-01-01-01,C-01-01-01,STORAGE,1,C,Pickable,100,100,Shelf C Row 1 Level 1
 C-01-02-01,C-01-02-01,STORAGE,1,C,Pickable,101,101,Shelf C Row 2 Level 1
 D-01-01-01,D-01-01-01,PICKING,1,D,Pickable,200,200,Pick zone D`,
+  'inventory-adjustments': `sku,warehouse,bin,qty,memo
+WIDGET-001,WH-01,PICK-01,5,Found stock during cycle count
+WIDGET-002,WH-01,PICK-02,-3,Damaged in handling
+GADGET-001,WH-01,BULK-01,10,Vendor credit`,
 };
 
 function downloadTemplate(type) {
@@ -47,6 +51,7 @@ const IMPORT_TYPES = [
   { value: 'bins', label: 'Bins', desc: 'Import bin locations with zone, aisle, and type' },
   { value: 'purchase-orders', label: 'Purchase Orders', desc: 'Import POs with vendor and line items' },
   { value: 'sales-orders', label: 'Sales Orders', desc: 'Import SOs with customer and line items' },
+  { value: 'inventory-adjustments', label: 'Inventory Adjustments', desc: 'Bulk adjust on-hand quantities (auto-approved). Signed qty: positive adds, negative subtracts. Memo lands on the adjustment record.' },
 ];
 
 export default function Imports() {

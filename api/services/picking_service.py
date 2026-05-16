@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from services.audit_service import write_audit_log
 from services.connector_stub import enrich_order
-from services.events_service import emit_event, get_user_external_id
+from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
 
 from constants import (
     BATCH_OPEN, BATCH_IN_PROGRESS, BATCH_COMPLETED,
@@ -468,11 +468,12 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
             user_id=username,
             warehouse_id=batch.warehouse_id,
             details={
+                "sku": item.sku,
+                "quantity_to_pick": task.quantity_to_pick,
+                "quantity_picked": quantity_picked,
                 "pick_task_id": pick_task_id,
                 "to_id": task.to_id,
                 "item_id": task.item_id,
-                "sku": item.sku,
-                "quantity_picked": quantity_picked,
                 "bin_id": task.bin_id,
                 "batch_id": task.batch_id,
             },
@@ -486,10 +487,11 @@ def confirm_pick(db, pick_task_id, scanned_barcode, quantity_picked, username):
             user_id=username,
             warehouse_id=batch.warehouse_id,
             details={
+                "sku": item.sku,
+                "quantity_to_pick": task.quantity_to_pick,
+                "quantity_picked": quantity_picked,
                 "pick_task_id": pick_task_id,
                 "item_id": task.item_id,
-                "sku": item.sku,
-                "quantity_picked": quantity_picked,
                 "bin_id": task.bin_id,
                 "batch_id": task.batch_id,
             },
@@ -721,19 +723,30 @@ def complete_batch(db, batch_id, username):
         if not in_request:
             continue
 
-        # Fetch the SO's lines with item external_ids for the envelope.
+        # Fetch the SO's lines — resolve item canonical UUIDs to source-system
+        # external_ids via cross_system_mappings; canonical UUID fallback when
+        # no upstream mapping exists. See resolve_source_external_id docstring.
         line_rows = db.execute(
             text(
                 """
-                SELECT i.external_id AS item_external_id, sol.quantity_picked
+                SELECT
+                    COALESCE(csm.source_id, CAST(i.external_id AS TEXT)) AS item_external_id,
+                    sol.quantity_picked
                   FROM sales_order_lines sol
                   JOIN items i ON i.item_id = sol.item_id
+                  LEFT JOIN cross_system_mappings csm
+                    ON csm.canonical_id = i.external_id
+                    AND csm.source_type = 'item'
                  WHERE sol.so_id = :sid
                  ORDER BY sol.line_number
                 """
             ),
             {"sid": so.so_id},
         ).fetchall()
+        so_source_external_id = (
+            resolve_source_external_id(db, "sales_order", so.external_id)
+            or str(so.external_id)
+        )
         emit_event(
             db,
             event_type="pick.confirmed",
@@ -744,7 +757,7 @@ def complete_batch(db, batch_id, username):
             warehouse_id=so.warehouse_id,
             source_txn_id=source_txn_id,
             payload={
-                "sales_order_external_id": str(so.external_id),
+                "sales_order_external_id": so_source_external_id,
                 "lines": [
                     {
                         "item_external_id": str(line.item_external_id),

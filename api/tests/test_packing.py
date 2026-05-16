@@ -142,6 +142,27 @@ class TestCompletePacking:
         data = resp.get_json()
         assert data["status"] == "PACKED"
 
+    def test_complete_packing_audit_details_carry_expected_and_packed(self, client, auth_headers):
+        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        self._verify_all_items(client, auth_headers, 1)
+
+        client.post(
+            "/api/packing/complete",
+            json={"so_id": 1},
+            headers=auth_headers,
+        )
+
+        details = _query_val(
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'PACK' AND entity_id = 1 "
+            "ORDER BY log_id DESC LIMIT 1"
+        )
+        assert details is not None
+        assert "total_expected" in details
+        assert "total_packed" in details
+        assert details["total_expected"] == details["total_packed"]
+        assert details["so_number"] == "SO-2026-001"
+
     def test_complete_packing_items_not_verified(self, client, auth_headers):
         _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
         # Don't verify any items

@@ -155,12 +155,12 @@ class TestV003_AdminDockerfileProduction:
     def test_nginx_config_blocks_vite_dev_paths(self):
         # Any legacy scanner probing Vite's /@fs/, /@id/, /@vite/, or HMR
         # endpoints should get 404 from nginx.
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         for pattern in ("@fs", "@id", "@vite", "__vite_hmr"):
             assert pattern in nginx_conf, f"nginx.conf must reference {pattern}"
 
     def test_nginx_spa_fallback_present(self):
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         assert "try_files $uri" in nginx_conf
         assert "/index.html" in nginx_conf
 
@@ -218,7 +218,7 @@ class TestV111_AdminNginxHsts:
     LAN deployments run cleartext and HSTS would brick them."""
 
     def test_nginx_adds_hsts_header(self):
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         assert "Strict-Transport-Security" in nginx_conf, (
             "nginx.conf must emit Strict-Transport-Security over HTTPS"
         )
@@ -228,13 +228,13 @@ class TestV111_AdminNginxHsts:
         # would pass: "max-age=" appears in the conf. The real guard is that
         # the add_header uses a variable whose value comes from a map keyed
         # on $scheme / $http_x_forwarded_proto.
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         assert re.search(
             r"add_header\s+Strict-Transport-Security\s+\$", nginx_conf
         ), "HSTS must be driven by a variable, not an unconditional literal"
 
     def test_nginx_hsts_gated_on_https(self):
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         # Map on $scheme must have an "https" -> max-age=... entry.
         assert re.search(
             r"map\s+\$scheme\s+\$\w+\s*\{[^}]*\"https\"\s*\"max-age=",
@@ -243,7 +243,7 @@ class TestV111_AdminNginxHsts:
         ), "nginx.conf must map $scheme=https to an HSTS header value"
 
     def test_nginx_hsts_respects_x_forwarded_proto(self):
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         # Must ALSO honor X-Forwarded-Proto: https from an upstream TLS
         # terminator (mirrors api/app.py).
         assert re.search(
@@ -253,7 +253,7 @@ class TestV111_AdminNginxHsts:
         ), "nginx.conf must map X-Forwarded-Proto=https to HSTS so proxied TLS terminations still trigger the header"
 
     def test_nginx_hsts_uses_one_year_includesubdomains(self):
-        nginx_conf = _read("admin/nginx.conf")
+        nginx_conf = _read("admin/nginx.conf.template")
         assert "max-age=31536000" in nginx_conf, "HSTS max-age must be 1 year"
         assert "includeSubDomains" in nginx_conf
 

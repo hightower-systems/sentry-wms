@@ -6,6 +6,92 @@ is a shorter, docs-site-friendly summary.
 
 ---
 
+## v1.10.0 -- POS endpoint surface
+
+*2026-05-09.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.10.0).
+
+Sentry now serves a dedicated counter-sale API for an external POS
+Service. Four endpoints under `/api/v1/pos/` (`GET /availability`,
+`POST /validate-cart`, `POST /checkout`, `POST /refund`) authenticate
+via a new fourth direction `pos.dispatch` alongside outbound polling,
+inbound POST, and dockd. Checkout and refund are atomic single-
+transaction routes with `SELECT ... FOR UPDATE` on the inventory rows
+being decremented or re-incremented, idempotent on a per-route
+`idempotency_key` (UUID4) with a SHA-256 body hash so a retry with the
+same key + same body replays the cached response and a retry with the
+same key + different body returns 409.
+
+Refund enforces a 90-day window from the original sale's `created_at`,
+a card-vs-cash tender lock comparing the original `POS_CHECKOUT` audit
+row's `payment_method` against `body.refund_summary.method`, and a
+once-per-original-SO guard via `refunded_at` / `refund_so_id` on the
+original `sales_orders` row. Missing / out-of-scope / wrong-source /
+wrong-state original SOs conflate to 404 `original_so_not_found` to
+prevent enumeration; the 422 informational rules only fire after the
+token has proven it can see the SO.
+
+PCI-scope guard at the Pydantic boundary: `CardTender` is a strict-
+typed model with `extra='forbid'` accepting exactly `{type, amount_cents,
+card_brand, card_last4, auth_code, external_ref}`. Any other field
+(`card_pan`, `full_track`, expiry, cvv, etc.) fails 422 at the schema
+layer so Sentry never accepts PAN-shaped data on the wire.
+
+Pricing stays out of Sentry's columns: per-line `unit_price_cents` /
+`tax_cents` / `line_total_cents` ride on the wire and live exclusively
+in `audit_log.details` for archival; mig 056 added no per-line price
+columns. The POS Service owns its own pricing source. New
+`ACTION_POS_CHECKOUT` and `ACTION_POS_REFUND` audit constants extend
+the v1.4 hash chain.
+
+One migration (056). No new APK published; v1.9.0 APK
+(`sentry-wms-v1.9.0.apk`, versionCode 6) remains the working baseline
+since v1.10.0 has no mobile changes. Operators running the v1.9.0
+mobile app continue to work against a v1.10.0 backend with no upgrade.
+
+---
+
+## v1.9.0 -- Dockd shipping integration
+
+*2026-05-09.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.9.0).
+
+Sentry now serves a dedicated outbound shipping API for the in-warehouse
+dockd application. Three endpoints under
+`/api/v1/dockd/orders/<so_number>` (GET, ship, void-ship) authenticate
+via per-station bearer tokens with the new `dockd.dispatch` scope, are
+idempotent under retry through SHA-256 body-hash sentinel rows, and
+serialize concurrent ship attempts on the same SO with
+`SELECT ... FOR UPDATE`. Both ship and void-ship write through the
+existing audit-log hash chain and emit on the `integration_events`
+outbox so downstream ERPs see a fully-shipped or fully-reversed order.
+
+In parallel, the SO lifecycle gains `CANCELLED` status with end-to-end
+wiring (admin + inbound + dashboard counter); a new `sales_orders.memo`
+column inbound-mappable from connector and rendered through the picker,
+packer, and shipper flows; and a UI modernization of the Audit Log page
+with color-coded action badges, chip-style detail previews, an
+action-type select filter, and a Copy JSON button on the detail modal.
+Audit details for PICK / TO_LINE_PICKED / PACK / RECEIVE actions now
+record both expected and actual counts so investigators can reconstruct
+cumulative state from one row.
+
+Two migrations (054-055). Migration 054 adds five void columns to
+`item_fulfillments` and the `dockd_idempotency` table; 055 adds
+`sales_orders.memo TEXT`. Both forward-only.
+
+**Mobile.** The v1.8 APK
+([`sentry-wms-v1.8.0.apk`](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.8.0))
+stays a working baseline -- v1.9 backend changes are additive and v1.8
+keeps picking + packing + receiving + putaway against a v1.9.0 backend.
+The v1.9 mobile build adds a memo block on Pack / Pack-Ship / Ship
+screens (warning-tinted callout above the scan input) and fixes a
+pack-after-short-pick fallback bug where `PackScreen` and
+`PackShipScreen` used `||` against `quantity_picked`, falling back to
+`quantity_ordered` on a fully-shorted line and blocking pack
+completion. **Update to the v1.9 APK on the
+[release page](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.9.0)
+if you ship from the mobile flow or want the memo display, or stay on
+v1.8 if you don't.**
+
 ## v1.8.0 -- Transfer Orders + Productivity Dashboard
 
 *2026-05-07.* [Full notes](https://github.com/hightower-systems/sentry-wms/releases/tag/v1.8.0).

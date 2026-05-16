@@ -104,9 +104,15 @@ class TestReceiveItems:
         client.post("/api/receiving/receive", json=payload, headers=auth_headers)
 
         row = _query_one(
-            "SELECT log_id FROM audit_log WHERE action_type = 'RECEIVE' AND entity_id = 1"
+            "SELECT details FROM audit_log "
+            "WHERE action_type = 'RECEIVE' AND entity_id = 1 "
+            "ORDER BY log_id DESC LIMIT 1"
         )
         assert row is not None, "Audit log entry should exist for receive action"
+        details = row[0]
+        assert details["quantity"] == 5
+        assert details["quantity_received_before"] == 0
+        assert details["quantity_ordered"] >= 5
 
     def test_receive_invalid_po(self, client, auth_headers, seed_data):
         payload = {

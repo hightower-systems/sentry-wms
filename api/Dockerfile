@@ -15,10 +15,20 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Build context is the repo root (so we can COPY db/mappings alongside
+# the api source). The repo-root .dockerignore strips admin/, mobile/,
+# docs/, .git, etc. so the context stays small.
+COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY api/ .
+
+# Bake mapping documents (db/mappings/<source>.yaml) into the image so
+# Pipe B inbound has its schema available at /app/db/mappings without a
+# runtime volume mount. SENTRY_INBOUND_MAPPINGS_DIR=/app/db/mappings in
+# managed-platform deploys (ACA, K8s); docker-compose keeps using its
+# ./db:/db volume mount and points the env var at /db/mappings instead.
+COPY db/mappings /app/db/mappings
 
 # v1.4.2 #73: bake the source version into the image so the app can detect
 # an upgrade-without-rebuild at startup (code pulled but image not rebuilt

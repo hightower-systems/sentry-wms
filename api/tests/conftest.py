@@ -94,6 +94,10 @@ ALL_TABLES = [
     "inbound_vendors",
     "inbound_purchase_orders",
     "cross_system_mappings",
+    # v1.9.0 dockd HTTP-layer idempotency cache; FK to wms_tokens with
+    # ON DELETE CASCADE. Listed before wms_tokens for the same FK
+    # ordering reason as the inbound staging tables above.
+    "dockd_idempotency",
     "wms_tokens",
     "inbound_source_systems_allowlist",
     # v1.8.0 #283: per-user productivity dashboard overrides; FK to

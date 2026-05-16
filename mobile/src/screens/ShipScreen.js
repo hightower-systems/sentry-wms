@@ -104,6 +104,13 @@ export default function ShipScreen({ navigation, route }) {
               <Text style={styles.tapHint}>Tap for details</Text>
             </TouchableOpacity>
 
+            {order.memo ? (
+              <View style={styles.memoBlock}>
+                <Text style={styles.memoLabel}>NOTE</Text>
+                <Text style={styles.memoText}>{order.memo}</Text>
+              </View>
+            ) : null}
+
             <View style={styles.summaryRow}>
               <View style={styles.summaryItem}>
                 <Text style={styles.summaryValue}>{lines.length}</Text>
@@ -202,6 +209,7 @@ export default function ShipScreen({ navigation, route }) {
                 <View style={styles.detailRow}><Text style={styles.detailLabel}>CUSTOMER</Text><Text style={styles.detailValue}>{soDetail.customer_name || '-'}</Text></View>
                 {soDetail.customer_phone && <View style={styles.detailRow}><Text style={styles.detailLabel}>PHONE</Text><Text style={styles.detailValue}>{soDetail.customer_phone}</Text></View>}
                 {(soDetail.customer_address || soDetail.ship_address) && <View style={styles.detailRow}><Text style={styles.detailLabel}>ADDRESS</Text><Text style={styles.detailValue}>{soDetail.customer_address || soDetail.ship_address}</Text></View>}
+                {soDetail.memo && <View style={styles.detailRow}><Text style={styles.detailLabel}>NOTE</Text><Text style={styles.detailValue}>{soDetail.memo}</Text></View>}
                 <View style={styles.detailRow}><Text style={styles.detailLabel}>STATUS</Text><Text style={styles.detailValue}>{soDetail.status}</Text></View>
                 {soDetail.lines?.length > 0 && (
                   <View style={{ marginTop: 12 }}>
@@ -237,6 +245,15 @@ const styles = StyleSheet.create({
   soNumber: { fontFamily: fonts.mono, fontSize: 18, fontWeight: '700', color: colors.textPrimary },
   customer: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
   statusLabel: { fontFamily: fonts.mono, fontSize: 12, color: colors.success, letterSpacing: 0.3, marginTop: 4 },
+  memoBlock: {
+    borderWidth: 1, borderColor: colors.warning, borderRadius: radii.badge,
+    padding: 10, marginBottom: 16, backgroundColor: '#fdf6ed',
+  },
+  memoLabel: {
+    fontFamily: fonts.mono, fontSize: 10, fontWeight: '700',
+    color: colors.warning, letterSpacing: 0.6, marginBottom: 4,
+  },
+  memoText: { fontSize: 13, color: colors.textPrimary, lineHeight: 18 },
   summaryRow: {
     flexDirection: 'row', gap: 12, marginBottom: 16,
   },

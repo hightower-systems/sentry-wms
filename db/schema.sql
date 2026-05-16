@@ -218,6 +218,11 @@ CREATE TABLE sales_orders (
     -- schema; the column itself is permissive.
     order_total            NUMERIC(12,2),
     customer_shipping_paid NUMERIC(12,2),
+    -- v1.9.0: free-text operator-facing note from the source ERP.
+    -- Surfaced on picker / packer / shipper screens and the dockd
+    -- load-on-scan endpoint so warehouse staff see customer notes
+    -- ("leave at back door", "fragile, double-box", etc.).
+    memo TEXT,
     order_date TIMESTAMPTZ,
     ship_by_date DATE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -231,8 +236,28 @@ CREATE TABLE sales_orders (
     -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
     -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
     latest_inbound_id BIGINT,
-    -- mig 054: free-form CSR note shown on the Outbound > Fraud page.
-    memo TEXT
+    -- v1.10.0 Pipe C: POS endpoint surface columns. Web orders carry
+    -- order_source='web' / order_type='sale' (defaults). POS-source
+    -- orders carry external_txn_ref + idempotency_key + cached_response_body
+    -- so a checkout retry after a transient failure replays the original
+    -- response without double-creating an SO. Refund SOs are negative-
+    -- quantity siblings linked via parent_so_id; the original SO carries
+    -- refunded_at + refund_so_id once the credit memo commits. See
+    -- db/migrations/056_sales_orders_pos_columns.sql.
+    order_source            VARCHAR(20) NOT NULL DEFAULT 'web',
+    external_txn_ref        VARCHAR(128),
+    idempotency_key         VARCHAR(64) UNIQUE,
+    idempotency_body_hash   CHAR(64),
+    cached_response_body    JSONB,
+    order_type              VARCHAR(20) NOT NULL DEFAULT 'sale'
+                            CHECK (order_type IN ('sale','refund')),
+    parent_so_id            INT REFERENCES sales_orders(so_id),
+    refunded_at             TIMESTAMPTZ,
+    refund_so_id            INT REFERENCES sales_orders(so_id)
+    -- mig 054 (fraud-review) adds `memo TEXT` via ALTER TABLE on
+    -- existing deploys. The column is already declared above (line
+    -- 225, v1.9.0 introduction) so the schema.sql initial-load is
+    -- a no-op for the fraud-review migration's memo addition.
 );
 
 CREATE TABLE sales_order_lines (
@@ -377,7 +402,12 @@ CREATE TABLE item_fulfillments (
     status VARCHAR(20) DEFAULT 'SHIPPED',
     shipped_by VARCHAR(100),
     shipped_at TIMESTAMPTZ DEFAULT NOW(),
-    external_id UUID UNIQUE NOT NULL
+    external_id UUID UNIQUE NOT NULL,
+    pre_ship_status VARCHAR(20),
+    voided_at TIMESTAMPTZ,
+    voided_by VARCHAR(100),
+    void_reason VARCHAR(500),
+    shipping_cost NUMERIC(12,2)
 );
 
 CREATE TABLE item_fulfillment_lines (
@@ -631,6 +661,14 @@ CREATE INDEX ix_purchase_orders_warehouse ON purchase_orders(warehouse_id);
 CREATE INDEX ix_purchase_order_lines_po ON purchase_order_lines(po_id);
 CREATE INDEX ix_sales_orders_warehouse ON sales_orders(warehouse_id);
 CREATE INDEX ix_sales_order_lines_so ON sales_order_lines(so_id);
+-- v1.10.0 Pipe C: POS replay + refund lookup paths. Partial indexes
+-- because the columns are NULL for the historical web-order majority.
+CREATE INDEX idx_so_idempotency
+    ON sales_orders (idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_so_external_txn
+    ON sales_orders (external_txn_ref) WHERE external_txn_ref IS NOT NULL;
+CREATE INDEX idx_so_parent
+    ON sales_orders (parent_so_id) WHERE parent_so_id IS NOT NULL;
 
 -- Receiving
 CREATE INDEX ix_item_receipts_po ON item_receipts(po_id);
@@ -1867,3 +1905,27 @@ CREATE TABLE user_dashboard_preferences (
                        CHECK (default_view IN ('charts','table')),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================================
+-- DOCKD IDEMPOTENCY (v1.9.0)
+-- ============================================================
+-- HTTP-layer idempotency cache for the /api/v1/dockd/* surface.
+-- Sentinel-row INSERT...ON CONFLICT pattern: row inserted at the
+-- start of the request transaction with NULL response_body /
+-- response_status; populated before commit. 72h TTL pruned daily
+-- by jobs.cleanup_tasks.cleanup_dockd_idempotency. Identical DDL
+-- lives in db/migrations/054_dockd_integration.sql.
+
+CREATE TABLE dockd_idempotency (
+    token_id            BIGINT       NOT NULL REFERENCES wms_tokens(token_id) ON DELETE CASCADE,
+    idempotency_key     VARCHAR(64)  NOT NULL,
+    endpoint            VARCHAR(50)  NOT NULL,
+    so_number           VARCHAR(128) NOT NULL,
+    request_body_sha256 CHAR(64)     NOT NULL,
+    response_body       JSONB,
+    response_status     SMALLINT,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (token_id, idempotency_key)
+);
+
+CREATE INDEX dockd_idempotency_prune ON dockd_idempotency(created_at);

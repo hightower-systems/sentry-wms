@@ -306,15 +306,53 @@ V150_ENDPOINT_SLUGS = {
 # Adding a new /api/v1/inbound/* route means adding one entry here plus
 # wiring it in the admin UI's inbound-resources checkbox group.
 V170_INBOUND_RESOURCE_BY_ENDPOINT = {
-    "inbound.post_sales_orders":    "sales_orders",
-    "inbound.post_items":           "items",
-    "inbound.post_customers":       "customers",
-    "inbound.post_vendors":         "vendors",
-    "inbound.post_purchase_orders": "purchase_orders",
+    "inbound.post_sales_orders":     "sales_orders",
+    "inbound.post_items":            "items",
+    "inbound.post_customers":        "customers",
+    "inbound.post_vendors":          "vendors",
+    "inbound.post_purchase_orders":  "purchase_orders",
+    # v1.8.x cutover-prep extension: state-based inventory sync from upstream
+    # (cutover seed, FBA mirror, drift correction). See routes/inbound.py
+    # _inventory_update_post + register_inventory_update_route.
+    "inbound.post_inventory_update": "inventory_update",
 }
 
 
 _V150_FLASK_ENDPOINTS = frozenset(V150_ENDPOINT_SLUGS.values())
+
+
+# v1.9.0 dockd: one slug covers all dockd routes. Admins see and select
+# a single capability ("dockd.dispatch") in the token UI; the decorator
+# matches request.endpoint against the frozenset below. Adding a fourth
+# dockd route adds one Flask endpoint name; the slug stays the same so
+# token UX does not churn. Encoded separately from V150_ENDPOINT_SLUGS
+# (1:1 outbound polling) and V170_INBOUND_RESOURCE_BY_ENDPOINT (1:1
+# inbound resource) because dockd's 1:N slug shape is its own model.
+V190_DOCKD_SLUG = "dockd.dispatch"
+
+_V190_DOCKD_FLASK_ENDPOINTS = frozenset({
+    "dockd.get_order",
+    "dockd.ship_order",
+    "dockd.void_ship",
+})
+
+
+# v1.10.0 POS: same 1:N slug shape as dockd. One slug ("pos.dispatch")
+# covers the four counter-sale + refund routes. The constant name
+# follows the V150 / V170 / V190 digit-concat convention; "1100"
+# decodes as v1.10.0+. POS is a fourth direction alongside outbound
+# (V150), inbound (V170), and dockd (V190); a POS token does POS,
+# period, with no cross-direction bridging. Encoded separately so a
+# future v1.10.x route addition lands one Flask endpoint name without
+# touching any other surface.
+V1100_POS_SLUG = "pos.dispatch"
+
+_V1100_POS_FLASK_ENDPOINTS = frozenset({
+    "pos.availability",
+    "pos.validate_cart",
+    "pos.checkout",
+    "pos.refund",
+})
 
 
 def _is_inbound_request(flask_endpoint: Optional[str], path: str) -> bool:
@@ -335,6 +373,25 @@ def _is_outbound_request(flask_endpoint: Optional[str], path: str) -> bool:
     if flask_endpoint and flask_endpoint in _V150_FLASK_ENDPOINTS:
         return True
     return path.startswith("/api/v1/events") or path.startswith("/api/v1/snapshot")
+
+
+def _is_dockd_request(flask_endpoint: Optional[str], path: str) -> bool:
+    """v1.9.0 dockd surface. Mirrors _is_outbound_request: matches by
+    Flask endpoint name OR /api/v1/dockd/ path prefix. The path branch
+    covers test probes that register under arbitrary URLs but real
+    production endpoint names."""
+    if flask_endpoint and flask_endpoint in _V190_DOCKD_FLASK_ENDPOINTS:
+        return True
+    return path.startswith("/api/v1/dockd/")
+
+
+def _is_pos_request(flask_endpoint: Optional[str], path: str) -> bool:
+    """v1.10.0 POS surface. Same shape as _is_dockd_request: matches
+    by Flask endpoint name OR /api/v1/pos/ path prefix so a test probe
+    registered under a non-prefixed URL still hits the POS scope branch."""
+    if flask_endpoint and flask_endpoint in _V1100_POS_FLASK_ENDPOINTS:
+        return True
+    return path.startswith("/api/v1/pos/")
 
 
 def require_wms_token(f):
@@ -419,12 +476,15 @@ def require_wms_token(f):
             )
             return jsonify({"error": "invalid_token"}), 401
 
-        # v1.7.0 Pipe B: route the scope check based on which surface
-        # the request hit. Inbound POST routes use the inbound_resources
-        # array (Decision-S; separate dimension from event_types).
-        # Outbound polling / snapshot routes use the V150 slug list.
+        # v1.7.0 Pipe B / v1.9.0 dockd / v1.10.0 POS: route the scope
+        # check based on which surface the request hit. Inbound POST
+        # routes use the inbound_resources array. Outbound polling /
+        # snapshot routes use the V150 slug list. Dockd routes use the
+        # V190 single slug. POS routes use the V1100 single slug.
         is_inbound = _is_inbound_request(request.endpoint, request.path)
         is_outbound = _is_outbound_request(request.endpoint, request.path)
+        is_dockd = _is_dockd_request(request.endpoint, request.path)
+        is_pos = _is_pos_request(request.endpoint, request.path)
 
         if is_inbound:
             # Cross-direction: an inbound POST requires both a
@@ -454,12 +514,48 @@ def require_wms_token(f):
             }
             if request.endpoint not in allowed_flask:
                 return jsonify({"error": "endpoint_scope_violation"}), 403
+        elif is_dockd:
+            # v1.9.0 dockd is its own direction. A token reaching this
+            # surface must carry the dockd.dispatch slug AND must NOT
+            # have inbound markers (source_system / inbound_resources)
+            # or outbound markers (event_types). Mixed-direction tokens
+            # are explicitly disallowed; a dockd token does dockd, period.
+            if (
+                row.get("source_system")
+                or row.get("inbound_resources")
+                or row.get("event_types")
+            ):
+                return jsonify({"error": "cross_direction_scope_violation"}), 403
+            if V190_DOCKD_SLUG not in (row.get("endpoints") or []):
+                return jsonify({"error": "endpoint_scope_violation"}), 403
+            if request.endpoint not in _V190_DOCKD_FLASK_ENDPOINTS:
+                # Path-prefix matched but no Flask endpoint claim: a
+                # registration bug, fail closed. Mirrors the V-200
+                # fail-closed posture for unmapped endpoints.
+                return jsonify({"error": "endpoint_scope_violation"}), 403
+        elif is_pos:
+            # v1.10.0 POS is a fourth direction. Same posture as dockd:
+            # the token must carry pos.dispatch AND must NOT carry any
+            # outbound (event_types) or inbound (source_system /
+            # inbound_resources) markers. A POS token does POS, period.
+            if (
+                row.get("source_system")
+                or row.get("inbound_resources")
+                or row.get("event_types")
+            ):
+                return jsonify({"error": "cross_direction_scope_violation"}), 403
+            if V1100_POS_SLUG not in (row.get("endpoints") or []):
+                return jsonify({"error": "endpoint_scope_violation"}), 403
+            if request.endpoint not in _V1100_POS_FLASK_ENDPOINTS:
+                # Path-prefix matched but no Flask endpoint claim: a
+                # registration bug, fail closed. Same posture as the
+                # dockd branch above.
+                return jsonify({"error": "endpoint_scope_violation"}), 403
         else:
             # Unknown @require_wms_token-protected route. Fail closed:
             # adding a route under @require_wms_token without claiming
-            # one of the two surface prefixes is a wiring bug. This
-            # mirrors the V-200 fail-closed posture for unmapped
-            # endpoint slugs.
+            # one of the surface prefixes is a wiring bug. This mirrors
+            # the V-200 fail-closed posture for unmapped endpoint slugs.
             return jsonify({"error": "endpoint_scope_violation"}), 403
 
         g.current_token = row
