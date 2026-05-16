@@ -90,7 +90,7 @@ a {
 
 .app-layout {
   display: grid;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: 56px 1fr;
   grid-template-columns: 192px 1fr;
   height: 100vh;
   overflow: hidden;
@@ -115,16 +115,16 @@ a {
 .topbar-logo {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500;
-  font-size: 14px;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 17px;
   color: #fdf4e3;
   letter-spacing: 0.5px;
   white-space: nowrap;
 }
 
 .topbar-breadcrumb {
-  font-size: 13px;
+  font-size: 15px;
   color: #ffffff;
   margin-left: 4px;
 }
@@ -135,12 +135,13 @@ a {
 
 .topbar-wh-picker {
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 6px 12px;
   border-radius: 4px;
   transition: background 0.15s;
   user-select: none;
   display: inline-flex;
   align-items: center;
+  font-size: 15px;
 }
 
 .topbar-wh-picker:hover {

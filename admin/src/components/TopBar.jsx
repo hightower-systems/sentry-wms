@@ -150,7 +150,7 @@ export default function TopBar({ forced = false }) {
   return (
     <div className="topbar">
       <div className="topbar-logo">
-        <svg width="22" height="22" viewBox="0 0 32 32">
+        <svg width="28" height="28" viewBox="0 0 32 32">
           <rect x="1" y="1" width="30" height="30" rx="5" fill="#8e2715"/>
           <rect x="7" y="6" width="7.5" height="20" rx="1.5" fill="none" stroke="#FCF4E3" strokeWidth="1.6"/>
           <rect x="17.5" y="6" width="7.5" height="20" rx="1.5" fill="none" stroke="#FCF4E3" strokeWidth="1.6"/>
@@ -167,10 +167,10 @@ export default function TopBar({ forced = false }) {
             className="topbar-version"
             title={`API version ${serverVersion}`}
             style={{
-              marginLeft: 8,
-              fontSize: 11,
-              fontWeight: 400,
-              opacity: 0.55,
+              marginLeft: 10,
+              fontSize: 13,
+              fontWeight: 500,
+              opacity: 0.75,
               letterSpacing: 0.2,
             }}
           >
