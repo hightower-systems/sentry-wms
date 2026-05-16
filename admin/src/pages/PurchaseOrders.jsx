@@ -21,6 +21,23 @@ function statusDropdownOptions(currentStatus) {
   });
 }
 
+// Surfaces field-level validation errors from the @validate_body
+// decorator alongside flat string errors from the route handlers,
+// so the operator sees what specifically failed instead of a bare
+// "validation_error" label.
+function formatApiError(data, fallback) {
+  if (!data) return fallback;
+  if (Array.isArray(data.details) && data.details.length > 0) {
+    return data.details
+      .map((d) => {
+        const field = Array.isArray(d.loc) && d.loc.length ? d.loc.join('.') : 'request';
+        return `${field}: ${d.msg}`;
+      })
+      .join('; ');
+  }
+  return data.error || fallback;
+}
+
 export default function PurchaseOrders() {
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get('q') || '');
@@ -175,8 +192,9 @@ export default function PurchaseOrders() {
       closeEdit();
       loadOrders();
     } else {
-      const data = await res?.json();
-      setEditError(data?.error || 'Failed to save');
+      let data = null;
+      try { data = await res?.json(); } catch (_) { /* non-JSON body */ }
+      setEditError(formatApiError(data, 'Failed to save'));
     }
   }
 
@@ -193,10 +211,11 @@ export default function PurchaseOrders() {
           : l,
       ));
     } else {
-      const data = await res?.json();
+      let data = null;
+      try { data = await res?.json(); } catch (_) { /* non-JSON body */ }
       setLineErrors((e) => ({
         ...e,
-        [line.po_line_id]: data?.error || 'Failed to update',
+        [line.po_line_id]: formatApiError(data, 'Failed to update'),
       }));
     }
   }
@@ -209,10 +228,11 @@ export default function PurchaseOrders() {
     if (res?.ok) {
       setEditLines((ls) => ls.filter((l) => l.po_line_id !== line.po_line_id));
     } else {
-      const data = await res?.json();
+      let data = null;
+      try { data = await res?.json(); } catch (_) { /* non-JSON body */ }
       setLineErrors((e) => ({
         ...e,
-        [line.po_line_id]: data?.error || 'Failed to remove',
+        [line.po_line_id]: formatApiError(data, 'Failed to remove'),
       }));
     }
   }
@@ -275,8 +295,9 @@ export default function PurchaseOrders() {
         setResolvedItem(null);
         setSkuSuggestions([]);
       } else {
-        const data = await res?.json();
-        setNewLineError(data?.error || 'Failed to add line');
+        let data = null;
+        try { data = await res?.json(); } catch (_) { /* non-JSON body */ }
+        setNewLineError(formatApiError(data, 'Failed to add line'));
       }
     } finally {
       setAddingLine(false);
@@ -437,7 +458,23 @@ export default function PurchaseOrders() {
           }
           size="wide"
         >
-          {editError && <div className="form-error" style={{ marginBottom: 12 }}>{editError}</div>}
+          {editError && (
+            <div
+              className="form-error"
+              style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 5,
+                background: 'var(--danger-bg)',
+                padding: '10px 14px',
+                margin: '-20px -20px 16px',
+                borderBottom: '1px solid var(--danger)',
+                fontSize: 13,
+              }}
+            >
+              {editError}
+            </div>
+          )}
 
           <section className="section">
             <div className="section-title">Header</div>
