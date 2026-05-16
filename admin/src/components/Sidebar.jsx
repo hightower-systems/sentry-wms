@@ -83,7 +83,15 @@ export default function Sidebar() {
 
   useEffect(() => {
     let cancelled = false;
-    api.get('/admin/settings/require_packing_before_shipping').then(async (res) => {
+    // Background fetch - the Sidebar uses this to filter the Packing
+    // entry but a USER who lacks the settings grant should not see
+    // the global Permissions Error popup over it. silentPermissionDenied
+    // suppresses the popup; the call still resolves and we fall back
+    // to packingEnabled=true (default UI state).
+    api.get(
+      '/admin/settings/require_packing_before_shipping',
+      { silentPermissionDenied: true },
+    ).then(async (res) => {
       if (!res?.ok || cancelled) return;
       const data = await res.json();
       setPackingEnabled(data?.value !== 'false');
@@ -93,7 +101,14 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (!warehouseId) return;
-    api.get(`/admin/dashboard?warehouse_id=${warehouseId}`).then(async (res) => {
+    // Same silent treatment for the dashboard counts (sidebar badges).
+    // /admin/dashboard is intentionally any-auth so this typically
+    // succeeds, but a future tightening should not blow up the UI
+    // with a modal on every page load.
+    api.get(
+      `/admin/dashboard?warehouse_id=${warehouseId}`,
+      { silentPermissionDenied: true },
+    ).then(async (res) => {
       if (!res || !res.ok) return;
       const data = await res.json();
       setCounts({

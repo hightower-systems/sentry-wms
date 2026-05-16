@@ -205,9 +205,17 @@ export default function Dashboard() {
     const qp = new URLSearchParams({
       start: range.start, end: range.end, warehouse_id: String(warehouseId),
     });
-    const res = await api.get(`/v1/dashboard/productivity?${qp}`);
+    // P6.1: productivity is ADMIN-only upstream; a USER hitting the
+    // home page should not see "Forbidden" inline. Silent the popup
+    // and on 403 just clear the payload so the widget shows nothing.
+    const res = await api.get(
+      `/v1/dashboard/productivity?${qp}`,
+      { silentPermissionDenied: true },
+    );
     if (res?.ok) {
       setPayload(await res.json());
+    } else if (res?.status === 403) {
+      setPayload(null);
     } else {
       const data = await res?.json();
       setPayload(null);
