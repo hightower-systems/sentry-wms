@@ -581,6 +581,14 @@ a {
   overflow-y: auto;
 }
 
+/* Wide variant for data-rich detail modals (SO, PO, etc.) so the
+   per-component address fields and line-item tables get the canvas
+   width they need without forcing a horizontal scroll. */
+.modal.modal-wide {
+  width: 1280px;
+  max-width: 95vw;
+}
+
 .modal-header {
   display: flex;
   align-items: center;

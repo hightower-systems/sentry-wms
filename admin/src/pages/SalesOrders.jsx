@@ -227,6 +227,7 @@ export default function SalesOrders() {
           title={`SO ${selectedSO.so_number}`}
           onClose={() => { setSelectedSO(null); setSOLines([]); }}
           footer={<button className="btn" onClick={() => { setSelectedSO(null); setSOLines([]); }}>Close</button>}
+          size="wide"
         >
           <div className="detail-grid" style={{ marginBottom: 16 }}>
             <span className="detail-label">Customer</span><span>{selectedSO.customer_name || '-'}</span>
@@ -342,6 +343,7 @@ export default function SalesOrders() {
               <button className="btn btn-primary" onClick={saveAddressEdit}>Save Addresses</button>
             </>
           }
+          size="wide"
         >
           {addressError && <div className="form-error" style={{ marginBottom: 12 }}>{addressError}</div>}
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>

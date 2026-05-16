@@ -155,6 +155,7 @@ export default function PurchaseOrders() {
           title={`PO ${selectedPO.po_number}`}
           onClose={() => { setSelectedPO(null); setPOLines([]); }}
           footer={<button className="btn" onClick={() => { setSelectedPO(null); setPOLines([]); }}>Close</button>}
+          size="wide"
         >
           <div className="detail-grid" style={{ marginBottom: 16 }}>
             <span className="detail-label">Vendor</span><span>{selectedPO.vendor || '-'}</span>
