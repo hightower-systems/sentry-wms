@@ -132,6 +132,28 @@ export default function Users() {
     }
   }
 
+  function selectAllWarehouses() {
+    setForm({
+      ...form,
+      warehouse_ids: warehouses.map((wh) => wh.warehouse_id),
+    });
+  }
+
+  function clearWarehouses() {
+    setForm({ ...form, warehouse_ids: [] });
+  }
+
+  function selectAllFunctions() {
+    setForm({
+      ...form,
+      allowed_functions: ALL_FUNCTIONS.map((fn) => fn.key),
+    });
+  }
+
+  function clearFunctions() {
+    setForm({ ...form, allowed_functions: [] });
+  }
+
   function warehouseCodes(warehouseIds) {
     if (!warehouseIds || warehouseIds.length === 0) return '-';
     return warehouseIds
@@ -195,7 +217,28 @@ export default function Users() {
             </select>
           </div>
           <div className="form-group">
-            <label>Warehouses</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label>Warehouses</label>
+              {warehouses.length > 0 && (
+                <span style={{ fontSize: 12 }}>
+                  <button
+                    type="button"
+                    onClick={selectAllWarehouses}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                  >
+                    Select all
+                  </button>
+                  <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>/</span>
+                  <button
+                    type="button"
+                    onClick={clearWarehouses}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                  >
+                    Clear
+                  </button>
+                </span>
+              )}
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0' }}>
               {warehouses.map((wh) => (
                 <label key={wh.warehouse_id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -212,7 +255,26 @@ export default function Users() {
             </div>
           </div>
           <div className="form-group">
-            <label>Mobile Module Access</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label>Mobile Module Access</label>
+              <span style={{ fontSize: 12 }}>
+                <button
+                  type="button"
+                  onClick={selectAllFunctions}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                >
+                  Select all
+                </button>
+                <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>/</span>
+                <button
+                  type="button"
+                  onClick={clearFunctions}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                >
+                  Clear
+                </button>
+              </span>
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '8px 0' }}>
               {ALL_FUNCTIONS.map((fn) => (
                 <label key={fn.key} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', minWidth: 100 }}>
