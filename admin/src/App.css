@@ -290,20 +290,21 @@ a {
 .sidebar-group-label {
   width: 100%;
   background: rgba(142,39,22,0.4);
-  font-size: 9px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
   color: #fdf4e3;
-  padding: 4px 10px;
+  padding: 5px 10px;
 }
 
 .sidebar-link {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 14px;
+  font-weight: 600;
   color: #ffffff;
   border-left: 3px solid transparent;
   cursor: pointer;
