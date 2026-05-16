@@ -28,16 +28,35 @@ def pending_putaway(warehouse_id):
         return denied
 
     # Putaway sources include both pure Staging bins (RECV-01 etc.) and
-    # PickableStaging bins (OWTRAY01..76, OWSTICKERED) — the latter are
+    # PickableStaging bins (OWTRAY01..76, OWSTICKERED). The latter are
     # used by AvidMax's receive flow as tray-staging-before-putaway and
     # remain Pickable for sales-pick concurrency. Mirrors the receive
     # screen's set in mobile/src/screens/ReceiveScreen.js:66.
+    #
+    # suggested_bin: priority-1 preferred_bins entry within the same
+    # warehouse, falling back to items.default_bin_id (also constrained
+    # to this warehouse). Mirrors the single-item /suggest/<item_id>
+    # logic so the Put Away dashboard surfaces the same hint as the
+    # mobile scan flow without an extra round trip per row.
     rows = g.db.execute(
         text(
             """
             SELECT inv.inventory_id, inv.item_id, i.sku, i.item_name, i.upc,
                    inv.quantity_on_hand AS quantity, inv.bin_id, b.bin_code,
-                   inv.lot_number
+                   inv.lot_number,
+                   COALESCE(
+                       (SELECT pbb.bin_code
+                        FROM preferred_bins pb
+                        JOIN bins pbb ON pbb.bin_id = pb.bin_id
+                        WHERE pb.item_id = inv.item_id
+                          AND pbb.warehouse_id = :warehouse_id
+                        ORDER BY pb.priority ASC
+                        LIMIT 1),
+                       (SELECT db.bin_code
+                        FROM bins db
+                        WHERE db.bin_id = i.default_bin_id
+                          AND db.warehouse_id = :warehouse_id)
+                   ) AS suggested_bin
             FROM inventory inv
             JOIN items i ON i.item_id = inv.item_id
             JOIN bins b ON b.bin_id = inv.bin_id
@@ -65,6 +84,7 @@ def pending_putaway(warehouse_id):
                 "bin_id": r.bin_id,
                 "bin_code": r.bin_code,
                 "lot_number": r.lot_number,
+                "suggested_bin": r.suggested_bin,
             }
             for r in rows
         ]
