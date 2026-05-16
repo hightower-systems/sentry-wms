@@ -22,7 +22,7 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import ACTION_POS_CHECKOUT, ACTION_POS_REFUND
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 
@@ -34,7 +34,7 @@ from routes.admin import admin_bp
 
 @admin_bp.route("/pos/sales-orders", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("pos-activity")
 @with_db
 def list_pos_sales_orders():
     """Paginated list of POS sales orders with the cashier/terminal/total
@@ -176,7 +176,7 @@ def list_pos_sales_orders():
 
 @admin_bp.route("/pos/summary", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("pos-activity")
 @with_db
 def pos_summary():
     """Today's KPI counters for the dashboard top bar.

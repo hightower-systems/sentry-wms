@@ -71,6 +71,10 @@ def require_auth(f):
         # Verify the user is still active and refresh role/warehouse_ids from DB.
         # This ensures that deactivated accounts and role/warehouse changes take
         # effect immediately rather than waiting for the JWT to expire.
+        # avid-overhaul-mk1 P6.1: same session also fetches the user's
+        # per-page web-admin grants (USER role only). Stashed on payload
+        # so the @require_admin_or_page_permission decorator stays a
+        # pure list lookup; ADMIN bypasses with allowed_pages=None.
         import models.database as _db
         db = _db.SessionLocal()
         try:
@@ -82,6 +86,16 @@ def require_auth(f):
                 ),
                 {"uid": payload["user_id"]},
             ).fetchone()
+            allowed_pages = None
+            if row and row.is_active and row.role != "ADMIN":
+                page_rows = db.execute(
+                    text(
+                        "SELECT page_key FROM user_page_permissions "
+                        "WHERE user_id = :uid"
+                    ),
+                    {"uid": payload["user_id"]},
+                ).fetchall()
+                allowed_pages = [r.page_key for r in page_rows]
         finally:
             db.close()
 
@@ -98,6 +112,7 @@ def require_auth(f):
         # checks always reflect the current state.
         payload["role"] = row.role
         payload["warehouse_ids"] = list(row.warehouse_ids) if row.warehouse_ids else []
+        payload["allowed_pages"] = allowed_pages  # None for ADMIN, list for USER
 
         g.current_user = payload
 
@@ -222,37 +237,30 @@ def require_role(*roles):
 def require_admin_or_page_permission(page_key):
     """avid-overhaul-mk1 P6.1: web-admin permission gate.
 
-    ADMIN bypasses the check (full access by definition). Any other
-    role must carry an explicit row in user_page_permissions for
-    this page_key, otherwise the request is rejected with 403 +
-    {error: "Permission denied", page_key: "..."} so the frontend
-    can surface a clean "Permissions Error" popup.
+    ADMIN bypasses the check (g.current_user["allowed_pages"] is None).
+    Any other role must carry the page_key in their allowed_pages
+    list (populated at auth time from user_page_permissions),
+    otherwise the request is rejected with 403 + {error:
+    "Permission denied", page_key: "..."} so the frontend can
+    surface a clean "Permissions Error" popup.
 
-    Must be applied AFTER @with_db so g.db is available for the
-    permission lookup. The query is a single PK probe on
-    user_page_permissions(user_id, page_key) so the overhead is
-    bounded even on hot endpoints.
+    Drop-in replacement for @require_role("ADMIN") - applied in the
+    same decorator slot (after @require_auth, before @validate_body
+    / @with_db).
     """
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
             user = g.current_user
-            if user.get("role") == "ADMIN":
+            allowed = user.get("allowed_pages")
+            # ADMIN: allowed is None (sentinel) -> pass.
+            # USER:  allowed is a list; page_key must be in it.
+            if allowed is None or page_key in allowed:
                 return f(*args, **kwargs)
-            user_id = user.get("user_id")
-            row = g.db.execute(
-                text(
-                    "SELECT 1 FROM user_page_permissions "
-                    "WHERE user_id = :uid AND page_key = :pk LIMIT 1"
-                ),
-                {"uid": user_id, "pk": page_key},
-            ).fetchone()
-            if not row:
-                return jsonify({
-                    "error": "Permission denied",
-                    "page_key": page_key,
-                }), 403
-            return f(*args, **kwargs)
+            return jsonify({
+                "error": "Permission denied",
+                "page_key": page_key,
+            }), 403
 
         return decorated
 

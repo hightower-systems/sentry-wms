@@ -32,7 +32,7 @@ from constants import (
     ACTION_CONSUMER_GROUP_UPDATE,
     ACTION_CONSUMER_GROUP_DELETE,
 )
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.consumer_groups import (
@@ -74,7 +74,7 @@ def _row_to_group(row) -> dict:
 
 @admin_bp.route("/connector-registry", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @validate_body(ConnectorCreateRequest)
 @with_db
 def create_registered_connector(validated):
@@ -111,7 +111,7 @@ def create_registered_connector(validated):
 
 @admin_bp.route("/connector-registry", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @with_db
 def list_registered_connectors():
     rows = g.db.execute(
@@ -125,7 +125,7 @@ def list_registered_connectors():
 
 @admin_bp.route("/connector-registry/<connector_id>", methods=["PATCH"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @validate_body(ConnectorUpdateRequest)
 @with_db
 def update_registered_connector(validated, connector_id):
@@ -185,7 +185,7 @@ def update_registered_connector(validated, connector_id):
 
 @admin_bp.route("/connector-registry/<connector_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @with_db
 def delete_registered_connector(connector_id):
     """Delete a connector when no consumer_groups or
@@ -266,7 +266,7 @@ def delete_registered_connector(connector_id):
 
 @admin_bp.route("/consumer-groups", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @validate_body(ConsumerGroupCreateRequest)
 @with_db
 def create_consumer_group(validated):
@@ -379,7 +379,7 @@ def create_consumer_group(validated):
 
 @admin_bp.route("/consumer-groups", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @with_db
 def list_consumer_groups():
     rows = g.db.execute(
@@ -395,7 +395,7 @@ def list_consumer_groups():
 
 @admin_bp.route("/consumer-groups/<consumer_group_id>", methods=["PATCH"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @validate_body(ConsumerGroupUpdateRequest)
 @with_db
 def update_consumer_group(validated, consumer_group_id):
@@ -445,7 +445,7 @@ def update_consumer_group(validated, consumer_group_id):
 
 @admin_bp.route("/consumer-groups/<consumer_group_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("consumer-groups")
 @with_db
 def delete_consumer_group(consumer_group_id):
     # v1.5.1 V-207 (#148): RETURNING the connector_id + last_cursor so

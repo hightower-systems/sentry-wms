@@ -12,7 +12,7 @@ since there is no customers table.
 from flask import g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 
@@ -188,7 +188,12 @@ def _search_customers(pattern: str, warehouse_id: int | None) -> list[dict]:
 
 @admin_bp.route("/search", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+# avid-overhaul-mk1 P6.1: reachable by any authenticated user so the
+# topbar typeahead works for USER roles. Results across items / bins /
+# POs / SOs are bounded by the warehouse_scope check inside
+# require_auth (USERs cannot pass a warehouse_id outside their grants),
+# so a USER without specific page permissions can still see search
+# hits but their click-through lands on a 403 from the gated endpoint.
 @with_db
 def global_search():
     raw_q = (request.args.get("q") or "").strip()

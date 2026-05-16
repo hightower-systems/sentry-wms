@@ -31,8 +31,8 @@ from constants import (
 )
 from middleware.auth_middleware import (
     V150_ENDPOINT_SLUGS,
+    require_admin_or_page_permission,
     require_auth,
-    require_role,
     validate_pepper_config,
 )
 from middleware.db import with_db
@@ -158,7 +158,7 @@ def _row_to_listing(row) -> dict:
 
 @admin_bp.route("/scope-catalog", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("api-tokens")
 @with_db
 def scope_catalog():
     """Serve the admin UI's token-create modal its authoritative
@@ -249,7 +249,7 @@ def scope_catalog():
 
 @admin_bp.route("/tokens", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("api-tokens")
 @validate_body(CreateTokenRequest)
 @with_db
 def create_token(validated):
@@ -436,7 +436,7 @@ def create_token(validated):
 
 @admin_bp.route("/tokens", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("api-tokens")
 @with_db
 def list_tokens():
     """Return every wms_tokens row with its rotation-age status. No plaintext."""
@@ -458,7 +458,7 @@ def list_tokens():
 
 @admin_bp.route("/tokens/<int:token_id>/rotate", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("api-tokens")
 @with_db
 def rotate_token(token_id):
     """Issue a new plaintext, replace the hash, bump rotated_at. Plaintext once."""
@@ -532,7 +532,7 @@ def rotate_token(token_id):
 
 @admin_bp.route("/tokens/<int:token_id>/revoke", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("api-tokens")
 @with_db
 def revoke_token(token_id):
     """Flip status to revoked + stamp revoked_at. The cache TTL means
@@ -575,7 +575,7 @@ def revoke_token(token_id):
 
 @admin_bp.route("/tokens/<int:token_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("api-tokens")
 @with_db
 def delete_token(token_id):
     """Hard delete a token row. The decorator already rejects the hash

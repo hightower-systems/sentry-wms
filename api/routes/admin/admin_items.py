@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from pydantic import ValidationError
 
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from datetime import timezone
@@ -32,7 +32,7 @@ from utils.validation import validate_body
 
 @admin_bp.route("/items", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def list_items():
     page = request.args.get("page", 1, type=int)
@@ -109,7 +109,7 @@ def list_items():
 
 @admin_bp.route("/items/<int:item_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def get_item(item_id):
     item = g.db.execute(
@@ -178,7 +178,7 @@ def get_item(item_id):
 
 @admin_bp.route("/items", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @validate_body(CreateItemRequest)
 @with_db
 def create_item(validated):
@@ -226,7 +226,7 @@ def create_item(validated):
 
 @admin_bp.route("/items/<int:item_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @validate_body(UpdateItemRequest)
 @with_db
 def update_item(item_id, validated):
@@ -270,7 +270,7 @@ def update_item(item_id, validated):
 
 @admin_bp.route("/items/<int:item_id>/archive", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def archive_item(item_id):
     existing = g.db.execute(text("SELECT item_id, is_active FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
@@ -285,7 +285,7 @@ def archive_item(item_id):
 
 @admin_bp.route("/items/<int:item_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def delete_item(item_id):
     existing = g.db.execute(text("SELECT item_id FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
@@ -328,7 +328,7 @@ def delete_item(item_id):
 
 @admin_bp.route("/inventory", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("inventory")
 @with_db
 def list_inventory():
     page = request.args.get("page", 1, type=int)
@@ -454,7 +454,7 @@ def _validate_row(entity_type, rec):
 
 @admin_bp.route("/import/<entity_type>", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("imports")
 @with_db
 def csv_import(entity_type):
     if entity_type not in _IMPORT_ROW_SCHEMAS:
@@ -829,7 +829,7 @@ def _import_inventory_adjustment(db, row: InventoryAdjustmentImportRow):
 
 @admin_bp.route("/preferred-bins", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @with_db
 def list_preferred_bins():
     item_id = request.args.get("item_id", type=int)
@@ -887,7 +887,7 @@ def list_preferred_bins():
 
 @admin_bp.route("/preferred-bins", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @validate_body(CreatePreferredBinRequest)
 @with_db
 def create_preferred_bin(validated):
@@ -911,7 +911,7 @@ def create_preferred_bin(validated):
 
 @admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @validate_body(UpdatePreferredBinRequest)
 @with_db
 def update_preferred_bin(preferred_bin_id, validated):
@@ -927,7 +927,7 @@ def update_preferred_bin(preferred_bin_id, validated):
 
 @admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @with_db
 def delete_preferred_bin(preferred_bin_id):
     g.db.execute(

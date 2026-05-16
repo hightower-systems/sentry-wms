@@ -16,7 +16,7 @@ import math
 from flask import g, jsonify, request
 from sqlalchemy import text
 
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.vendors import CreateVendorRequest, UpdateVendorRequest
@@ -43,7 +43,7 @@ def _vendor_row_to_dict(row):
 
 @admin_bp.route("/vendors", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("vendors")
 @with_db
 def list_vendors():
     page = request.args.get("page", 1, type=int)
@@ -95,7 +95,7 @@ def list_vendors():
 
 @admin_bp.route("/vendors/<uuid:canonical_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("vendors")
 @with_db
 def get_vendor(canonical_id):
     row = g.db.execute(
@@ -116,7 +116,7 @@ def get_vendor(canonical_id):
 
 @admin_bp.route("/vendors", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("vendors")
 @validate_body(CreateVendorRequest)
 @with_db
 def create_vendor(validated):
@@ -146,7 +146,7 @@ def create_vendor(validated):
 
 @admin_bp.route("/vendors/<uuid:canonical_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("vendors")
 @validate_body(UpdateVendorRequest)
 @with_db
 def update_vendor(canonical_id, validated):
@@ -182,7 +182,7 @@ def update_vendor(canonical_id, validated):
 
 @admin_bp.route("/vendors/<uuid:canonical_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("vendors")
 @with_db
 def delete_vendor(canonical_id):
     existing = g.db.execute(

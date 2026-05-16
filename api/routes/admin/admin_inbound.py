@@ -25,7 +25,7 @@ Endpoints:
 
 from flask import jsonify, request, g
 
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from sqlalchemy import text
@@ -76,7 +76,7 @@ def _activity_union_sql(filter_resource: str | None) -> str:
 
 @admin_bp.route("/inbound/activity", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("inbound")
 @with_db
 def list_inbound_activity():
     """Recent inbound activity across all five resources.
@@ -166,7 +166,7 @@ def list_inbound_activity():
     "/inbound/activity/<resource>/<int:inbound_id>", methods=["GET"]
 )
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("inbound")
 @with_db
 def get_inbound_row(resource: str, inbound_id: int):
     """Detail view: source_payload + canonical_payload + ingest metadata.

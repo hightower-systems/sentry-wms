@@ -21,7 +21,7 @@ from constants import (
     ACTION_SO_MEMO_EDITED,
     ROLE_ADMIN,
 )
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.purchase_orders import (
@@ -50,7 +50,7 @@ from utils.validation import validate_body
 
 @admin_bp.route("/purchase-orders", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @with_db
 def list_purchase_orders():
     page = request.args.get("page", 1, type=int)
@@ -109,7 +109,7 @@ def list_purchase_orders():
 
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @with_db
 def get_purchase_order(po_id):
     po = g.db.execute(
@@ -149,7 +149,7 @@ def get_purchase_order(po_id):
 
 @admin_bp.route("/purchase-orders", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @validate_body(CreatePurchaseOrderRequest)
 @with_db
 def create_purchase_order(validated):
@@ -204,7 +204,7 @@ PO_EDIT_BLOCKED_STATUSES = {PO_CLOSED, PO_ARCHIVED}
 
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @validate_body(UpdatePurchaseOrderRequest)
 @with_db
 def update_purchase_order(po_id, validated):
@@ -286,7 +286,7 @@ def update_purchase_order(po_id, validated):
 
 @admin_bp.route("/purchase-orders/<int:po_id>/lines", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @validate_body(AddPOLineRequest)
 @with_db
 def add_purchase_order_line(po_id, validated):
@@ -370,7 +370,7 @@ def add_purchase_order_line(po_id, validated):
 
 @admin_bp.route("/purchase-orders/<int:po_id>/lines/<int:po_line_id>", methods=["PATCH"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @validate_body(UpdatePOLineRequest)
 @with_db
 def update_purchase_order_line(po_id, po_line_id, validated):
@@ -435,7 +435,7 @@ def update_purchase_order_line(po_id, po_line_id, validated):
 
 @admin_bp.route("/purchase-orders/<int:po_id>/lines/<int:po_line_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @with_db
 def delete_purchase_order_line(po_id, po_line_id):
     po = g.db.execute(
@@ -497,7 +497,7 @@ def delete_purchase_order_line(po_id, po_line_id):
 
 @admin_bp.route("/purchase-orders/<int:po_id>/close", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @with_db
 def close_purchase_order(po_id):
     po = g.db.execute(
@@ -519,7 +519,7 @@ def close_purchase_order(po_id):
 
 @admin_bp.route("/purchase-orders/<int:po_id>/reopen", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("purchase-orders")
 @with_db
 def reopen_purchase_order(po_id):
     po = g.db.execute(
@@ -545,7 +545,7 @@ def reopen_purchase_order(po_id):
 
 @admin_bp.route("/sales-orders", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @with_db
 def list_sales_orders():
     page = request.args.get("page", 1, type=int)
@@ -675,7 +675,7 @@ def list_sales_orders():
 
 @admin_bp.route("/sales-orders/<int:so_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @with_db
 def get_sales_order(so_id):
     so = g.db.execute(
@@ -745,7 +745,7 @@ def get_sales_order(so_id):
 
 @admin_bp.route("/sales-orders/<int:so_id>/picking-ticket", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("picking-tickets")
 @with_db
 def get_picking_ticket(so_id):
     """Picking-ticket view of an SO: header + lines with the top-priority
@@ -822,7 +822,7 @@ def get_picking_ticket(so_id):
 
 @admin_bp.route("/sales-orders/mark-printed", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("picking-tickets")
 @validate_body(MarkSalesOrdersPrintedRequest)
 @with_db
 def mark_sales_orders_printed(validated):
@@ -855,7 +855,7 @@ def mark_sales_orders_printed(validated):
 
 @admin_bp.route("/sales-orders", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @validate_body(CreateSalesOrderRequest)
 @with_db
 def create_sales_order(validated):
@@ -908,7 +908,7 @@ def create_sales_order(validated):
 
 @admin_bp.route("/sales-orders/<int:so_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @validate_body(UpdateSalesOrderRequest)
 @with_db
 def update_sales_order(so_id, validated):
@@ -918,8 +918,8 @@ def update_sales_order(so_id, validated):
     customer callbacks requesting address / ship-method / memo corrections
     after picking has started. Mirrors the looser status policy on the
     /address PATCH endpoint below (admin bypasses the OPEN-only gate there).
-    Endpoint remains @require_role("ADMIN") so non-admin roles cannot
-    invoke it regardless of SO status.
+    Endpoint requires the sales-orders page permission (or ADMIN) so
+    non-permitted roles cannot invoke it regardless of SO status.
     """
     data = validated.model_dump(exclude_unset=True)
 
@@ -1042,7 +1042,7 @@ def update_sales_order_address(so_id, validated):
 
 @admin_bp.route("/sales-orders/<int:so_id>/memo", methods=["PATCH"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @validate_body(UpdateSalesOrderMemoRequest)
 @with_db
 def update_sales_order_memo(so_id, validated):
@@ -1079,7 +1079,7 @@ def update_sales_order_memo(so_id, validated):
 
 @admin_bp.route("/sales-orders/<int:so_id>/push-to-queue", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("fraud")
 @with_db
 def push_sales_order_to_queue(so_id):
     """mig 054: clear an auto-flagged fraud SO and put it back into
@@ -1117,7 +1117,7 @@ def push_sales_order_to_queue(so_id):
 
 @admin_bp.route("/sales-orders/<int:so_id>/cancel", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @with_db
 def cancel_sales_order(so_id):
     """Operator-initiated cancel. Delegates to the shared
@@ -1147,7 +1147,7 @@ def cancel_sales_order(so_id):
 
 @admin_bp.route("/short-picks", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("sales-orders")
 @with_db
 def get_short_picks():
     """Return recent short pick events from the audit log."""

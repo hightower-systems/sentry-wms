@@ -798,6 +798,65 @@ class TestWebAdminPagePermissions:
         assert count == 0
 
 
+class TestPagePermissionEnforcement:
+    """avid-overhaul-mk1 P6.1b: confirms @require_admin_or_page_permission
+    actually gates the wired endpoints. A USER with the "items" grant
+    gets through to /admin/items but is rejected from /admin/vendors
+    and /admin/purchase-orders with the structured 403 the frontend
+    looks for."""
+
+    def test_user_with_items_grant_can_list_items(self, client):
+        _, headers = _web_user_with_pages(
+            client, ["items"], username="perm_user_items",
+        )
+        resp = client.get("/api/admin/items", headers=headers)
+        assert resp.status_code == 200
+
+    def test_user_without_grant_is_rejected_with_page_key(self, client):
+        _, headers = _web_user_with_pages(
+            client, ["items"], username="perm_user_no_vendors",
+        )
+        resp = client.get("/api/admin/vendors", headers=headers)
+        assert resp.status_code == 403
+        body = resp.get_json()
+        assert body["error"] == "Permission denied"
+        assert body["page_key"] == "vendors"
+
+    def test_user_with_no_grants_is_rejected_everywhere(self, client):
+        _, headers = _web_user_with_pages(
+            client, [], username="perm_user_empty",
+        )
+        for path in [
+            "/api/admin/items",
+            "/api/admin/sales-orders",
+            "/api/admin/purchase-orders",
+        ]:
+            resp = client.get(path, headers=headers)
+            assert resp.status_code == 403, f"{path} unexpectedly returned {resp.status_code}"
+
+    def test_user_can_hit_dashboard_without_grants(self, client):
+        # /dashboard intentionally has no permission gate so the sidebar
+        # can show badges for any authenticated USER.
+        _, headers = _web_user_with_pages(
+            client, [], username="perm_user_dashboard",
+        )
+        resp = client.get(
+            "/api/admin/dashboard?warehouse_id=1", headers=headers,
+        )
+        assert resp.status_code == 200
+
+    def test_user_can_hit_topbar_search_without_grants(self, client):
+        # /search keeps any-auth access so the topbar typeahead works
+        # for USERs regardless of their page grants.
+        _, headers = _web_user_with_pages(
+            client, [], username="perm_user_search",
+        )
+        resp = client.get(
+            "/api/admin/search?q=TST&warehouse_id=1", headers=headers,
+        )
+        assert resp.status_code == 200
+
+
 class TestVendorsCRUD:
     """avid-overhaul-mk1 P5.1: admin CRUD over the canonical vendors
     table. Validates create / list / get / update / delete plus the
