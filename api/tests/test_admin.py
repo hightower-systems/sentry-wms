@@ -604,6 +604,81 @@ class TestSalesOrders:
         assert "tracking_number" in so
         assert "shipped_at" in so
 
+    def test_list_sales_orders_includes_printed_at(self, client, auth_headers):
+        # mig 057 column. Default value is NULL until /mark-printed
+        # stamps it.
+        resp = client.get("/api/admin/sales-orders", headers=auth_headers)
+        so = resp.get_json()["sales_orders"][0]
+        assert "printed_at" in so
+        assert so["printed_at"] is None
+
+
+class TestSalesOrdersHidePrintedAndMarkPrinted:
+    """avid-overhaul-mk1 mig 057: printed_at column drives the
+    Picking Tickets queue's hide-printed filter. The endpoint that
+    stamps printed_at is /admin/sales-orders/mark-printed - server
+    only sets the timestamp when the client confirms the ticket
+    render reached the operator."""
+
+    def test_mark_printed_stamps_timestamp(self, client, auth_headers):
+        # SO 1 starts unprinted.
+        before = client.get("/api/admin/sales-orders/1", headers=auth_headers).get_json()
+        assert before["sales_order"].get("printed_at") in (None, "")
+        resp = client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data["marked"]) == 1
+        assert data["marked"][0]["so_id"] == 1
+        assert data["marked"][0]["printed_at"] is not None
+
+        # Now the row carries the timestamp.
+        printed_at = _query_val("SELECT printed_at FROM sales_orders WHERE so_id = 1")
+        assert printed_at is not None
+
+    def test_mark_printed_is_idempotent(self, client, auth_headers):
+        # Stamping twice does not update an already-printed row, so the
+        # original render-confirm timestamp survives.
+        client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        first = _query_val("SELECT printed_at FROM sales_orders WHERE so_id = 1")
+        resp = client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert len(resp.get_json()["marked"]) == 0  # row was already non-null
+        second = _query_val("SELECT printed_at FROM sales_orders WHERE so_id = 1")
+        assert second == first
+
+    def test_hide_printed_filters_list(self, client, auth_headers):
+        # Mark SO 1 as printed, then assert the hide_printed list
+        # excludes it while the unfiltered list still shows it.
+        client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        unfiltered = client.get(
+            "/api/admin/sales-orders?warehouse_id=1&per_page=200",
+            headers=auth_headers,
+        ).get_json()
+        filtered = client.get(
+            "/api/admin/sales-orders?warehouse_id=1&per_page=200&hide_printed=true",
+            headers=auth_headers,
+        ).get_json()
+        unfiltered_ids = {s["so_id"] for s in unfiltered["sales_orders"]}
+        filtered_ids = {s["so_id"] for s in filtered["sales_orders"]}
+        assert 1 in unfiltered_ids
+        assert 1 not in filtered_ids
+
     def test_get_sales_order(self, client, auth_headers):
         resp = client.get("/api/admin/sales-orders/1", headers=auth_headers)
         assert resp.status_code == 200

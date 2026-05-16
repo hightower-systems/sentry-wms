@@ -72,6 +72,16 @@ export default function PickingTicketPrintAll() {
       if (out.length === 0) setError('No tickets could be loaded.');
       setTickets(out);
       setLoading(false);
+      // mig 057: only mark SOs whose ticket data actually made it into
+      // the render array. Orders that failed earlier (404, network
+      // error, malformed payload) stay unprinted so they reappear in
+      // the queue and the operator can retry rather than silently
+      // losing them.
+      if (out.length > 0) {
+        api.post('/admin/sales-orders/mark-printed', {
+          so_ids: out.map((t) => t.so.so_id),
+        }).catch(() => {});
+      }
     }
     load();
     return () => { cancelled = true; };

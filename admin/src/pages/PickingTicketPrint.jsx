@@ -226,6 +226,16 @@ export default function PickingTicketPrint() {
       setSo(data.sales_order || null);
       setLines(data.lines || []);
       setLoading(false);
+      // mig 057: confirm-render trigger. Once we have both the SO
+      // header and its lines, fire-and-forget a mark-printed POST so
+      // this SO drops out of the Picking Tickets queue. Errors are
+      // ignored - the queue defaults to hiding only confirmed prints,
+      // so a network blip just means the SO stays visible.
+      if (data.sales_order?.so_id) {
+        api.post('/admin/sales-orders/mark-printed', {
+          so_ids: [data.sales_order.so_id],
+        }).catch(() => {});
+      }
     }
     load();
     return () => { cancelled = true; };

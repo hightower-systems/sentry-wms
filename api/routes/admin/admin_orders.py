@@ -33,6 +33,7 @@ from schemas.purchase_orders import (
 from schemas.sales_orders import (
     ADDRESS_FIELD_NAMES,
     CreateSalesOrderRequest,
+    MarkSalesOrdersPrintedRequest,
     UpdateSalesOrderAddressRequest,
     UpdateSalesOrderMemoRequest,
     UpdateSalesOrderRequest,
@@ -554,12 +555,19 @@ def list_sales_orders():
     status = request.args.get("status")
     warehouse_id = request.args.get("warehouse_id", type=int)
     search = (request.args.get("q") or "").strip()
+    # Opt-in filter from the Picking Tickets queue. When set, drops SOs
+    # whose ticket was already confirm-rendered to the operator (mig
+    # 057 printed_at). Pages that show the full SO ledger (Sales
+    # Orders, Fraud, POS Activity) leave the param unset.
+    hide_printed = request.args.get("hide_printed", "false").lower() == "true"
     if status:
         where_clauses.append("status = :status")
         params["status"] = status
     if warehouse_id:
         where_clauses.append("warehouse_id = :wid")
         params["wid"] = warehouse_id
+    if hide_printed:
+        where_clauses.append("printed_at IS NULL")
     if search:
         where_clauses.append("(so_number ILIKE :q OR customer_name ILIKE :q)")
         params["q"] = f"%{search}%"
@@ -575,7 +583,7 @@ def list_sales_orders():
             SELECT so_id, so_number, so_barcode, customer_name, customer_phone, customer_address,
                    status, priority, warehouse_id,
                    ship_method, ship_address, order_date, ship_by_date, created_at, created_by,
-                   carrier, tracking_number, shipped_at, memo,
+                   carrier, tracking_number, shipped_at, memo, printed_at,
                    billing_address_name, billing_address_line1, billing_address_line2,
                    billing_address_city, billing_address_state,
                    billing_address_postal_code, billing_address_country,
@@ -599,6 +607,7 @@ def list_sales_orders():
              "carrier": r.carrier, "tracking_number": r.tracking_number,
              "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None,
              "memo": r.memo,
+             "printed_at": r.printed_at.isoformat() if r.printed_at else None,
              "billing_address_name": r.billing_address_name,
              "billing_address_line1": r.billing_address_line1,
              "billing_address_line2": r.billing_address_line2,
@@ -762,6 +771,39 @@ def get_picking_ticket(so_id):
              "quantity_shipped": l.quantity_shipped,
              "preferred_bin_code": l.preferred_bin_code}
             for l in lines
+        ],
+    })
+
+
+@admin_bp.route("/sales-orders/mark-printed", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(MarkSalesOrdersPrintedRequest)
+@with_db
+def mark_sales_orders_printed(validated):
+    """Stamp printed_at = NOW() for a batch of SOs whose picking
+    tickets the client has successfully rendered. The picking ticket
+    print pages POST here so the Picking Tickets queue can hide
+    already-printed orders without coupling render success to a
+    server-side GET side effect."""
+    so_ids = validated.so_ids
+    rows = g.db.execute(
+        text(
+            """
+            UPDATE sales_orders
+               SET printed_at = NOW()
+             WHERE so_id = ANY(:ids)
+               AND printed_at IS NULL
+            RETURNING so_id, printed_at
+            """
+        ),
+        {"ids": so_ids},
+    ).fetchall()
+    g.db.commit()
+    return jsonify({
+        "marked": [
+            {"so_id": r.so_id, "printed_at": r.printed_at.isoformat()}
+            for r in rows
         ],
     })
 

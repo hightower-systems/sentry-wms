@@ -39,6 +39,10 @@ export default function PickingTickets() {
   // clicking any column header.
   const [sortKey, setSortKey] = useState('ship_by_date');
   const [sortDir, setSortDir] = useState('asc');
+  // mig 057: default to hiding orders whose picking ticket was
+  // already confirm-rendered. Operator opts back in to verify a
+  // reprint or audit historical queue state.
+  const [hidePrinted, setHidePrinted] = useState(true);
 
   useEffect(() => {
     if (!warehouseId) return;
@@ -47,9 +51,15 @@ export default function PickingTickets() {
     (async () => {
       const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const responses = await Promise.all(
-        statuses.map((s) =>
-          api.get(`/admin/sales-orders?status=${s}&warehouse_id=${warehouseId}&per_page=50`),
-        ),
+        statuses.map((s) => {
+          const qs = new URLSearchParams({
+            status: s,
+            warehouse_id: String(warehouseId),
+            per_page: '50',
+          });
+          if (hidePrinted) qs.set('hide_printed', 'true');
+          return api.get(`/admin/sales-orders?${qs}`);
+        }),
       );
       const all = [];
       for (const res of responses) {
@@ -64,7 +74,7 @@ export default function PickingTickets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [warehouseId, status, refreshCounter]);
+  }, [warehouseId, status, refreshCounter, hidePrinted]);
 
   async function openTicket() {
     const term = search.trim();
@@ -206,6 +216,17 @@ export default function PickingTickets() {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 13, color: '#555', cursor: 'pointer',
+            }} title="Hide orders whose picking ticket has already been rendered (mig 057 printed_at)">
+              <input
+                type="checkbox"
+                checked={hidePrinted}
+                onChange={(e) => setHidePrinted(e.target.checked)}
+              />
+              Hide Printed
+            </label>
             <button
               className="btn btn-secondary"
               onClick={() => setRefreshCounter((c) => c + 1)}
