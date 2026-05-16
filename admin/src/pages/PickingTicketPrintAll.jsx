@@ -26,7 +26,14 @@ export default function PickingTicketPrintAll() {
       const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const listResponses = await Promise.all(
         statuses.map((s) => {
-          const qs = new URLSearchParams({ status: s, per_page: '50' });
+          const qs = new URLSearchParams({
+            status: s,
+            per_page: '50',
+            // Pull primary_bin_pick_sequence so we can sort the print
+            // stack in warehouse-walk order. The picker fills the cart
+            // in this order; the shipper unpacks in the same order.
+            include_primary_bin: 'true',
+          });
           if (warehouseId) qs.set('warehouse_id', warehouseId);
           return api.get(`/admin/sales-orders?${qs.toString()}`);
         }),
@@ -44,11 +51,19 @@ export default function PickingTicketPrintAll() {
         setLoading(false);
         return;
       }
-      // Sort by ship_by_date ascending so the printer stack comes out
-      // oldest-first, matching the default sort on the list page.
-      // Nulls sink to the bottom so SOs without a ship-by date do not
-      // hijack the top of the stack.
+      // Sort by primary_bin_pick_sequence ascending so the printer
+      // stack matches the picker's physical walk through the
+      // warehouse and the shipper unpacks in the same order. SOs
+      // without a primary bin (no preferred_bins for their items)
+      // sink to the bottom of the stack with a secondary
+      // ship_by_date tiebreak so they remain ordered among
+      // themselves.
       orders.sort((a, b) => {
+        const aps = a.primary_bin_pick_sequence;
+        const bps = b.primary_bin_pick_sequence;
+        if (aps != null && bps != null) return aps - bps;
+        if (aps != null) return -1;
+        if (bps != null) return 1;
         const ad = a.ship_by_date;
         const bd = b.ship_by_date;
         if (!ad && !bd) return 0;

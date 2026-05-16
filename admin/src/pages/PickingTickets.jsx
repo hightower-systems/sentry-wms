@@ -56,6 +56,11 @@ export default function PickingTickets() {
             status: s,
             warehouse_id: String(warehouseId),
             per_page: '50',
+            // Picking-tickets queue wants the lowest-pick_sequence
+            // bin per SO so the picker can walk the warehouse in
+            // physical order. The flag opts into the per-row
+            // primary-bin subquery.
+            include_primary_bin: 'true',
           });
           if (hidePrinted) qs.set('hide_printed', 'true');
           return api.get(`/admin/sales-orders?${qs}`);
@@ -127,6 +132,17 @@ export default function PickingTickets() {
       render: (r) => (r.ship_by_date ? new Date(r.ship_by_date).toLocaleDateString() : '-'),
     },
     { key: 'ship_method', label: 'Ship Method', sortable: true, render: (r) => r.ship_method || '-' },
+    {
+      // Lowest-pick_sequence preferred bin across the SO's line items.
+      // Sorting by this column orders the queue in warehouse-walking
+      // order so the picker can fill the cart left-to-right and the
+      // shipper unpacks in the same order.
+      key: 'primary_bin_code',
+      label: 'Bin',
+      mono: true,
+      sortable: true,
+      render: (r) => r.primary_bin_code || '-',
+    },
     { key: 'status', label: 'Status', sortable: true, render: (r) => <StatusTag status={r.status} /> },
     {
       key: 'actions',
@@ -159,13 +175,20 @@ export default function PickingTickets() {
     if (!sortKey) return orders;
     const dir = sortDir === 'asc' ? 1 : -1;
     return [...orders].sort((a, b) => {
-      let av = a[sortKey];
-      let bv = b[sortKey];
+      // Sorting by the Bin column uses pick_sequence (numeric) so the
+      // queue order matches physical walking order in the warehouse,
+      // not bin-code alphabetical (which would mix aisles randomly).
+      const key = sortKey === 'primary_bin_code' ? 'primary_bin_pick_sequence' : sortKey;
+      let av = a[key];
+      let bv = b[key];
       if (av == null && bv == null) return 0;
       if (av == null) return 1;  // nulls always at the bottom
       if (bv == null) return -1;
-      if (sortKey === 'ship_by_date') {
+      if (key === 'ship_by_date') {
         return (new Date(av) - new Date(bv)) * dir;
+      }
+      if (key === 'primary_bin_pick_sequence') {
+        return (av - bv) * dir;
       }
       return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
     });

@@ -560,70 +560,115 @@ def list_sales_orders():
     # 057 printed_at). Pages that show the full SO ledger (Sales
     # Orders, Fraud, POS Activity) leave the param unset.
     hide_printed = request.args.get("hide_printed", "false").lower() == "true"
+    # Opt-in primary-bin computation for the Picking Tickets queue.
+    # When set, each row carries the bin_code + pick_sequence of the
+    # preferred bin with the LOWEST pick_sequence among the SO's
+    # line items, scoped to the SO's warehouse. The list page sorts
+    # by pick_sequence so a picker walks the warehouse in physical
+    # order; the shipper unpacks the cart in the same order.
+    include_primary_bin = request.args.get("include_primary_bin", "false").lower() == "true"
     if status:
-        where_clauses.append("status = :status")
+        where_clauses.append("so.status = :status")
         params["status"] = status
     if warehouse_id:
-        where_clauses.append("warehouse_id = :wid")
+        where_clauses.append("so.warehouse_id = :wid")
         params["wid"] = warehouse_id
     if hide_printed:
-        where_clauses.append("printed_at IS NULL")
+        where_clauses.append("so.printed_at IS NULL")
     if search:
-        where_clauses.append("(so_number ILIKE :q OR customer_name ILIKE :q)")
+        where_clauses.append("(so.so_number ILIKE :q OR so.customer_name ILIKE :q)")
         params["q"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    total = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders {where_sql}"), params).scalar()
+    total = g.db.execute(
+        text(f"SELECT COUNT(*) FROM sales_orders so {where_sql}"),
+        params,
+    ).scalar()
     pages = max(1, math.ceil(total / per_page))
 
     params["limit"] = per_page
     params["offset"] = (page - 1) * per_page
+    # Primary-bin subqueries only render when the caller asks for them;
+    # other pages avoid the per-row scalar subquery cost. Both columns
+    # come from the same logical row, so the planner can fold them
+    # into one index scan even though they read as two subqueries.
+    primary_bin_select = ""
+    if include_primary_bin:
+        primary_bin_select = """
+            , (SELECT b.bin_code
+                 FROM sales_order_lines sol
+                 JOIN preferred_bins pb ON pb.item_id = sol.item_id
+                 JOIN bins b ON b.bin_id = pb.bin_id
+                WHERE sol.so_id = so.so_id
+                  AND b.warehouse_id = so.warehouse_id
+                ORDER BY b.pick_sequence ASC NULLS LAST, pb.priority ASC
+                LIMIT 1) AS primary_bin_code
+            , (SELECT b.pick_sequence
+                 FROM sales_order_lines sol
+                 JOIN preferred_bins pb ON pb.item_id = sol.item_id
+                 JOIN bins b ON b.bin_id = pb.bin_id
+                WHERE sol.so_id = so.so_id
+                  AND b.warehouse_id = so.warehouse_id
+                ORDER BY b.pick_sequence ASC NULLS LAST, pb.priority ASC
+                LIMIT 1) AS primary_bin_pick_sequence
+        """
     rows = g.db.execute(
         text(f"""
-            SELECT so_id, so_number, so_barcode, customer_name, customer_phone, customer_address,
-                   status, priority, warehouse_id,
-                   ship_method, ship_address, order_date, ship_by_date, created_at, created_by,
-                   carrier, tracking_number, shipped_at, memo, printed_at,
-                   billing_address_name, billing_address_line1, billing_address_line2,
-                   billing_address_city, billing_address_state,
-                   billing_address_postal_code, billing_address_country,
-                   shipping_address_name, shipping_address_line1, shipping_address_line2,
-                   shipping_address_city, shipping_address_state,
-                   shipping_address_postal_code, shipping_address_country
-            FROM sales_orders {where_sql} ORDER BY so_id DESC LIMIT :limit OFFSET :offset
+            SELECT so.so_id, so.so_number, so.so_barcode, so.customer_name, so.customer_phone, so.customer_address,
+                   so.status, so.priority, so.warehouse_id,
+                   so.ship_method, so.ship_address, so.order_date, so.ship_by_date, so.created_at, so.created_by,
+                   so.carrier, so.tracking_number, so.shipped_at, so.memo, so.printed_at,
+                   so.billing_address_name, so.billing_address_line1, so.billing_address_line2,
+                   so.billing_address_city, so.billing_address_state,
+                   so.billing_address_postal_code, so.billing_address_country,
+                   so.shipping_address_name, so.shipping_address_line1, so.shipping_address_line2,
+                   so.shipping_address_city, so.shipping_address_state,
+                   so.shipping_address_postal_code, so.shipping_address_country
+                   {primary_bin_select}
+            FROM sales_orders so {where_sql}
+            ORDER BY so.so_id DESC LIMIT :limit OFFSET :offset
         """),
         params,
     ).fetchall()
 
+    def _row_to_dict(r):
+        out = {
+            "so_id": r.so_id, "so_number": r.so_number, "so_barcode": r.so_barcode,
+            "customer_name": r.customer_name, "customer_phone": r.customer_phone,
+            "customer_address": r.customer_address,
+            "status": r.status, "priority": r.priority,
+            "warehouse_id": r.warehouse_id, "ship_method": r.ship_method,
+            "ship_address": r.ship_address,
+            "order_date": r.order_date.isoformat() if r.order_date else None,
+            "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_by": r.created_by,
+            "carrier": r.carrier, "tracking_number": r.tracking_number,
+            "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None,
+            "memo": r.memo,
+            "printed_at": r.printed_at.isoformat() if r.printed_at else None,
+            "billing_address_name": r.billing_address_name,
+            "billing_address_line1": r.billing_address_line1,
+            "billing_address_line2": r.billing_address_line2,
+            "billing_address_city": r.billing_address_city,
+            "billing_address_state": r.billing_address_state,
+            "billing_address_postal_code": r.billing_address_postal_code,
+            "billing_address_country": r.billing_address_country,
+            "shipping_address_name": r.shipping_address_name,
+            "shipping_address_line1": r.shipping_address_line1,
+            "shipping_address_line2": r.shipping_address_line2,
+            "shipping_address_city": r.shipping_address_city,
+            "shipping_address_state": r.shipping_address_state,
+            "shipping_address_postal_code": r.shipping_address_postal_code,
+            "shipping_address_country": r.shipping_address_country,
+        }
+        if include_primary_bin:
+            out["primary_bin_code"] = r.primary_bin_code
+            out["primary_bin_pick_sequence"] = r.primary_bin_pick_sequence
+        return out
+
     return jsonify({
-        "sales_orders": [
-            {"so_id": r.so_id, "so_number": r.so_number, "so_barcode": r.so_barcode,
-             "customer_name": r.customer_name, "customer_phone": r.customer_phone, "customer_address": r.customer_address,
-             "status": r.status, "priority": r.priority,
-             "warehouse_id": r.warehouse_id, "ship_method": r.ship_method, "ship_address": r.ship_address,
-             "order_date": r.order_date.isoformat() if r.order_date else None,
-             "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,
-             "created_at": r.created_at.isoformat() if r.created_at else None, "created_by": r.created_by,
-             "carrier": r.carrier, "tracking_number": r.tracking_number,
-             "shipped_at": r.shipped_at.isoformat() if r.shipped_at else None,
-             "memo": r.memo,
-             "printed_at": r.printed_at.isoformat() if r.printed_at else None,
-             "billing_address_name": r.billing_address_name,
-             "billing_address_line1": r.billing_address_line1,
-             "billing_address_line2": r.billing_address_line2,
-             "billing_address_city": r.billing_address_city,
-             "billing_address_state": r.billing_address_state,
-             "billing_address_postal_code": r.billing_address_postal_code,
-             "billing_address_country": r.billing_address_country,
-             "shipping_address_name": r.shipping_address_name,
-             "shipping_address_line1": r.shipping_address_line1,
-             "shipping_address_line2": r.shipping_address_line2,
-             "shipping_address_city": r.shipping_address_city,
-             "shipping_address_state": r.shipping_address_state,
-             "shipping_address_postal_code": r.shipping_address_postal_code,
-             "shipping_address_country": r.shipping_address_country}
-            for r in rows
-        ],
+        "sales_orders": [_row_to_dict(r) for r in rows],
         "total": total, "page": page, "per_page": per_page, "pages": pages,
     })
 
