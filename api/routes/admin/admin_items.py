@@ -51,7 +51,17 @@ def list_items():
         where_clauses.append("i.is_active = :active")
         params["active"] = active.lower() == "true"
     if search:
-        where_clauses.append("(i.sku ILIKE :search OR i.item_name ILIKE :search OR i.upc ILIKE :search)")
+        # barcode_aliases is a JSONB array of alternate scannable
+        # barcodes (vendor packs, distributor labels, secondary UPCs).
+        # Operators who scan one of these expect the matching item to
+        # surface even though the primary UPC differs; without the
+        # alias match they have to look up the item manually.
+        where_clauses.append(
+            "(i.sku ILIKE :search OR i.item_name ILIKE :search "
+            "OR i.upc ILIKE :search OR EXISTS (SELECT 1 FROM "
+            "jsonb_array_elements_text(COALESCE(i.barcode_aliases, '[]'::jsonb)) "
+            "AS alias(code) WHERE alias.code ILIKE :search))"
+        )
         params["search"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""

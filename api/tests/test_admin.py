@@ -1492,6 +1492,50 @@ class TestBinDelete:
         assert resp.status_code == 404
 
 
+class TestItemsSearchQ:
+    """The Items page search must reach the identifiers an operator
+    will type or scan: SKU, item name, primary UPC, and any entry in
+    the barcode_aliases JSONB array."""
+
+    def test_q_matches_sku(self, client, auth_headers):
+        resp = client.get("/api/admin/items?q=TST-005", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(i["sku"] == "TST-005" for i in data["items"])
+
+    def test_q_matches_upc(self, client, auth_headers):
+        # TST-005 has UPC 100000000005 in the seed.
+        resp = client.get("/api/admin/items?q=100000000005", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert any(i["sku"] == "TST-005" for i in data["items"])
+
+    def test_q_matches_barcode_alias(self, client, auth_headers):
+        # Attach an alternate barcode to TST-001 and confirm the
+        # search resolves it. Direct SQL because the admin create
+        # / update endpoints do not surface barcode_aliases yet.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE items SET barcode_aliases = %s::jsonb WHERE sku = 'TST-001'",
+            ('["ALT-9999-A", "ALT-9999-B"]',),
+        )
+        cur.close()
+
+        resp = client.get("/api/admin/items?q=ALT-9999-B", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 1
+        assert data["items"][0]["sku"] == "TST-001"
+
+    def test_q_no_match_returns_empty(self, client, auth_headers):
+        resp = client.get("/api/admin/items?q=no-such-thing-zzz", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["total"] == 0
+
+
 class TestInventorySearchQ:
     """Issue #82: /admin/inventory must honour the `q` query parameter
     so the admin panel's SKU / item-name search actually filters rows."""
