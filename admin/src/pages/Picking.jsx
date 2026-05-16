@@ -40,8 +40,8 @@ export default function Picking() {
     setError('');
     // Load items and warehouses for dropdowns
     const [itemRes, whRes] = await Promise.all([
-      api.get('/admin/items?per_page=500&active=true'),
-      api.get('/admin/warehouses'),
+      api.get('/admin/items?per_page=500&active=true', { silentPermissionDenied: true }),
+      api.get('/admin/warehouses', { silentPermissionDenied: true }),
     ]);
     if (itemRes?.ok) {
       const data = await itemRes.json();

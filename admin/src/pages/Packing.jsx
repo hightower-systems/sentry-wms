@@ -15,7 +15,7 @@ export default function Packing() {
 
   useEffect(() => {
     if (!warehouseId) return;
-    api.get('/admin/settings/require_packing_before_shipping').then(async (res) => {
+    api.get('/admin/settings/require_packing_before_shipping', { silentPermissionDenied: true }).then(async (res) => {
       if (!res?.ok) return;
       const data = await res.json();
       const enabled = data.value !== 'false' && data.value !== false;

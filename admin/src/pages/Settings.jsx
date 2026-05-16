@@ -123,7 +123,7 @@ export default function Settings() {
   // submit time still resolves correctly instead of silently failing.
   async function ensureItemsLoaded() {
     if (itemsLoaded) return;
-    const res = await api.get('/admin/items?per_page=1000&active=true');
+    const res = await api.get('/admin/items?per_page=1000&active=true', { silentPermissionDenied: true });
     if (res?.ok) {
       const data = await res.json();
       const map = new Map();

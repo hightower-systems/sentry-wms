@@ -49,7 +49,7 @@ export default function InterWarehouseTransfers() {
   }, [form.destination_warehouse_id]);
 
   async function loadWarehouses() {
-    const res = await api.get('/admin/warehouses');
+    const res = await api.get('/admin/warehouses', { silentPermissionDenied: true });
     if (res?.ok) {
       const data = await res.json();
       setWarehouses(data.warehouses || []);

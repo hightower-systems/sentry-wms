@@ -31,7 +31,7 @@ export default function PreferredBins() {
 
   async function openAdd() {
     const [itemRes, binRes] = await Promise.all([
-      api.get('/admin/items?per_page=200'),
+      api.get('/admin/items?per_page=200', { silentPermissionDenied: true }),
       api.get(`/admin/bins?warehouse_id=${warehouseId}`),
     ]);
     if (itemRes?.ok) setItems((await itemRes.json()).items || []);

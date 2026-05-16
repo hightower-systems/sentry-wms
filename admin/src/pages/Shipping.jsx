@@ -17,7 +17,7 @@ export default function Shipping() {
     async function load() {
       let requirePacking = true;
       try {
-        const settingRes = await api.get('/admin/settings/require_packing_before_shipping');
+        const settingRes = await api.get('/admin/settings/require_packing_before_shipping', { silentPermissionDenied: true });
         if (settingRes?.ok) {
           const data = await settingRes.json();
           requirePacking = data.value !== 'false' && data.value !== false;

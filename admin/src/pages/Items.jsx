@@ -32,7 +32,7 @@ export default function Items() {
   useEffect(() => { loadItems(); }, [page, search, filter, vendorFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    api.get('/admin/vendors?active=true&per_page=500').then(async (res) => {
+    api.get('/admin/vendors?active=true&per_page=500', { silentPermissionDenied: true }).then(async (res) => {
       if (!res?.ok) return;
       const data = await res.json();
       setVendors(data.vendors || []);
