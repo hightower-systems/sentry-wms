@@ -293,11 +293,265 @@ class TestPurchaseOrders:
         assert resp.status_code == 200
         assert resp.get_json()["vendor_name"] == "Updated Vendor"
 
-    def test_update_purchase_order_not_open(self, client, auth_headers):
-        # Close the PO first
+    def test_update_purchase_order_blocked_when_closed(self, client, auth_headers):
+        # Closing the PO blocks header edits. The status field is the
+        # one path that still works (so an admin can re-open via the
+        # dropdown); plain header edits return 400.
         client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
         resp = client.put("/api/admin/purchase-orders/1", json={"vendor_name": "Fail"}, headers=auth_headers)
         assert resp.status_code == 400
+
+
+class TestPurchaseOrderStatusChange:
+    """PUT /admin/purchase-orders/<id> with a status field reaches the
+    state machine: anywhere -> anywhere except CLOSED -> ARCHIVED is
+    the only direct path to ARCHIVED."""
+
+    def test_status_change_open_to_partial(self, client, auth_headers):
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "PARTIAL"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "PARTIAL"
+
+    def test_status_change_unblocks_closed_for_header_edits(self, client, auth_headers):
+        # Close, then reopen via the dropdown, then header edit lands.
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        reopen = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "OPEN"},
+            headers=auth_headers,
+        )
+        assert reopen.status_code == 200
+        assert reopen.get_json()["status"] == "OPEN"
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"vendor_name": "Reopened Vendor"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["vendor_name"] == "Reopened Vendor"
+
+    def test_archive_requires_closed_first(self, client, auth_headers):
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "CLOSED" in resp.get_json()["error"]
+
+    def test_archive_after_close_succeeds(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ARCHIVED"
+
+    def test_unarchive_from_archived_is_allowed(self, client, auth_headers):
+        # ARCHIVED is not terminal; a status dropdown change can move
+        # the PO back to any other status so an admin can resume work.
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "OPEN"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "OPEN"
+
+    def test_invalid_status_rejected(self, client, auth_headers):
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "BOGUS"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestPurchaseOrderArchivedFiltering:
+    """ARCHIVED POs drop out of the default list view and resurface
+    via include_archived=true or an explicit status=ARCHIVED filter."""
+
+    def test_archived_hidden_by_default(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.get("/api/admin/purchase-orders", headers=auth_headers)
+        po_ids = [po["po_id"] for po in resp.get_json()["purchase_orders"]]
+        assert 1 not in po_ids
+
+    def test_archived_visible_with_include_archived(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.get(
+            "/api/admin/purchase-orders?include_archived=true",
+            headers=auth_headers,
+        )
+        po_ids = [po["po_id"] for po in resp.get_json()["purchase_orders"]]
+        assert 1 in po_ids
+
+    def test_status_archived_filter_returns_archived(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.get(
+            "/api/admin/purchase-orders?status=ARCHIVED",
+            headers=auth_headers,
+        )
+        data = resp.get_json()
+        assert all(po["status"] == "ARCHIVED" for po in data["purchase_orders"])
+        assert any(po["po_id"] == 1 for po in data["purchase_orders"])
+
+
+class TestPurchaseOrderLineCRUD:
+    """POST / PATCH / DELETE on /admin/purchase-orders/<po_id>/lines."""
+
+    def test_add_line_succeeds(self, client, auth_headers):
+        # Item 11 (TST-011) is not on PO 1 in the seed.
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 11, "quantity_ordered": 25},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["quantity_ordered"] == 25
+        assert data["quantity_received"] == 0
+        assert data["sku"] == "TST-011"
+
+    def test_add_duplicate_line_rejected(self, client, auth_headers):
+        # PO 1 already has item 1 on it in the seed.
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 1, "quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "already on this PO" in resp.get_json()["error"]
+
+    def test_add_line_rejects_unknown_item(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 9999, "quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_add_line_blocked_when_closed(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 11, "quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "CLOSED" in resp.get_json()["error"]
+
+    def test_update_line_quantity(self, client, auth_headers):
+        # PO 1 line 1 has quantity_ordered = 100 in seed; raise to 150.
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line_id = detail["lines"][0]["po_line_id"]
+        resp = client.patch(
+            f"/api/admin/purchase-orders/1/lines/{po_line_id}",
+            json={"quantity_ordered": 150},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["quantity_ordered"] == 150
+
+    def test_update_line_rejects_qty_below_received(self, client, auth_headers):
+        # Receive part of line 1 first, then try to drop ordered below
+        # received and confirm the guard fires.
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line = detail["lines"][0]
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [{
+                    "item_id": po_line["item_id"],
+                    "quantity": 10,
+                    "bin_id": 1,
+                }],
+            },
+            headers=auth_headers,
+        )
+        resp = client.patch(
+            f"/api/admin/purchase-orders/1/lines/{po_line['po_line_id']}",
+            json={"quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "less than" in resp.get_json()["error"]
+
+    def test_remove_line_succeeds_when_no_receipts(self, client, auth_headers):
+        # Add a fresh line, then remove it without receiving against it.
+        add = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 11, "quantity_ordered": 10},
+            headers=auth_headers,
+        )
+        po_line_id = add.get_json()["po_line_id"]
+        resp = client.delete(
+            f"/api/admin/purchase-orders/1/lines/{po_line_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] is True
+
+    def test_remove_line_blocked_when_received(self, client, auth_headers):
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line = detail["lines"][0]
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [{
+                    "item_id": po_line["item_id"],
+                    "quantity": 5,
+                    "bin_id": 1,
+                }],
+            },
+            headers=auth_headers,
+        )
+        resp = client.delete(
+            f"/api/admin/purchase-orders/1/lines/{po_line['po_line_id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "received units" in resp.get_json()["error"]
+
+    def test_remove_line_blocked_when_closed(self, client, auth_headers):
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line_id = detail["lines"][-1]["po_line_id"]
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.delete(
+            f"/api/admin/purchase-orders/1/lines/{po_line_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "CLOSED" in resp.get_json()["error"]
 
     def test_close_purchase_order(self, client, auth_headers):
         resp = client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)

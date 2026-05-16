@@ -7,6 +7,10 @@ PO_OPEN = "OPEN"
 PO_PARTIAL = "PARTIAL"
 PO_RECEIVED = "RECEIVED"
 PO_CLOSED = "CLOSED"
+# ARCHIVED: terminal status for POs the operator wants out of the
+# active list. Hidden from /admin/purchase-orders by default; only
+# reachable via the status dropdown when the PO is already CLOSED.
+PO_ARCHIVED = "ARCHIVED"
 
 # Purchase Order Line statuses
 POL_PENDING = "PENDING"
@@ -140,6 +144,17 @@ ACTION_SO_ADDRESS_EDITED = "SO_ADDRESS_EDITED"
 # These two cover the CSR-driven mutations on the Fraud page.
 ACTION_SO_FRAUD_CLEARED = "SO_FRAUD_CLEARED"
 ACTION_SO_MEMO_EDITED = "SO_MEMO_EDITED"
+
+# PO line edit + status surfaces. One audit row per mutation so the
+# historical record of what was ordered survives later edits. Status
+# transitions get their own action so the audit query "when did this
+# PO move from OPEN to RECEIVED" stays answerable. Line CRUD carries
+# {sku, quantity_ordered, quantity_received} in details so a deleted
+# line can still be reconstructed.
+ACTION_PO_STATUS_CHANGED = "PO_STATUS_CHANGED"
+ACTION_PO_LINE_ADDED = "PO_LINE_ADDED"
+ACTION_PO_LINE_UPDATED = "PO_LINE_UPDATED"
+ACTION_PO_LINE_REMOVED = "PO_LINE_REMOVED"
 
 # v1.8.0 (#290) transfer order lifecycle. Same audit shape as the
 # cycle count adjustment surface: one row per state transition;

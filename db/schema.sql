@@ -128,7 +128,7 @@ CREATE TABLE purchase_orders (
     po_barcode VARCHAR(100),               -- scannable PO barcode
     vendor_name VARCHAR(200),
     vendor_id VARCHAR(50),
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED', 'ARCHIVED'
     expected_date DATE,
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     notes TEXT,

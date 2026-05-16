@@ -7,10 +7,15 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import (
-    PO_OPEN, PO_CLOSED, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_CANCELLED,
+    PO_OPEN, PO_PARTIAL, PO_RECEIVED, PO_CLOSED, PO_ARCHIVED,
+    SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_CANCELLED,
     SO_FRAUD_REVIEW,
     TASK_PENDING, ADJ_PENDING,
     ACTION_PICK,
+    ACTION_PO_STATUS_CHANGED,
+    ACTION_PO_LINE_ADDED,
+    ACTION_PO_LINE_UPDATED,
+    ACTION_PO_LINE_REMOVED,
     ACTION_SO_ADDRESS_EDITED,
     ACTION_SO_FRAUD_CLEARED,
     ACTION_SO_MEMO_EDITED,
@@ -19,7 +24,12 @@ from constants import (
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import admin_bp
-from schemas.purchase_orders import CreatePurchaseOrderRequest, UpdatePurchaseOrderRequest
+from schemas.purchase_orders import (
+    AddPOLineRequest,
+    CreatePurchaseOrderRequest,
+    UpdatePOLineRequest,
+    UpdatePurchaseOrderRequest,
+)
 from schemas.sales_orders import (
     ADDRESS_FIELD_NAMES,
     CreateSalesOrderRequest,
@@ -49,9 +59,16 @@ def list_purchase_orders():
     status = request.args.get("status")
     warehouse_id = request.args.get("warehouse_id", type=int)
     search = (request.args.get("q") or "").strip()
+    # ARCHIVED is hidden by default so the active list stays focused
+    # on POs that still need work. Caller opts in by passing
+    # include_archived=true OR by setting status=ARCHIVED explicitly.
+    include_archived = request.args.get("include_archived", "false").lower() == "true"
     if status:
         where_clauses.append("status = :status")
         params["status"] = status
+    elif not include_archived:
+        where_clauses.append("status <> :archived")
+        params["archived"] = PO_ARCHIVED
     if warehouse_id:
         where_clauses.append("warehouse_id = :wid")
         params["wid"] = warehouse_id
@@ -180,6 +197,10 @@ def create_purchase_order(validated):
     return response
 
 
+PO_STATUS_VALUES = {PO_OPEN, PO_PARTIAL, PO_RECEIVED, PO_CLOSED, PO_ARCHIVED}
+PO_EDIT_BLOCKED_STATUSES = {PO_CLOSED, PO_ARCHIVED}
+
+
 @admin_bp.route("/purchase-orders/<int:po_id>", methods=["PUT"])
 @require_auth
 @require_role("ADMIN")
@@ -188,23 +209,63 @@ def create_purchase_order(validated):
 def update_purchase_order(po_id, validated):
     data = validated.model_dump(exclude_unset=True)
 
-    po = g.db.execute(text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"), {"pid": po_id}).fetchone()
+    po = g.db.execute(
+        text("SELECT po_id, status, warehouse_id FROM purchase_orders WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).fetchone()
     if not po:
         return jsonify({"error": "Purchase order not found"}), 404
-    if po.status != PO_OPEN:
-        return jsonify({"error": f"Can only update POs with OPEN status. Current: {po.status}"}), 400
 
-    ALLOWED_FIELDS = {"po_number", "po_barcode", "vendor_name", "expected_date", "notes"}
-    fields, params = [], {"pid": po_id}
-    for col in ALLOWED_FIELDS:
-        if col in data:
-            fields.append(f"{col} = :{col}")
-            params[col] = data[col]
+    new_status = data.get("status")
+    if new_status is not None:
+        if new_status not in PO_STATUS_VALUES:
+            return jsonify({"error": f"Invalid status: {new_status}"}), 400
+        # ARCHIVED is reachable only from CLOSED so an active PO cannot
+        # be hidden by a single dropdown change. All other transitions
+        # (including ARCHIVED -> any other) are allowed; admins use the
+        # dropdown to un-archive when needed.
+        if new_status == PO_ARCHIVED and po.status != PO_CLOSED:
+            return jsonify({
+                "error": "PO must be CLOSED before it can be ARCHIVED",
+            }), 400
 
-    if not fields:
+    HEADER_FIELDS = {"po_number", "po_barcode", "vendor_name", "expected_date", "notes"}
+    header_data = {k: v for k, v in data.items() if k in HEADER_FIELDS}
+    # Header edits are blocked when the PO is locked (CLOSED or
+    # ARCHIVED). The status field itself is still editable so an admin
+    # can transition out of CLOSED before resuming line work.
+    if header_data and po.status in PO_EDIT_BLOCKED_STATUSES:
+        return jsonify({
+            "error": f"Header edits are not allowed while the PO is {po.status}",
+        }), 400
+
+    set_fragments, params = [], {"pid": po_id}
+    for col, val in header_data.items():
+        set_fragments.append(f"{col} = :{col}")
+        params[col] = val
+    if new_status is not None and new_status != po.status:
+        set_fragments.append("status = :status")
+        params["status"] = new_status
+
+    if not set_fragments:
         return jsonify({"error": "No valid fields provided"}), 400
 
-    g.db.execute(text(f"UPDATE purchase_orders SET {', '.join(fields)} WHERE po_id = :pid"), params)
+    g.db.execute(
+        text(f"UPDATE purchase_orders SET {', '.join(set_fragments)} WHERE po_id = :pid"),
+        params,
+    )
+
+    if new_status is not None and new_status != po.status:
+        write_audit_log(
+            g.db,
+            ACTION_PO_STATUS_CHANGED,
+            "PO",
+            po_id,
+            g.current_user["user_id"],
+            po.warehouse_id,
+            details={"old_status": po.status, "new_status": new_status},
+        )
+
     g.db.commit()
 
     row = g.db.execute(
@@ -218,6 +279,219 @@ def update_purchase_order(po_id, validated):
         "warehouse_id": row.warehouse_id, "notes": row.notes,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     })
+
+
+# ── Purchase Order Lines (add / update / remove) ─────────────────────────────
+
+@admin_bp.route("/purchase-orders/<int:po_id>/lines", methods=["POST"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(AddPOLineRequest)
+@with_db
+def add_purchase_order_line(po_id, validated):
+    data = validated.model_dump()
+
+    po = g.db.execute(
+        text("SELECT po_id, status, warehouse_id FROM purchase_orders WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).fetchone()
+    if not po:
+        return jsonify({"error": "Purchase order not found"}), 404
+    if po.status in PO_EDIT_BLOCKED_STATUSES:
+        return jsonify({
+            "error": f"Cannot add lines while the PO is {po.status}",
+        }), 400
+
+    item = g.db.execute(
+        text("SELECT item_id, sku FROM items WHERE item_id = :iid"),
+        {"iid": data["item_id"]},
+    ).fetchone()
+    if not item:
+        return jsonify({"error": f"Item {data['item_id']} not found"}), 400
+
+    # Reject duplicate items on the same PO; the receive endpoint
+    # already does LIMIT 1 against (po_id, item_id) and would not be
+    # able to disambiguate two lines with the same item_id.
+    dup = g.db.execute(
+        text("SELECT 1 FROM purchase_order_lines WHERE po_id = :pid AND item_id = :iid"),
+        {"pid": po_id, "iid": data["item_id"]},
+    ).fetchone()
+    if dup:
+        return jsonify({"error": f"Item {item.sku} is already on this PO"}), 400
+
+    next_ln = g.db.execute(
+        text("SELECT COALESCE(MAX(line_number), 0) + 1 FROM purchase_order_lines WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).scalar()
+
+    result = g.db.execute(
+        text(
+            """
+            INSERT INTO purchase_order_lines
+                (po_id, item_id, quantity_ordered, unit_cost, line_number)
+            VALUES (:pid, :iid, :qty, :cost, :ln)
+            RETURNING po_line_id
+            """
+        ),
+        {
+            "pid": po_id, "iid": data["item_id"],
+            "qty": data["quantity_ordered"],
+            "cost": float(data["unit_cost"]) if data.get("unit_cost") is not None else None,
+            "ln": next_ln,
+        },
+    )
+    po_line_id = result.fetchone()[0]
+
+    write_audit_log(
+        g.db,
+        ACTION_PO_LINE_ADDED,
+        "PO_LINE",
+        po_line_id,
+        g.current_user["user_id"],
+        po.warehouse_id,
+        details={
+            "po_id": po_id, "sku": item.sku,
+            "quantity_ordered": data["quantity_ordered"],
+        },
+    )
+    g.db.commit()
+
+    return jsonify({
+        "po_line_id": po_line_id,
+        "po_id": po_id,
+        "item_id": data["item_id"],
+        "sku": item.sku,
+        "quantity_ordered": data["quantity_ordered"],
+        "quantity_received": 0,
+        "line_number": next_ln,
+    }), 201
+
+
+@admin_bp.route("/purchase-orders/<int:po_id>/lines/<int:po_line_id>", methods=["PATCH"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(UpdatePOLineRequest)
+@with_db
+def update_purchase_order_line(po_id, po_line_id, validated):
+    data = validated.model_dump()
+
+    po = g.db.execute(
+        text("SELECT po_id, status, warehouse_id FROM purchase_orders WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).fetchone()
+    if not po:
+        return jsonify({"error": "Purchase order not found"}), 404
+    if po.status in PO_EDIT_BLOCKED_STATUSES:
+        return jsonify({
+            "error": f"Cannot edit lines while the PO is {po.status}",
+        }), 400
+
+    line = g.db.execute(
+        text(
+            """
+            SELECT pol.po_line_id, pol.quantity_ordered, pol.quantity_received, i.sku
+            FROM purchase_order_lines pol JOIN items i ON i.item_id = pol.item_id
+            WHERE pol.po_line_id = :plid AND pol.po_id = :pid
+            """
+        ),
+        {"plid": po_line_id, "pid": po_id},
+    ).fetchone()
+    if not line:
+        return jsonify({"error": "Line not found"}), 404
+
+    new_qty = data["quantity_ordered"]
+    # Blocking ordered<received keeps variance non-negative. The
+    # operator either reverses receipts first or leaves the line as-is.
+    if new_qty < line.quantity_received:
+        return jsonify({
+            "error": (
+                f"quantity_ordered ({new_qty}) cannot be less than "
+                f"quantity_received ({line.quantity_received})"
+            ),
+        }), 400
+
+    g.db.execute(
+        text("UPDATE purchase_order_lines SET quantity_ordered = :qty WHERE po_line_id = :plid"),
+        {"qty": new_qty, "plid": po_line_id},
+    )
+
+    write_audit_log(
+        g.db,
+        ACTION_PO_LINE_UPDATED,
+        "PO_LINE",
+        po_line_id,
+        g.current_user["user_id"],
+        po.warehouse_id,
+        details={
+            "po_id": po_id, "sku": line.sku,
+            "old_quantity_ordered": line.quantity_ordered,
+            "new_quantity_ordered": new_qty,
+        },
+    )
+    g.db.commit()
+    return jsonify({"po_line_id": po_line_id, "quantity_ordered": new_qty})
+
+
+@admin_bp.route("/purchase-orders/<int:po_id>/lines/<int:po_line_id>", methods=["DELETE"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def delete_purchase_order_line(po_id, po_line_id):
+    po = g.db.execute(
+        text("SELECT po_id, status, warehouse_id FROM purchase_orders WHERE po_id = :pid"),
+        {"pid": po_id},
+    ).fetchone()
+    if not po:
+        return jsonify({"error": "Purchase order not found"}), 404
+    if po.status in PO_EDIT_BLOCKED_STATUSES:
+        return jsonify({
+            "error": f"Cannot remove lines while the PO is {po.status}",
+        }), 400
+
+    line = g.db.execute(
+        text(
+            """
+            SELECT pol.po_line_id, pol.quantity_ordered, pol.quantity_received, i.sku
+            FROM purchase_order_lines pol JOIN items i ON i.item_id = pol.item_id
+            WHERE pol.po_line_id = :plid AND pol.po_id = :pid
+            """
+        ),
+        {"plid": po_line_id, "pid": po_id},
+    ).fetchone()
+    if not line:
+        return jsonify({"error": "Line not found"}), 404
+
+    # Blocking removal of lines with received qty preserves inventory
+    # history. To remove, operator first reverses receipts via a
+    # separate workflow; the soft-close-by-setting-qty-equal-to-
+    # received path is intentionally not exposed here.
+    if line.quantity_received > 0:
+        return jsonify({
+            "error": (
+                f"Line has {line.quantity_received} received units; "
+                "remove the receipts before deleting the line"
+            ),
+        }), 400
+
+    g.db.execute(
+        text("DELETE FROM purchase_order_lines WHERE po_line_id = :plid"),
+        {"plid": po_line_id},
+    )
+
+    write_audit_log(
+        g.db,
+        ACTION_PO_LINE_REMOVED,
+        "PO_LINE",
+        po_line_id,
+        g.current_user["user_id"],
+        po.warehouse_id,
+        details={
+            "po_id": po_id, "sku": line.sku,
+            "quantity_ordered": line.quantity_ordered,
+        },
+    )
+    g.db.commit()
+    return jsonify({"po_line_id": po_line_id, "deleted": True})
 
 
 @admin_bp.route("/purchase-orders/<int:po_id>/close", methods=["POST"])
