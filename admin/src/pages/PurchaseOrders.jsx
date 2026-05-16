@@ -6,7 +6,20 @@ import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 import StatusTag from '../components/StatusTag.jsx';
 
-const STATUS_OPTIONS = ['All', 'OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED'];
+const STATUS_OPTIONS = ['All', 'OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED', 'ARCHIVED'];
+const ALL_PO_STATUSES = ['OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED', 'ARCHIVED'];
+// ARCHIVED is reachable only from CLOSED in the backend state
+// machine. Surface that rule in the dropdown so an operator never
+// sees a 400 from the server for picking an invalid transition.
+const EDIT_LOCKED_STATUSES = new Set(['CLOSED', 'ARCHIVED']);
+
+function statusDropdownOptions(currentStatus) {
+  return ALL_PO_STATUSES.filter((s) => {
+    if (s === currentStatus) return true;
+    if (s === 'ARCHIVED') return currentStatus === 'CLOSED';
+    return true;
+  });
+}
 
 export default function PurchaseOrders() {
   const [searchParams] = useSearchParams();
@@ -15,19 +28,31 @@ export default function PurchaseOrders() {
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('All');
+  // ARCHIVED POs are hidden by default to keep the active list clean.
+  // The Show Archived toggle flips include_archived on the backend
+  // call so an operator can audit completed orders when needed.
+  const [showArchived, setShowArchived] = useState(false);
   const [selectedPO, setSelectedPO] = useState(null);
   const [poLines, setPOLines] = useState([]);
+  // Edit modal state: full PO + its lines so the modal can drive the
+  // line CRUD endpoints without a second fetch.
   const [editing, setEditing] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [editError, setEditError] = useState('');
-  const [confirmClose, setConfirmClose] = useState(false);
+  const [editLines, setEditLines] = useState([]);
+  const [lineErrors, setLineErrors] = useState({});
+  const [newLineSku, setNewLineSku] = useState('');
+  const [newLineQty, setNewLineQty] = useState('');
+  const [newLineError, setNewLineError] = useState('');
+  const [addingLine, setAddingLine] = useState(false);
 
-  useEffect(() => { loadOrders(); }, [page, statusFilter, search]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadOrders(); }, [page, statusFilter, search, showArchived]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadOrders() {
     const qp = new URLSearchParams({ page: String(page), per_page: '50' });
     if (statusFilter !== 'All') qp.set('status', statusFilter);
     if (search) qp.set('q', search);
+    if (showArchived) qp.set('include_archived', 'true');
     const res = await api.get(`/admin/purchase-orders?${qp}`);
     if (res?.ok) {
       const data = await res.json();
@@ -54,28 +79,62 @@ export default function PurchaseOrders() {
     setPage(newPage);
   }
 
-  function openEdit(po) {
-    setEditing(po);
+  async function openEdit(po) {
+    // Load the full PO with its lines so the Edit modal can show
+    // editable line items. Open detail-style endpoint reuses what
+    // the read-only view modal also uses.
+    const res = await api.get(`/admin/purchase-orders/${po.po_id || po.id}`);
+    if (!res?.ok) return;
+    const data = await res.json();
+    const full = data.purchase_order;
+    setEditing(full);
     setEditForm({
-      po_number: po.po_number || '',
-      vendor_name: po.vendor_name || '',
-      expected_date: po.expected_date ? po.expected_date.slice(0, 10) : '',
-      notes: po.notes || '',
+      po_number: full.po_number || '',
+      vendor_name: full.vendor_name || '',
+      expected_date: full.expected_date ? full.expected_date.slice(0, 10) : '',
+      notes: full.notes || '',
+      status: full.status,
     });
+    setEditLines(data.lines || []);
+    setLineErrors({});
+    setNewLineSku('');
+    setNewLineQty('');
+    setNewLineError('');
+    setEditError('');
+  }
+
+  function closeEdit() {
+    setEditing(null);
+    setEditLines([]);
+    setLineErrors({});
+    setNewLineSku('');
+    setNewLineQty('');
+    setNewLineError('');
     setEditError('');
   }
 
   async function saveEdit() {
     setEditError('');
-    const body = {
-      po_number: editForm.po_number,
-      vendor_name: editForm.vendor_name || null,
-      expected_date: editForm.expected_date || null,
-      notes: editForm.notes || null,
-    };
+    const body = {};
+    // Only send header fields when the PO is still in an editable
+    // status; for CLOSED / ARCHIVED only the status itself is allowed.
+    const headerEditable = !EDIT_LOCKED_STATUSES.has(editing.status);
+    if (headerEditable) {
+      body.po_number = editForm.po_number;
+      body.vendor_name = editForm.vendor_name || null;
+      body.expected_date = editForm.expected_date || null;
+      body.notes = editForm.notes || null;
+    }
+    if (editForm.status && editForm.status !== editing.status) {
+      body.status = editForm.status;
+    }
+    if (Object.keys(body).length === 0) {
+      closeEdit();
+      return;
+    }
     const res = await api.put(`/admin/purchase-orders/${editing.po_id}`, body);
     if (res?.ok) {
-      setEditing(null);
+      closeEdit();
       loadOrders();
     } else {
       const data = await res?.json();
@@ -83,29 +142,96 @@ export default function PurchaseOrders() {
     }
   }
 
-  async function closePO() {
-    setEditError('');
-    const res = await api.post(`/admin/purchase-orders/${editing.po_id}/close`, {});
+  async function updateLineQty(line, newQty) {
+    setLineErrors((e) => ({ ...e, [line.po_line_id]: '' }));
+    const res = await api.patch(
+      `/admin/purchase-orders/${editing.po_id}/lines/${line.po_line_id}`,
+      { quantity_ordered: newQty },
+    );
     if (res?.ok) {
-      setConfirmClose(false);
-      setEditing(null);
-      loadOrders();
+      setEditLines((ls) => ls.map((l) =>
+        l.po_line_id === line.po_line_id
+          ? { ...l, quantity_ordered: newQty }
+          : l,
+      ));
     } else {
       const data = await res?.json();
-      setEditError(data?.error || 'Failed to close');
-      setConfirmClose(false);
+      setLineErrors((e) => ({
+        ...e,
+        [line.po_line_id]: data?.error || 'Failed to update',
+      }));
     }
   }
 
-  async function reopenPO() {
-    setEditError('');
-    const res = await api.post(`/admin/purchase-orders/${editing.po_id}/reopen`, {});
+  async function removeLine(line) {
+    setLineErrors((e) => ({ ...e, [line.po_line_id]: '' }));
+    const res = await api.delete(
+      `/admin/purchase-orders/${editing.po_id}/lines/${line.po_line_id}`,
+    );
     if (res?.ok) {
-      setEditing(null);
-      loadOrders();
+      setEditLines((ls) => ls.filter((l) => l.po_line_id !== line.po_line_id));
     } else {
       const data = await res?.json();
-      setEditError(data?.error || 'Failed to reopen');
+      setLineErrors((e) => ({
+        ...e,
+        [line.po_line_id]: data?.error || 'Failed to remove',
+      }));
+    }
+  }
+
+  // Resolves a user-typed SKU to an item_id via a narrow server query
+  // and finds the exact case-insensitive match. Same pattern as
+  // Settings.jsx Create PO so behavior is consistent across surfaces.
+  async function resolveSku(sku) {
+    const key = String(sku || '').trim().toLowerCase();
+    if (!key) return null;
+    const res = await api.get(
+      `/admin/items?q=${encodeURIComponent(sku)}&per_page=10&active=true`,
+    );
+    if (!res?.ok) return null;
+    const data = await res.json();
+    return (data.items || []).find(
+      (i) => String(i.sku || '').trim().toLowerCase() === key,
+    ) || null;
+  }
+
+  async function addLine() {
+    setNewLineError('');
+    const sku = newLineSku.trim();
+    const qty = parseInt(newLineQty, 10);
+    if (!sku) {
+      setNewLineError('Enter a SKU');
+      return;
+    }
+    if (isNaN(qty) || qty <= 0) {
+      setNewLineError('Enter a positive quantity');
+      return;
+    }
+    setAddingLine(true);
+    try {
+      const item = await resolveSku(sku);
+      if (!item) {
+        setNewLineError(`Unknown SKU: ${sku}`);
+        return;
+      }
+      const res = await api.post(
+        `/admin/purchase-orders/${editing.po_id}/lines`,
+        { item_id: item.item_id, quantity_ordered: qty },
+      );
+      if (res?.ok) {
+        const created = await res.json();
+        setEditLines((ls) => [
+          ...ls,
+          { ...created, item_name: item.item_name, upc: item.upc },
+        ]);
+        setNewLineSku('');
+        setNewLineQty('');
+      } else {
+        const data = await res?.json();
+        setNewLineError(data?.error || 'Failed to add line');
+      }
+    } finally {
+      setAddingLine(false);
     }
   }
 
@@ -172,6 +298,17 @@ export default function PurchaseOrders() {
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
         />
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer',
+        }}>
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => { setShowArchived(e.target.checked); setPage(1); }}
+          />
+          Show Archived
+        </label>
       </div>
 
       <DataTable
@@ -198,7 +335,7 @@ export default function PurchaseOrders() {
           <section className="section">
             <div className="section-title">PO Summary</div>
             <div className="detail-grid detail-grid-2col" style={{ marginBottom: 0 }}>
-              <span className="detail-label">Vendor</span><span>{selectedPO.vendor || '-'}</span>
+              <span className="detail-label">Vendor</span><span>{selectedPO.vendor_name || '-'}</span>
               <span className="detail-label">Status</span><span><StatusTag status={selectedPO.status} /></span>
               <span className="detail-label">Expected Date</span><span className="mono">{selectedPO.expected_date ? new Date(selectedPO.expected_date).toLocaleDateString() : '-'}</span>
               <span className="detail-label">Notes</span><span>{selectedPO.notes || '-'}</span>
@@ -243,62 +380,220 @@ export default function PurchaseOrders() {
       {editing && (
         <Modal
           title={`Edit PO ${editing.po_number}`}
-          onClose={() => { setEditing(null); setConfirmClose(false); }}
+          onClose={closeEdit}
           footer={
             <>
-              {editing.status === 'CLOSED' ? (
-                <button className="btn" onClick={reopenPO}>Reopen Purchase Order</button>
-              ) : (
-                <button className="btn btn-danger" onClick={() => setConfirmClose(true)}>Close Purchase Order</button>
-              )}
-              <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveEdit} disabled={editing.status === 'CLOSED'}>Save</button>
+              <button className="btn" onClick={closeEdit}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveEdit}>Save</button>
             </>
           }
+          size="wide"
         >
           {editError && <div className="form-error" style={{ marginBottom: 12 }}>{editError}</div>}
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
-            PO header fields only. Line items (items + quantities) are fixed after PO
-            create and are read-only here. Editing is restricted to POs in OPEN status.
-          </p>
-          <div className="form-row">
-            <div className="form-group">
-              <label>PO Number</label>
-              <input className="form-input" value={editForm.po_number} onChange={(e) => setEditForm({ ...editForm, po_number: e.target.value })} />
-            </div>
-            <div className="form-group">
-              <label>Vendor</label>
-              <input className="form-input" value={editForm.vendor_name} onChange={(e) => setEditForm({ ...editForm, vendor_name: e.target.value })} />
-            </div>
-          </div>
-          <div className="form-group">
-            <label>Expected Date</label>
-            <input className="form-input" type="date" value={editForm.expected_date} onChange={(e) => setEditForm({ ...editForm, expected_date: e.target.value })} />
-          </div>
-          <div className="form-group">
-            <label>Notes</label>
-            <textarea className="form-input" rows={3} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
-          </div>
-        </Modal>
-      )}
 
-      {confirmClose && editing && (
-        <Modal
-          title={`Close PO ${editing.po_number}?`}
-          onClose={() => setConfirmClose(false)}
-          footer={
-            <>
-              <button className="btn" onClick={() => setConfirmClose(false)}>Cancel</button>
-              <button className="btn btn-danger" onClick={closePO}>Close Purchase Order</button>
-            </>
-          }
-        >
-          <p style={{ fontSize: 13 }}>
-            Close this PO? It will no longer appear in active receiving lists. This
-            can be reversed by reopening.
-          </p>
+          <section className="section">
+            <div className="section-title">Header</div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>PO Number</label>
+                <input
+                  className="form-input"
+                  value={editForm.po_number}
+                  disabled={EDIT_LOCKED_STATUSES.has(editing.status)}
+                  onChange={(e) => setEditForm({ ...editForm, po_number: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Vendor</label>
+                <input
+                  className="form-input"
+                  value={editForm.vendor_name}
+                  disabled={EDIT_LOCKED_STATUSES.has(editing.status)}
+                  onChange={(e) => setEditForm({ ...editForm, vendor_name: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Expected Date</label>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={editForm.expected_date}
+                  disabled={EDIT_LOCKED_STATUSES.has(editing.status)}
+                  onChange={(e) => setEditForm({ ...editForm, expected_date: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Status</label>
+                <select
+                  className="form-select"
+                  value={editForm.status}
+                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                >
+                  {statusDropdownOptions(editing.status).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Notes</label>
+              <textarea
+                className="form-input"
+                rows={2}
+                value={editForm.notes}
+                disabled={EDIT_LOCKED_STATUSES.has(editing.status)}
+                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+              />
+            </div>
+            {EDIT_LOCKED_STATUSES.has(editing.status) && (
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Header + line edits are locked while the PO is {editing.status}.
+                Move the status off {editing.status} via the dropdown to resume editing.
+              </p>
+            )}
+          </section>
+
+          <section className="section">
+            <div className="section-title">Line Items</div>
+            {editLines.length > 0 ? (
+              <table className="lines-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Item Name</th>
+                    <th style={{ textAlign: 'right' }}>Ordered</th>
+                    <th style={{ textAlign: 'right' }}>Received</th>
+                    <th style={{ textAlign: 'right' }}>Variance</th>
+                    <th style={{ width: 40 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {editLines.map((l) => {
+                    const variance = (l.quantity_ordered || 0) - (l.quantity_received || 0);
+                    const lineLocked = EDIT_LOCKED_STATUSES.has(editing.status);
+                    const removable = !lineLocked && (l.quantity_received || 0) === 0;
+                    return (
+                      <tr key={l.po_line_id}>
+                        <td className="mono">{l.sku}</td>
+                        <td style={{ color: 'var(--text-secondary)' }}>{l.item_name}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <LineQtyInput
+                            line={l}
+                            disabled={lineLocked}
+                            onCommit={updateLineQty}
+                          />
+                          {lineErrors[l.po_line_id] && (
+                            <div className="form-error" style={{ fontSize: 11, marginTop: 4, textAlign: 'right' }}>
+                              {lineErrors[l.po_line_id]}
+                            </div>
+                          )}
+                        </td>
+                        <td className="mono" style={{ textAlign: 'right' }}>{l.quantity_received || 0}</td>
+                        <td className="mono" style={{ textAlign: 'right', color: variance > 0 ? 'var(--copper)' : 'var(--text-secondary)', fontWeight: variance > 0 ? 600 : 400 }}>
+                          {variance}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            className="btn btn-sm btn-danger"
+                            onClick={() => removeLine(l)}
+                            disabled={!removable}
+                            title={!removable
+                              ? (lineLocked ? 'Locked while PO is ' + editing.status : 'Line has received units; reverse receipts first')
+                              : 'Remove line'}
+                            aria-label="Remove line"
+                          >&#10005;</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No line items yet.</p>
+            )}
+
+            {!EDIT_LOCKED_STATUSES.has(editing.status) && (
+              <div style={{
+                marginTop: 12, padding: 12,
+                background: 'var(--surface)',
+                borderRadius: 'var(--radius)',
+                display: 'flex', alignItems: 'flex-start', gap: 8,
+              }}>
+                <div style={{ flex: '0 0 200px' }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>SKU</label>
+                  <input
+                    className="form-input"
+                    placeholder="Enter SKU"
+                    value={newLineSku}
+                    onChange={(e) => setNewLineSku(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') addLine(); }}
+                  />
+                </div>
+                <div style={{ flex: '0 0 120px' }}>
+                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>Quantity</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min={1}
+                    placeholder="0"
+                    value={newLineQty}
+                    onChange={(e) => setNewLineQty(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') addLine(); }}
+                  />
+                </div>
+                <div style={{ flexGrow: 1 }} />
+                <button
+                  className="btn btn-primary"
+                  onClick={addLine}
+                  disabled={addingLine}
+                  style={{ marginTop: 16 }}
+                >
+                  {addingLine ? 'Adding...' : 'Add Line'}
+                </button>
+              </div>
+            )}
+            {newLineError && <div className="form-error" style={{ marginTop: 8 }}>{newLineError}</div>}
+          </section>
         </Modal>
       )}
     </div>
+  );
+}
+
+function LineQtyInput({ line, disabled, onCommit }) {
+  const [val, setVal] = useState(String(line.quantity_ordered));
+  const [saving, setSaving] = useState(false);
+
+  // Sync local state when the parent updates after a successful PATCH
+  // or after a refresh-from-server.
+  useEffect(() => {
+    setVal(String(line.quantity_ordered));
+  }, [line.quantity_ordered]);
+
+  async function commit() {
+    const n = parseInt(val, 10);
+    if (isNaN(n) || n <= 0 || n === line.quantity_ordered) {
+      setVal(String(line.quantity_ordered));
+      return;
+    }
+    setSaving(true);
+    await onCommit(line, n);
+    setSaving(false);
+  }
+
+  return (
+    <input
+      type="number"
+      min={1}
+      className="form-input mono"
+      style={{ width: 88, textAlign: 'right', padding: '4px 8px' }}
+      value={val}
+      disabled={disabled || saving}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+    />
   );
 }
