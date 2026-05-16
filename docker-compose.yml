@@ -33,14 +33,7 @@ services:
       retries: 5
 
   api:
-    # Build context is the repo root so api/Dockerfile can COPY both
-    # api/ and db/mappings/ (see c579092 - mapping documents are
-    # baked into the image for managed-platform deploys). The
-    # repo-root .dockerignore strips admin/, mobile/, docs/, etc.
-    # so the context stays lean.
-    build:
-      context: .
-      dockerfile: api/Dockerfile
+    build: ./api
     container_name: sentry-api
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry}@db:5432/${POSTGRES_DB:-sentry}
@@ -123,9 +116,7 @@ services:
     # R12); horizontal scale is deferred. Restart policy is always-on
     # so a crash is quickly recovered and the 410 snapshot_expired
     # path is exercised for any in-flight scans.
-    build:
-      context: .
-      dockerfile: api/Dockerfile
+    build: ./api
     container_name: sentry-snapshot-keeper
     command: python -m services.snapshot_keeper
     restart: unless-stopped
@@ -164,9 +155,7 @@ services:
     # per-subscription delivery loop, retry schedule, SSRF guard, and
     # the rest of the dispatcher logic. DISPATCHER_ENABLED=false stops
     # dispatch traffic without removing the container.
-    build:
-      context: .
-      dockerfile: api/Dockerfile
+    build: ./api
     container_name: sentry-webhook-dispatcher
     command: python -m services.webhook_dispatcher
     restart: unless-stopped
@@ -232,9 +221,7 @@ services:
       start_period: 15s
 
   celery-worker:
-    build:
-      context: .
-      dockerfile: api/Dockerfile
+    build: ./api
     container_name: sentry-celery
     command: celery -A jobs worker --loglevel=info --pool=solo
     restart: unless-stopped
