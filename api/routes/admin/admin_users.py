@@ -318,12 +318,16 @@ def replace_user_permissions(user_id, validated):
         {"uid": user_id},
     )
     if requested:
+        # Pass a list of dicts so SQLAlchemy issues an executemany.
+        # Avoids the :keys::text[] form which collides with SQLAlchemy's
+        # named-parameter parser (the `::` cast is read as the start of
+        # another parameter).
         g.db.execute(
             text(
                 "INSERT INTO user_page_permissions (user_id, page_key, granted_by) "
-                "SELECT :uid, k, :gb FROM unnest(:keys::text[]) AS k"
+                "VALUES (:uid, :pk, :gb)"
             ),
-            {"uid": user_id, "keys": requested, "gb": granted_by},
+            [{"uid": user_id, "pk": pk, "gb": granted_by} for pk in requested],
         )
     g.db.commit()
     return jsonify({
