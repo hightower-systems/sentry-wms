@@ -580,6 +580,36 @@ def reopen_purchase_order(po_id):
     return jsonify({"message": "Purchase order reopened", "status": PO_OPEN})
 
 
+# ── Source Systems ────────────────────────────────────────────────────────────
+
+@admin_bp.route("/source-systems", methods=["GET"])
+@require_auth
+@require_admin_or_page_permission("sales-orders")
+@with_db
+def list_source_systems():
+    """avid-overhaul-mk1 P7: read-only list of canonical source_system
+    tags for the SO edit modal's source_system picker.
+
+    /admin/scope-catalog already serves the same list but is gated by
+    api-tokens, which the sales-orders operator role does not get by
+    default. This focused endpoint keeps the SO edit surface usable
+    without granting the broader token permission.
+    """
+    rows = g.db.execute(
+        text(
+            "SELECT source_system, kind "
+            "  FROM inbound_source_systems_allowlist "
+            " ORDER BY source_system"
+        )
+    ).fetchall()
+    return jsonify({
+        "source_systems": [
+            {"source_system": r.source_system, "kind": r.kind}
+            for r in rows
+        ],
+    })
+
+
 # ── Sales Orders ──────────────────────────────────────────────────────────────
 
 @admin_bp.route("/sales-orders", methods=["GET"])

@@ -79,6 +79,25 @@ const PAGE_GROUPS = [
       { key: 'settings', label: 'Settings' },
     ],
   },
+  // avid-overhaul-mk1 P7: feature-flag grants. Not pages in the
+  // sidebar; granting one lifts the OPEN-only edit gate on the
+  // matching admin surface (PO header/line edits past CLOSED+ARCHIVED;
+  // SO header/line edits past OPEN). Same storage as page grants so
+  // the multi-select reuses the existing pagePermissions array.
+  {
+    label: 'Overrides',
+    isOverride: true,
+    pages: [
+      {
+        key: 'po-full-edit',
+        label: 'Full PO edit (past CLOSED/ARCHIVED)',
+      },
+      {
+        key: 'so-full-edit',
+        label: 'Full SO edit (past OPEN, incl. source_system + line CRUD)',
+      },
+    ],
+  },
 ];
 
 const ALL_PAGE_KEYS = PAGE_GROUPS.flatMap((g) => g.pages.map((p) => p.key));
@@ -452,10 +471,17 @@ export default function Users() {
                 {PAGE_GROUPS.map((group) => {
                   const groupKeys = new Set(group.pages.map((p) => p.key));
                   const grantedCount = pagePermissions.filter((k) => groupKeys.has(k)).length;
+                  // The Overrides card carries an accent border so it
+                  // reads as a grant of authority, not a page-access
+                  // toggle. Granting an override is a different mental
+                  // model from picking which pages a USER can open.
+                  const cardStyle = group.isOverride
+                    ? { padding: 10, borderLeft: '3px solid var(--copper)' }
+                    : { padding: 10 };
                   return (
-                    <div key={group.label} className="card" style={{ padding: 10 }}>
+                    <div key={group.label} className="card" style={cardStyle}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <strong style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        <strong style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: group.isOverride ? 'var(--copper)' : undefined }}>
                           {group.label}
                         </strong>
                         <span style={{ fontSize: 11 }}>

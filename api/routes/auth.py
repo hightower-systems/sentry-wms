@@ -215,15 +215,25 @@ def me():
     # registered page; USER sees only their explicit grants. Returned
     # alongside the existing mobile allowed_functions so the React
     # admin's sidebar can filter NAV in one shot.
-    from constants import ALL_PAGE_KEYS
+    #
+    # avid-overhaul-mk1 P7: override grants (po-full-edit, so-full-edit)
+    # ride on the same user_page_permissions table but live in a
+    # separate response field so the frontend can light up edit
+    # controls without scanning allowed_pages for the override slug.
+    # ADMIN gets every override implicitly.
+    from constants import ALL_PAGE_KEYS, ALL_OVERRIDE_KEYS
+    override_set = set(ALL_OVERRIDE_KEYS)
     if row.role == "ADMIN":
         allowed_pages = list(ALL_PAGE_KEYS)
+        allowed_overrides = list(ALL_OVERRIDE_KEYS)
     else:
         page_rows = g.db.execute(
             text("SELECT page_key FROM user_page_permissions WHERE user_id = :uid"),
             {"uid": user_id},
         ).fetchall()
-        allowed_pages = [r.page_key for r in page_rows]
+        all_keys = [r.page_key for r in page_rows]
+        allowed_pages = [k for k in all_keys if k not in override_set]
+        allowed_overrides = [k for k in all_keys if k in override_set]
 
     return jsonify({
         "user_id": row.user_id,
@@ -233,6 +243,7 @@ def me():
         "warehouse_id": row.warehouse_id,
         "allowed_functions": functions,
         "allowed_pages": allowed_pages,
+        "allowed_overrides": allowed_overrides,
         "require_packing": require_packing,
         "must_change_password": bool(row.must_change_password),
     })
