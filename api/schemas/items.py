@@ -14,6 +14,10 @@ class CreateItemRequest(BaseModel):
     category: Optional[str] = Field(None, max_length=128)
     weight_lbs: Optional[Decimal] = Field(None, ge=0, le=99999)
     default_bin_id: Optional[int] = Field(None, gt=0)
+    # avid-overhaul-mk1 mig 058: optional canonical vendor FK. Sent
+    # as a UUID string; pydantic accepts the raw str and the route
+    # passes it straight into the parameterized INSERT.
+    vendor_id: Optional[str] = Field(None, max_length=64)
 
 
 class UpdateItemRequest(BaseModel):
@@ -27,6 +31,10 @@ class UpdateItemRequest(BaseModel):
     reorder_point: Optional[int] = Field(None, ge=0)
     reorder_qty: Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
+    # avid-overhaul-mk1 mig 058: optional canonical vendor FK. An empty
+    # string is normalized to NULL in the route so the picker's "no
+    # vendor" option clears the column cleanly.
+    vendor_id: Optional[str] = Field(None, max_length=64)
 
 
 class CreatePreferredBinRequest(BaseModel):

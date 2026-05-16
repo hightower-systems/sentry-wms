@@ -680,6 +680,197 @@ class TestSalesOrdersHidePrintedAndMarkPrinted:
         assert 1 not in filtered_ids
 
 
+class TestVendorsCRUD:
+    """avid-overhaul-mk1 P5.1: admin CRUD over the canonical vendors
+    table. Validates create / list / get / update / delete plus the
+    in-use guard that blocks deleting a vendor referenced by an item."""
+
+    def test_create_and_get_vendor(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Acme Tackle Co", "email": "buyer@acme.example"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        v = resp.get_json()["vendor"]
+        assert v["vendor_name"] == "Acme Tackle Co"
+        assert v["email"] == "buyer@acme.example"
+        assert v["is_active"] is True
+        assert v["canonical_id"]
+
+        detail = client.get(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert detail.status_code == 200
+        assert detail.get_json()["vendor"]["canonical_id"] == v["canonical_id"]
+
+    def test_list_vendors_filters_by_active(self, client, auth_headers):
+        client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Archived Vendor", "is_active": False},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Active Vendor", "is_active": True},
+            headers=auth_headers,
+        )
+        active = client.get(
+            "/api/admin/vendors?active=true",
+            headers=auth_headers,
+        ).get_json()
+        archived = client.get(
+            "/api/admin/vendors?active=false",
+            headers=auth_headers,
+        ).get_json()
+        active_names = {v["vendor_name"] for v in active["vendors"]}
+        archived_names = {v["vendor_name"] for v in archived["vendors"]}
+        assert "Active Vendor" in active_names
+        assert "Active Vendor" not in archived_names
+        assert "Archived Vendor" in archived_names
+        assert "Archived Vendor" not in active_names
+
+    def test_update_vendor(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Edit Target"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        resp = client.put(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            json={"contact_name": "Jane Buyer", "phone": "555-0100"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        updated = resp.get_json()["vendor"]
+        assert updated["contact_name"] == "Jane Buyer"
+        assert updated["phone"] == "555-0100"
+        assert updated["vendor_name"] == "Edit Target"  # untouched
+
+    def test_delete_unreferenced_vendor(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Disposable Vendor"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        resp = client.delete(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] is True
+        # Vendor is gone.
+        missing = client.get(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert missing.status_code == 404
+
+    def test_delete_vendor_blocked_when_in_use(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Locked Vendor"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        # Wire an existing item to this vendor.
+        client.put(
+            "/api/admin/items/1",
+            json={"vendor_id": v["canonical_id"]},
+            headers=auth_headers,
+        )
+        resp = client.delete(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "referenced" in resp.get_json()["error"]
+
+
+class TestItemsVendorLink:
+    """Items.vendor_id (mig 058) round-trips through create / update /
+    list / detail, and an empty-string vendor_id clears the column to
+    NULL so the picker's 'no vendor' option works."""
+
+    def test_create_item_with_vendor(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Vendor For Create"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        resp = client.post(
+            "/api/admin/items",
+            json={
+                "sku": "VEND-001", "item_name": "Vendor-linked Item",
+                "vendor_id": v["canonical_id"],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        assert resp.get_json()["vendor_id"] == v["canonical_id"]
+
+    def test_list_items_returns_vendor_name(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Vendor For List"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        client.put(
+            "/api/admin/items/1",
+            json={"vendor_id": v["canonical_id"]},
+            headers=auth_headers,
+        )
+        resp = client.get(
+            "/api/admin/items?q=TST-001",
+            headers=auth_headers,
+        )
+        items = resp.get_json()["items"]
+        match = next(i for i in items if i["sku"] == "TST-001")
+        assert match["vendor_id"] == v["canonical_id"]
+        assert match["vendor_name"] == "Vendor For List"
+
+    def test_update_item_clears_vendor_with_empty_string(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Vendor To Detach"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        client.put(
+            "/api/admin/items/1",
+            json={"vendor_id": v["canonical_id"]},
+            headers=auth_headers,
+        )
+        # Empty string is how the picker emits "no vendor"; backend
+        # coerces to NULL.
+        client.put(
+            "/api/admin/items/1",
+            json={"vendor_id": ""},
+            headers=auth_headers,
+        )
+        detail = client.get("/api/admin/items/1", headers=auth_headers).get_json()
+        assert detail["item"]["vendor_id"] is None
+        assert detail["item"]["vendor_name"] is None
+
+    def test_filter_items_by_vendor(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Vendor For Filter"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        client.put(
+            "/api/admin/items/2",
+            json={"vendor_id": v["canonical_id"]},
+            headers=auth_headers,
+        )
+        resp = client.get(
+            f"/api/admin/items?vendor_id={v['canonical_id']}",
+            headers=auth_headers,
+        )
+        items = resp.get_json()["items"]
+        assert len(items) == 1
+        assert items[0]["item_id"] == 2
+
+
 class TestSalesOrdersPrimaryBin:
     """avid-overhaul-mk1 P4.1: include_primary_bin=true on the SO list
     surfaces the bin_code + pick_sequence of the LOWEST-pick_sequence

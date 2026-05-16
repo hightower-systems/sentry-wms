@@ -57,6 +57,7 @@ from routes.admin import (  # noqa: E402, F401
     admin_tokens,
     admin_transfer_orders,
     admin_users,
+    admin_vendors,
     admin_warehouse,
     admin_webhooks,
 )

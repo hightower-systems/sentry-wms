@@ -1939,3 +1939,14 @@ CREATE TABLE dockd_idempotency (
 );
 
 CREATE INDEX dockd_idempotency_prune ON dockd_idempotency(created_at);
+
+-- avid-overhaul-mk1 mig 058: items pick one canonical vendor. The
+-- FK lives in an ALTER TABLE at the tail of schema.sql because the
+-- items CREATE TABLE (line 69) lands long before the vendors
+-- CREATE TABLE (line 1221) - declaring REFERENCES vendors inline
+-- on items would fail on a fresh schema load. Existing deploys
+-- pick this up via db/migrations/058_items_vendor_id.sql.
+ALTER TABLE items
+    ADD COLUMN IF NOT EXISTS vendor_id UUID REFERENCES vendors(canonical_id) ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS ix_items_vendor_id ON items(vendor_id);
