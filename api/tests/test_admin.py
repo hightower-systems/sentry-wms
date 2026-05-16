@@ -32,6 +32,32 @@ def _picker_headers(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _web_user_with_pages(client, page_keys, username="webuser1"):
+    """Create a USER role with the given web-admin page grants and
+    return auth headers. Used by P6.1 tests to drive the permission
+    decorator and the /auth/me allowed_pages payload."""
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    import bcrypt
+    pw_hash = bcrypt.hashpw(b"webuser123", bcrypt.gensalt()).decode("utf-8")
+    cur.execute(
+        "INSERT INTO users (username, password_hash, full_name, role, warehouse_id, external_id) "
+        "VALUES (%s, %s, 'Web User', 'USER', 1, gen_random_uuid()) RETURNING user_id",
+        (username, pw_hash),
+    )
+    user_id = cur.fetchone()[0]
+    for pk in page_keys:
+        cur.execute(
+            "INSERT INTO user_page_permissions (user_id, page_key) VALUES (%s, %s)",
+            (user_id, pk),
+        )
+    cur.close()
+
+    resp = client.post("/api/auth/login", json={"username": username, "password": "webuser123"})
+    token = resp.get_json()["token"]
+    return user_id, {"Authorization": f"Bearer {token}"}
+
+
 # ── Warehouses ────────────────────────────────────────────────────────────────
 
 class TestWarehouses:
@@ -678,6 +704,98 @@ class TestSalesOrdersHidePrintedAndMarkPrinted:
         filtered_ids = {s["so_id"] for s in filtered["sales_orders"]}
         assert 1 in unfiltered_ids
         assert 1 not in filtered_ids
+
+
+class TestWebAdminPagePermissions:
+    """avid-overhaul-mk1 P6.1: per-page web-admin grants. Covers the
+    /auth/me allowed_pages payload, the GET/PUT user permissions
+    endpoints, and the validation gate on unknown page_keys."""
+
+    def test_auth_me_admin_returns_all_pages(self, client, auth_headers):
+        resp = client.get("/api/auth/me", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["role"] == "ADMIN"
+        # ADMIN sees every registered page; spot-check a couple.
+        assert "items" in data["allowed_pages"]
+        assert "settings" in data["allowed_pages"]
+        assert "purchase-orders" in data["allowed_pages"]
+
+    def test_auth_me_user_returns_explicit_grants_only(self, client):
+        _, headers = _web_user_with_pages(
+            client, ["items", "inventory"], username="pages_me_user",
+        )
+        resp = client.get("/api/auth/me", headers=headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["role"] == "USER"
+        assert set(data["allowed_pages"]) == {"items", "inventory"}
+
+    def test_get_permissions_for_admin_returns_full_catalog(self, client, auth_headers):
+        # Self-lookup: the seeded admin user is id 1.
+        resp = client.get("/api/admin/users/1/permissions", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["is_full_access"] is True
+        assert "items" in data["page_keys"]
+
+    def test_get_permissions_for_user_returns_granted_only(self, client, auth_headers):
+        user_id, _ = _web_user_with_pages(
+            client, ["items", "vendors"], username="pages_get_user",
+        )
+        resp = client.get(
+            f"/api/admin/users/{user_id}/permissions", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["is_full_access"] is False
+        assert sorted(data["page_keys"]) == ["items", "vendors"]
+
+    def test_put_permissions_replaces_set(self, client, auth_headers):
+        user_id, _ = _web_user_with_pages(
+            client, ["items"], username="pages_put_user",
+        )
+        resp = client.put(
+            f"/api/admin/users/{user_id}/permissions",
+            json={"page_keys": ["sales-orders", "purchase-orders", "vendors"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert sorted(resp.get_json()["page_keys"]) == [
+            "purchase-orders", "sales-orders", "vendors",
+        ]
+        # "items" grant is gone now (replace, not merge).
+        check = client.get(
+            f"/api/admin/users/{user_id}/permissions", headers=auth_headers,
+        ).get_json()
+        assert "items" not in check["page_keys"]
+
+    def test_put_permissions_rejects_unknown_keys(self, client, auth_headers):
+        user_id, _ = _web_user_with_pages(
+            client, [], username="pages_unknown_user",
+        )
+        resp = client.put(
+            f"/api/admin/users/{user_id}/permissions",
+            json={"page_keys": ["items", "made-up-page"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "made-up-page" in resp.get_json()["unknown"]
+
+    def test_put_permissions_for_admin_is_noop(self, client, auth_headers):
+        # Admin's effective grant set is "always all pages"; the table
+        # row count for an ADMIN should never grow.
+        resp = client.put(
+            "/api/admin/users/1/permissions",
+            json={"page_keys": ["items"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["is_full_access"] is True
+        count = _query_val(
+            "SELECT COUNT(*) FROM user_page_permissions WHERE user_id = 1"
+        )
+        assert count == 0
 
 
 class TestVendorsCRUD:

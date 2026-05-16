@@ -181,3 +181,21 @@ BIN_PICKABLE = "Pickable"
 # User roles
 ROLE_ADMIN = "ADMIN"
 ROLE_USER = "USER"
+
+# avid-overhaul-mk1 mig 059: source of truth for the per-page web-admin
+# permission grid. Keys MATCH the React admin URL slugs so the sidebar
+# filter and the @require_admin_or_page_permission decorator can both
+# read straight off this list. Adding a new admin page is a two-step
+# change: append the key here and grant it to any users who need it.
+ALL_PAGE_KEYS = (
+    "dashboard",
+    "inventory", "cycle-counts", "count-approvals",
+    "purchase-orders", "receiving", "putaway",
+    "sales-orders", "pos-activity", "picking-tickets", "fraud",
+    "picking", "packing", "shipping",
+    "items", "vendors",
+    "adjustments", "inter-warehouse-transfers", "transfer-orders",
+    "warehouses", "bins", "zones", "preferred-bins",
+    "users", "api-tokens", "inbound", "consumer-groups",
+    "webhooks", "audit-log", "imports", "integrations", "settings",
+)

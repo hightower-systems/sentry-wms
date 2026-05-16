@@ -211,6 +211,20 @@ def me():
     if not require_packing:
         functions = [f for f in functions if f != "pack"]
 
+    # avid-overhaul-mk1 P6.1: web-admin page grants. ADMIN sees every
+    # registered page; USER sees only their explicit grants. Returned
+    # alongside the existing mobile allowed_functions so the React
+    # admin's sidebar can filter NAV in one shot.
+    from constants import ALL_PAGE_KEYS
+    if row.role == "ADMIN":
+        allowed_pages = list(ALL_PAGE_KEYS)
+    else:
+        page_rows = g.db.execute(
+            text("SELECT page_key FROM user_page_permissions WHERE user_id = :uid"),
+            {"uid": user_id},
+        ).fetchall()
+        allowed_pages = [r.page_key for r in page_rows]
+
     return jsonify({
         "user_id": row.user_id,
         "username": row.username,
@@ -218,6 +232,7 @@ def me():
         "role": row.role,
         "warehouse_id": row.warehouse_id,
         "allowed_functions": functions,
+        "allowed_pages": allowed_pages,
         "require_packing": require_packing,
         "must_change_password": bool(row.must_change_password),
     })

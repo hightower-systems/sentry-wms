@@ -219,6 +219,46 @@ def require_role(*roles):
     return decorator
 
 
+def require_admin_or_page_permission(page_key):
+    """avid-overhaul-mk1 P6.1: web-admin permission gate.
+
+    ADMIN bypasses the check (full access by definition). Any other
+    role must carry an explicit row in user_page_permissions for
+    this page_key, otherwise the request is rejected with 403 +
+    {error: "Permission denied", page_key: "..."} so the frontend
+    can surface a clean "Permissions Error" popup.
+
+    Must be applied AFTER @with_db so g.db is available for the
+    permission lookup. The query is a single PK probe on
+    user_page_permissions(user_id, page_key) so the overhead is
+    bounded even on hot endpoints.
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            user = g.current_user
+            if user.get("role") == "ADMIN":
+                return f(*args, **kwargs)
+            user_id = user.get("user_id")
+            row = g.db.execute(
+                text(
+                    "SELECT 1 FROM user_page_permissions "
+                    "WHERE user_id = :uid AND page_key = :pk LIMIT 1"
+                ),
+                {"uid": user_id, "pk": page_key},
+            ).fetchone()
+            if not row:
+                return jsonify({
+                    "error": "Permission denied",
+                    "page_key": page_key,
+                }), 403
+            return f(*args, **kwargs)
+
+        return decorated
+
+    return decorator
+
+
 # v1.5.1 V-201 (#142): the v1.5.0 guard rejected only unset / empty
 # pepper values; a 1-byte pepper passed silently. A weak pepper
 # collapses the precomputation defense pepper exists to provide.

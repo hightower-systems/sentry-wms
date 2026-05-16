@@ -12,13 +12,18 @@ from constants import (
     PO_OPEN, PO_PARTIAL, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED,
     ADJ_PENDING, ADJ_APPROVED, ADJ_REJECTED,
     BIN_STAGING, ACTION_ADJUST,
+    ALL_PAGE_KEYS,
 )
 from middleware.auth_middleware import require_auth, require_role
 from middleware.db import with_db
 from routes.admin import VALID_ROLES, admin_bp
 from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustmentsRequest
 from schemas.settings import UpdateSettingsRequest
-from schemas.users import CreateUserRequest, UpdateUserRequest
+from schemas.users import (
+    CreateUserRequest,
+    UpdateUserPagePermissionsRequest,
+    UpdateUserRequest,
+)
 from services.audit_service import write_audit_log
 from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
 from services.auth_service import validate_password
@@ -222,6 +227,111 @@ def delete_user(user_id):
     g.db.execute(text("DELETE FROM users WHERE user_id = :uid"), {"uid": user_id})
     g.db.commit()
     return jsonify({"message": "User deleted"})
+
+
+# ── Per-page web-admin permission grants (P6.1) ──────────────────────────────
+
+@admin_bp.route("/users/<int:user_id>/permissions", methods=["GET"])
+@require_auth
+@require_role("ADMIN")
+@with_db
+def get_user_permissions(user_id):
+    """Return the list of page_keys explicitly granted to a USER.
+    ADMIN role users return the full ALL_PAGE_KEYS catalog so the UI
+    can mark every checkbox without a separate role check."""
+    user = g.db.execute(
+        text("SELECT user_id, role FROM users WHERE user_id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user.role == "ADMIN":
+        return jsonify({
+            "user_id": user_id,
+            "role": "ADMIN",
+            "page_keys": list(ALL_PAGE_KEYS),
+            "is_full_access": True,
+        })
+
+    rows = g.db.execute(
+        text(
+            "SELECT page_key FROM user_page_permissions "
+            "WHERE user_id = :uid ORDER BY page_key"
+        ),
+        {"uid": user_id},
+    ).fetchall()
+    return jsonify({
+        "user_id": user_id,
+        "role": user.role,
+        "page_keys": [r.page_key for r in rows],
+        "is_full_access": False,
+    })
+
+
+@admin_bp.route("/users/<int:user_id>/permissions", methods=["PUT"])
+@require_auth
+@require_role("ADMIN")
+@validate_body(UpdateUserPagePermissionsRequest)
+@with_db
+def replace_user_permissions(user_id, validated):
+    """Replace a user's full per-page grant set in one transaction.
+
+    Unknown page_keys land as 400 so a typo cannot quietly persist a
+    grant the sidebar will never honor. The replace-all semantics mean
+    the caller does not have to diff and DELETE the old set; whatever
+    page_keys arrive in the body become the new authoritative set.
+
+    Granting permissions to an ADMIN is a no-op: ADMINs bypass the
+    table entirely so the rows do nothing useful. The handler still
+    accepts the request without writing rows so the frontend's
+    "Save permissions" button does not have to special-case roles.
+    """
+    user = g.db.execute(
+        text("SELECT user_id, role FROM users WHERE user_id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    requested = list(dict.fromkeys(validated.page_keys))  # de-dup, preserve order
+    unknown = [k for k in requested if k not in ALL_PAGE_KEYS]
+    if unknown:
+        return jsonify({
+            "error": "Unknown page_key(s)",
+            "unknown": unknown,
+        }), 400
+
+    if user.role == "ADMIN":
+        # ADMINs always have full access; rows are inert. Skip the
+        # write so we do not pollute the table with redundant data.
+        return jsonify({
+            "user_id": user_id,
+            "role": "ADMIN",
+            "page_keys": list(ALL_PAGE_KEYS),
+            "is_full_access": True,
+        })
+
+    granted_by = g.current_user["user_id"]
+    g.db.execute(
+        text("DELETE FROM user_page_permissions WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    if requested:
+        g.db.execute(
+            text(
+                "INSERT INTO user_page_permissions (user_id, page_key, granted_by) "
+                "SELECT :uid, k, :gb FROM unnest(:keys::text[]) AS k"
+            ),
+            {"uid": user_id, "keys": requested, "gb": granted_by},
+        )
+    g.db.commit()
+    return jsonify({
+        "user_id": user_id,
+        "role": user.role,
+        "page_keys": requested,
+        "is_full_access": False,
+    })
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────

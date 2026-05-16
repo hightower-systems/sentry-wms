@@ -1950,3 +1950,18 @@ ALTER TABLE items
     ADD COLUMN IF NOT EXISTS vendor_id UUID REFERENCES vendors(canonical_id) ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS ix_items_vendor_id ON items(vendor_id);
+
+-- avid-overhaul-mk1 mig 059: per-page permission grants for web-admin
+-- USERs. ADMIN bypasses this table; USER must have an explicit row
+-- per page_key to reach the matching admin endpoint. Existing
+-- deploys pick this up via db/migrations/059_user_page_permissions.sql.
+CREATE TABLE IF NOT EXISTS user_page_permissions (
+    user_id     INT          NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    page_key    VARCHAR(64)  NOT NULL,
+    granted_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by  INT          REFERENCES users(user_id) ON DELETE SET NULL,
+    PRIMARY KEY (user_id, page_key)
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_page_permissions_user
+    ON user_page_permissions(user_id);
