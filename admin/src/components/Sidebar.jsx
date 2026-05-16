@@ -36,14 +36,14 @@ const NAV = [
   {
     label: 'Warehouse',
     items: [
+      { to: '/items', label: 'Items' },
+      { to: '/adjustments', label: 'Inventory Adjustments' },
+      { to: '/inter-warehouse-transfers', label: 'Inventory Transfers' },
+      { to: '/transfer-orders', label: 'Transfer Orders' },
       { to: '/warehouses', label: 'Warehouses' },
       { to: '/bins', label: 'Bins' },
       { to: '/zones', label: 'Zones' },
-      { to: '/items', label: 'Items' },
       { to: '/preferred-bins', label: 'Preferred Bins' },
-      { to: '/adjustments', label: 'Adjustments' },
-      { to: '/transfer-orders', label: 'Transfer Orders' },
-      { to: '/inter-warehouse-transfers', label: 'Bin Transfers' },
     ],
   },
   {
@@ -89,7 +89,6 @@ export default function Sidebar() {
 
   return (
     <nav className="sidebar">
-      <div className="sidebar-wordmark">SENTRY</div>
       {NAV.map((group) => (
         <div key={group.label} className="sidebar-card">
           <div className="sidebar-group-label">{group.label}</div>
