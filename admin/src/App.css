@@ -291,12 +291,12 @@ a {
 .sidebar-group-label {
   width: 100%;
   background: rgba(142,39,22,0.4);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1px;
   color: #fdf4e3;
-  padding: 5px 10px;
+  padding: 6px 10px;
 }
 
 .sidebar-link {
