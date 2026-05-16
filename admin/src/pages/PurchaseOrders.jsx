@@ -109,6 +109,42 @@ export default function PurchaseOrders() {
     }
   }
 
+  // Variance = ordered - received per line. Columns match the
+  // reconciliation report ops uses to chase short shipments with
+  // the vendor; receiving has the same five columns in the same
+  // order so an exported CSV slots directly into that workflow.
+  function exportPOCsv() {
+    if (!selectedPO || poLines.length === 0) return;
+    const csvEscape = (v) => {
+      if (v == null) return '';
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const headers = ['SKU', 'Item Name', 'Ordered', 'Received', 'Variance'];
+    const lines = [headers.join(',')];
+    for (const l of poLines) {
+      const ordered = l.quantity_ordered || 0;
+      const received = l.quantity_received || 0;
+      lines.push([
+        csvEscape(l.sku),
+        csvEscape(l.item_name),
+        csvEscape(ordered),
+        csvEscape(received),
+        csvEscape(ordered - received),
+      ].join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const today = new Date().toISOString().split('T')[0];
+    link.download = `po_${selectedPO.po_number}_${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   const columns = [
     { key: 'po_number', label: 'PO Number', mono: true },
     { key: 'vendor_name', label: 'Vendor' },
@@ -151,7 +187,12 @@ export default function PurchaseOrders() {
         <Modal
           title={`PO ${selectedPO.po_number}`}
           onClose={() => { setSelectedPO(null); setPOLines([]); }}
-          footer={<button className="btn" onClick={() => { setSelectedPO(null); setPOLines([]); }}>Close</button>}
+          footer={
+            <>
+              <button className="btn" onClick={exportPOCsv} disabled={poLines.length === 0}>Export CSV</button>
+              <button className="btn" onClick={() => { setSelectedPO(null); setPOLines([]); }}>Close</button>
+            </>
+          }
           size="wide"
         >
           <section className="section">
