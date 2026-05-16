@@ -45,8 +45,46 @@ export default function PurchaseOrders() {
   const [newLineQty, setNewLineQty] = useState('');
   const [newLineError, setNewLineError] = useState('');
   const [addingLine, setAddingLine] = useState(false);
+  // Typeahead state: debounced fetch as the operator types in the
+  // SKU field populates a datalist + drives a live "Found: ..."
+  // preview so the operator can see the resolution before clicking
+  // Add. Beats the original "type a SKU and pray it matches" UX.
+  const [skuSuggestions, setSkuSuggestions] = useState([]);
+  const [resolvedItem, setResolvedItem] = useState(null);
 
   useEffect(() => { loadOrders(); }, [page, statusFilter, search, showArchived]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced SKU lookup. Fires while the operator is typing in the
+  // Add Line SKU input so suggestions surface without a server query
+  // per keystroke. Skips when the modal is not open or the field
+  // is empty.
+  useEffect(() => {
+    if (!editing) return;
+    const sku = newLineSku.trim();
+    if (sku.length < 2) {
+      setSkuSuggestions([]);
+      setResolvedItem(null);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      const res = await api.get(
+        `/admin/items?q=${encodeURIComponent(sku)}&per_page=10&active=true`,
+      );
+      if (!res?.ok) {
+        setSkuSuggestions([]);
+        setResolvedItem(null);
+        return;
+      }
+      const data = await res.json();
+      const items = data.items || [];
+      setSkuSuggestions(items);
+      const exact = items.find(
+        (i) => String(i.sku || '').trim().toLowerCase() === sku.toLowerCase(),
+      ) || null;
+      setResolvedItem(exact);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [newLineSku, editing]);
 
   async function loadOrders() {
     const qp = new URLSearchParams({ page: String(page), per_page: '50' });
@@ -209,7 +247,15 @@ export default function PurchaseOrders() {
     }
     setAddingLine(true);
     try {
-      const item = await resolveSku(sku);
+      // Prefer the resolvedItem from the live typeahead so we do not
+      // pay a second round-trip when the operator already saw the
+      // "Found" preview. Fall back to an on-demand server lookup so
+      // the button still works if the operator types and clicks Add
+      // faster than the 200ms debounce.
+      let item = resolvedItem;
+      if (!item || String(item.sku).toLowerCase() !== sku.toLowerCase()) {
+        item = await resolveSku(sku);
+      }
       if (!item) {
         setNewLineError(`Unknown SKU: ${sku}`);
         return;
@@ -226,6 +272,8 @@ export default function PurchaseOrders() {
         ]);
         setNewLineSku('');
         setNewLineQty('');
+        setResolvedItem(null);
+        setSkuSuggestions([]);
       } else {
         const data = await res?.json();
         setNewLineError(data?.error || 'Failed to add line');
@@ -519,42 +567,65 @@ export default function PurchaseOrders() {
                 marginTop: 12, padding: 12,
                 background: 'var(--surface)',
                 borderRadius: 'var(--radius)',
-                display: 'flex', alignItems: 'flex-start', gap: 8,
               }}>
-                <div style={{ flex: '0 0 200px' }}>
-                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>SKU</label>
-                  <input
-                    className="form-input"
-                    placeholder="Enter SKU"
-                    value={newLineSku}
-                    onChange={(e) => setNewLineSku(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') addLine(); }}
-                  />
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ flex: '0 0 240px' }}>
+                    <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>SKU</label>
+                    <input
+                      className="form-input mono"
+                      placeholder="Type SKU to search"
+                      list="po-edit-sku-suggestions"
+                      value={newLineSku}
+                      onChange={(e) => setNewLineSku(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') addLine(); }}
+                    />
+                    <datalist id="po-edit-sku-suggestions">
+                      {skuSuggestions.map((it) => (
+                        <option key={it.item_id} value={it.sku}>{it.item_name}</option>
+                      ))}
+                    </datalist>
+                  </div>
+                  <div style={{ flex: '0 0 120px' }}>
+                    <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>Quantity</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min={1}
+                      placeholder="0"
+                      value={newLineQty}
+                      onChange={(e) => setNewLineQty(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') addLine(); }}
+                    />
+                  </div>
+                  <div style={{ flexGrow: 1 }} />
+                  <button
+                    className="btn btn-primary"
+                    onClick={addLine}
+                    disabled={addingLine}
+                    style={{ marginTop: 16 }}
+                  >
+                    {addingLine ? 'Adding...' : 'Add Line'}
+                  </button>
                 </div>
-                <div style={{ flex: '0 0 120px' }}>
-                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>Quantity</label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min={1}
-                    placeholder="0"
-                    value={newLineQty}
-                    onChange={(e) => setNewLineQty(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') addLine(); }}
-                  />
-                </div>
-                <div style={{ flexGrow: 1 }} />
-                <button
-                  className="btn btn-primary"
-                  onClick={addLine}
-                  disabled={addingLine}
-                  style={{ marginTop: 16 }}
-                >
-                  {addingLine ? 'Adding...' : 'Add Line'}
-                </button>
+                {/* Live resolution preview / error sit immediately under
+                    the inputs so feedback is impossible to miss. */}
+                {newLineError && (
+                  <div className="form-error" style={{ marginTop: 8, fontSize: 12 }}>
+                    {newLineError}
+                  </div>
+                )}
+                {!newLineError && resolvedItem && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--success)' }}>
+                    Found: <strong>{resolvedItem.sku}</strong> - {resolvedItem.item_name}
+                  </div>
+                )}
+                {!newLineError && !resolvedItem && newLineSku.trim().length >= 2 && skuSuggestions.length === 0 && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                    No matches for "{newLineSku.trim()}". Click Add Line to retry the lookup.
+                  </div>
+                )}
               </div>
             )}
-            {newLineError && <div className="form-error" style={{ marginTop: 8 }}>{newLineError}</div>}
           </section>
         </Modal>
       )}
