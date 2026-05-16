@@ -206,13 +206,13 @@ a {
   border: 0.5px solid rgba(255,255,255,0.1);
   border-radius: 6px;
   background: #352f2a;
-  color: #fdf4e3;
+  color: #ffffff;
   outline: none;
   transition: border-color 0.15s;
 }
 
 .topbar-search input::placeholder {
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,255,255,0.55);
 }
 
 .topbar-search input:focus {
