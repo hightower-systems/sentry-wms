@@ -66,6 +66,21 @@ export default function Sidebar() {
   const location = useLocation();
   const { warehouseId } = useWarehouse();
   const [counts, setCounts] = useState({});
+  // Mirrors the require_packing_before_shipping system setting. When
+  // packing is disabled, the Packing nav entry is hidden so operators
+  // do not navigate to a screen that no longer corresponds to any
+  // active workflow. Default true matches Settings.jsx fallback.
+  const [packingEnabled, setPackingEnabled] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/admin/settings/require_packing_before_shipping').then(async (res) => {
+      if (!res?.ok || cancelled) return;
+      const data = await res.json();
+      setPackingEnabled(data?.value !== 'false');
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!warehouseId) return;
@@ -87,9 +102,16 @@ export default function Sidebar() {
     });
   }, [location.pathname, warehouseId]);
 
+  const navGroups = packingEnabled
+    ? NAV
+    : NAV.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.to !== '/packing'),
+      }));
+
   return (
     <nav className="sidebar">
-      {NAV.map((group) => (
+      {navGroups.map((group) => (
         <div key={group.label} className="sidebar-card">
           <div className="sidebar-group-label">{group.label}</div>
           {group.items.map((item) => (
