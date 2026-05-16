@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
@@ -14,8 +13,15 @@ import StatusTag from '../components/StatusTag.jsx';
 const PICKABLE_STATUSES = ['OPEN', 'ALLOCATED', 'PICKING', 'PICKED'];
 const STATUS_OPTIONS = [...PICKABLE_STATUSES, 'ALL'];
 
+// Open an individual picking ticket in a standalone tab (no admin
+// Layout chrome) so the ticket fills the window and the per-ticket
+// print CSS does not fight a sidebar/topbar parent. Mirrors the
+// Print All flow.
+function openTicketInNewTab(soId) {
+  window.open(`/picking-tickets/${soId}/print`, '_blank', 'noopener');
+}
+
 export default function PickingTickets() {
-  const navigate = useNavigate();
   const { warehouseId } = useWarehouse();
   const [status, setStatus] = useState('OPEN');
   const [orders, setOrders] = useState([]);
@@ -76,7 +82,7 @@ export default function PickingTickets() {
       setLookupError(`No sales order found matching "${term}".`);
       return;
     }
-    navigate(`/picking-tickets/${exact.so_id}/print`);
+    openTicketInNewTab(exact.so_id);
   }
 
   function onSearchKey(e) {
@@ -114,7 +120,7 @@ export default function PickingTickets() {
           className="btn btn-sm btn-primary"
           onClick={(e) => {
             e.stopPropagation();
-            navigate(`/picking-tickets/${r.so_id}/print`);
+            openTicketInNewTab(r.so_id);
           }}
         >Print Ticket</button>
       ),
@@ -187,7 +193,7 @@ export default function PickingTickets() {
           columns={columns}
           data={orders}
           emptyMessage="No orders ready for picking"
-          onRowClick={(r) => navigate(`/picking-tickets/${r.so_id}/print`)}
+          onRowClick={(r) => openTicketInNewTab(r.so_id)}
         />
       </div>
     </div>
