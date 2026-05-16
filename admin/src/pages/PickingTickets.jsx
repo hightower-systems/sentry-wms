@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
@@ -34,6 +34,11 @@ export default function PickingTickets() {
   // already-pushed SOs).
   const [refreshCounter, setRefreshCounter] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // Default sort: ship-by date ascending so the oldest must-ship-by
+  // orders rise to the top of the queue. Picker can re-sort by
+  // clicking any column header.
+  const [sortKey, setSortKey] = useState('ship_by_date');
+  const [sortDir, setSortDir] = useState('asc');
 
   useEffect(() => {
     if (!warehouseId) return;
@@ -102,16 +107,17 @@ export default function PickingTickets() {
   }
 
   const columns = [
-    { key: 'so_number', label: 'SO Number', mono: true },
-    { key: 'customer_name', label: 'Customer' },
+    { key: 'so_number', label: 'SO Number', mono: true, sortable: true },
+    { key: 'customer_name', label: 'Customer', sortable: true },
     {
       key: 'ship_by_date',
       label: 'Ship By',
       mono: true,
+      sortable: true,
       render: (r) => (r.ship_by_date ? new Date(r.ship_by_date).toLocaleDateString() : '-'),
     },
-    { key: 'ship_method', label: 'Ship Method', render: (r) => r.ship_method || '-' },
-    { key: 'status', label: 'Status', render: (r) => <StatusTag status={r.status} /> },
+    { key: 'ship_method', label: 'Ship Method', sortable: true, render: (r) => r.ship_method || '-' },
+    { key: 'status', label: 'Status', sortable: true, render: (r) => <StatusTag status={r.status} /> },
     {
       key: 'actions',
       label: '',
@@ -126,6 +132,34 @@ export default function PickingTickets() {
       ),
     },
   ];
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
+
+  // Sort happens client-side because the list is already paged to 50
+  // per status (typically the entire queue) and the picker wants the
+  // visible rows reordered immediately without a round trip.
+  const sortedOrders = useMemo(() => {
+    if (!sortKey) return orders;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...orders].sort((a, b) => {
+      let av = a[sortKey];
+      let bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;  // nulls always at the bottom
+      if (bv == null) return -1;
+      if (sortKey === 'ship_by_date') {
+        return (new Date(av) - new Date(bv)) * dir;
+      }
+      return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
+    });
+  }, [orders, sortKey, sortDir]);
 
   return (
     <div>
@@ -191,9 +225,12 @@ export default function PickingTickets() {
         </div>
         <DataTable
           columns={columns}
-          data={orders}
+          data={sortedOrders}
           emptyMessage="No orders ready for picking"
           onRowClick={(r) => openTicketInNewTab(r.so_id)}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={handleSort}
         />
       </div>
     </div>

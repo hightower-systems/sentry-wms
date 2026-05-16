@@ -44,6 +44,18 @@ export default function PickingTicketPrintAll() {
         setLoading(false);
         return;
       }
+      // Sort by ship_by_date ascending so the printer stack comes out
+      // oldest-first, matching the default sort on the list page.
+      // Nulls sink to the bottom so SOs without a ship-by date do not
+      // hijack the top of the stack.
+      orders.sort((a, b) => {
+        const ad = a.ship_by_date;
+        const bd = b.ship_by_date;
+        if (!ad && !bd) return 0;
+        if (!ad) return 1;
+        if (!bd) return -1;
+        return new Date(ad) - new Date(bd);
+      });
       const detailResponses = await Promise.all(
         orders.map((o) => api.get(`/admin/sales-orders/${o.so_id}/picking-ticket`)),
       );
