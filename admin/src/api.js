@@ -23,6 +23,22 @@ async function apiFetch(path, options = {}) {
     window.location.href = '/login';
     return;
   }
+  // avid-overhaul-mk1 P6.1: surface page-permission rejections via a
+  // window event so Layout can render a "Permissions Error" modal
+  // wherever the user is. The server response shape comes from
+  // @require_admin_or_page_permission ({error: "Permission denied",
+  // page_key: "..."}); peek at the body without consuming the stream
+  // (clone first) so the caller can still .json() the response.
+  if (res.status === 403) {
+    try {
+      const peek = await res.clone().json();
+      if (peek?.error === 'Permission denied' && peek?.page_key) {
+        window.dispatchEvent(new CustomEvent('sentry:permission-denied', {
+          detail: { page_key: peek.page_key, path },
+        }));
+      }
+    } catch (_) { /* non-JSON 403 (legacy / unrelated) */ }
+  }
   return res;
 }
 
