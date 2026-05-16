@@ -1524,3 +1524,60 @@ class TestInventorySearchQ:
         resp = client.get("/api/admin/inventory?warehouse_id=1&q=%20%20%20", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["total"] == baseline
+
+    def test_q_matches_upc(self, client, auth_headers):
+        # TST-005 has UPC 100000000005 in the seed. Operators scanning a
+        # barcode at the inventory page expect the row to surface even
+        # though the SKU is different.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&q=100000000005",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(r["sku"] == "TST-005" for r in data["inventory"])
+
+    def test_q_matches_bin_code(self, client, auth_headers):
+        # TST-005 lives in bin A-02-02 per seed. Searching by the bin
+        # code returns the rows physically in that bin.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&q=A-02-02",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(r["bin_code"] == "A-02-02" for r in data["inventory"])
+
+
+class TestInventoryBinFilter:
+    """The Inventory page exposes a bin-scoped dropdown that sends
+    bin_id; the backend has to honour it so the dropdown narrows the
+    list instead of being a silent no-op."""
+
+    def test_bin_id_filter_narrows_to_single_bin(self, client, auth_headers):
+        # Bin 11 (B-01-03) holds TST-009 and TST-010 per the shared-bin
+        # seed line; the filter should return exactly those rows.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&bin_id=11",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 2
+        assert all(r["bin_id"] == 11 for r in data["inventory"])
+        skus = {r["sku"] for r in data["inventory"]}
+        assert {"TST-009", "TST-010"}.issubset(skus)
+
+    def test_bin_id_filter_with_search_intersects(self, client, auth_headers):
+        # bin_id and q must AND together: bin 11 + sku TST-010 returns
+        # only TST-010, not TST-009 which shares the bin.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&bin_id=11&q=TST-010",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 1
+        assert data["inventory"][0]["sku"] == "TST-010"
