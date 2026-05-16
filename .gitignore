@@ -24,6 +24,14 @@ Thumbs.db
 
 # Docker
 pgdata/
+# docker-compose.override.yml is fork-local. Our avid-overhaul-mk1 dev
+# loop needs the api build context to be the repo root so api/Dockerfile
+# can COPY both api/ and db/mappings/ (upstream commit c579092 changed
+# the Dockerfile but never updated docker-compose.yml to match). The
+# override file lives outside source control so upstream's tracked
+# docker-compose.yml stays untouched and our fork-specific
+# accommodation stays out of merges.
+docker-compose.override.yml
 
 # Build outputs
 dist/
