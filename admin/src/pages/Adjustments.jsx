@@ -5,8 +5,14 @@ import PageHeader from '../components/PageHeader.jsx';
 
 export default function Adjustments() {
   const { warehouseId } = useWarehouse();
-  const [bins, setBins] = useState([]);
-  const [items, setItems] = useState([]);
+  // avid-overhaul-mk1 P9.2: bin + item lookups switched from
+  // "load every row client-side and filter in JS" to debounced
+  // server-side search. The old loadBins() defaulted to per_page=50
+  // so a 3000-bin warehouse only showed the first batch; loadItems()
+  // capped at 1000 which broke at 30K SKUs in production. Both now
+  // hit the server's ILIKE :q index path on each keystroke.
+  const [binResults, setBinResults] = useState([]);
+  const [itemResults, setItemResults] = useState([]);
   const [adjustments, setAdjustments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -15,8 +21,10 @@ export default function Adjustments() {
 
   const [binSearch, setBinSearch] = useState('');
   const [binOpen, setBinOpen] = useState(false);
+  const [binSearching, setBinSearching] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
   const [itemOpen, setItemOpen] = useState(false);
+  const [itemSearching, setItemSearching] = useState(false);
   const binRef = useRef(null);
   const itemRef = useRef(null);
 
@@ -39,26 +47,59 @@ export default function Adjustments() {
   }, []);
 
   useEffect(() => {
-    loadBins();
-    loadItems();
     loadAdjustments();
-  }, [warehouseId]);
+    // Clear selections when the warehouse switches so the operator
+    // does not accidentally apply an adjustment to a bin in a
+    // warehouse they no longer have on screen.
+    setForm((p) => ({ ...p, bin_id: '', item_id: '' }));
+    setBinSearch('');
+    setItemSearch('');
+    setBinResults([]);
+    setItemResults([]);
+  }, [warehouseId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function loadBins() {
-    const res = await api.get(`/admin/bins?warehouse_id=${warehouseId}`);
-    if (res?.ok) {
-      const data = await res.json();
-      setBins(data.bins || []);
+  // Debounced bin search. Triggers when the operator types in the
+  // bin field; ignores empty / one-char queries to avoid round-tripping
+  // on every focus. 200 ms matches the PO line typeahead.
+  useEffect(() => {
+    const q = binSearch.trim();
+    if (!warehouseId || q.length < 1 || form.bin_id) {
+      setBinResults([]);
+      return;
     }
-  }
+    setBinSearching(true);
+    const handle = setTimeout(async () => {
+      const res = await api.get(
+        `/admin/bins?warehouse_id=${warehouseId}&q=${encodeURIComponent(q)}&per_page=25`,
+      );
+      setBinSearching(false);
+      if (!res?.ok) return;
+      const data = await res.json();
+      setBinResults(data.bins || []);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [binSearch, warehouseId, form.bin_id]);
 
-  async function loadItems() {
-    const res = await api.get(`/admin/items?warehouse_id=${warehouseId}&per_page=1000`);
-    if (res?.ok) {
-      const data = await res.json();
-      setItems(data.items || []);
+  // Same shape for items. Three-char minimum keeps the 30K-SKU
+  // catalog from returning huge result sets on a two-letter prefix.
+  useEffect(() => {
+    const q = itemSearch.trim();
+    if (q.length < 2 || form.item_id) {
+      setItemResults([]);
+      return;
     }
-  }
+    setItemSearching(true);
+    const handle = setTimeout(async () => {
+      const res = await api.get(
+        `/admin/items?q=${encodeURIComponent(q)}&per_page=25&active=true`,
+      );
+      setItemSearching(false);
+      if (!res?.ok) return;
+      const data = await res.json();
+      setItemResults(data.items || []);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [itemSearch, form.item_id]);
 
   async function loadAdjustments() {
     setLoading(true);
@@ -85,15 +126,6 @@ export default function Adjustments() {
     setItemSearch(`${item.sku}  -  ${item.item_name}`);
     setItemOpen(false);
   }
-
-  const filteredBins = bins.filter((b) =>
-    b.bin_code.toLowerCase().includes(binSearch.toLowerCase())
-  );
-
-  const filteredItems = items.filter((i) => {
-    const q = itemSearch.toLowerCase();
-    return i.sku.toLowerCase().includes(q) || (i.item_name || '').toLowerCase().includes(q);
-  });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -165,43 +197,53 @@ export default function Adjustments() {
         <form onSubmit={handleSubmit}>
           <div className="form-row">
             <div className="form-group" ref={binRef} style={{ position: 'relative' }}>
-              <label>Bin</label>
+              <label>Bin {binSearching && <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>(searching...)</span>}</label>
               <input
-                className="form-input"
-                placeholder="Search bins..."
+                className="form-input mono"
+                placeholder="Type bin code to search"
                 value={binSearch}
                 onChange={(e) => { setBinSearch(e.target.value); updateForm('bin_id', ''); setBinOpen(true); }}
                 onFocus={() => setBinOpen(true)}
                 autoComplete="off"
               />
-              {binOpen && filteredBins.length > 0 && (
+              {binOpen && binResults.length > 0 && (
                 <div style={dropdownStyle}>
-                  {filteredBins.slice(0, 50).map((b) => (
+                  {binResults.map((b) => (
                     <div key={b.bin_id} style={dropdownItemStyle} onMouseDown={() => selectBin(b)}>
-                      {b.bin_code} {b.bin_type ? `(${b.bin_type})` : ''}
+                      <span className="mono">{b.bin_code}</span> {b.bin_type ? `(${b.bin_type})` : ''}
                     </div>
                   ))}
+                </div>
+              )}
+              {binOpen && !binSearching && binSearch.trim().length >= 1 && !form.bin_id && binResults.length === 0 && (
+                <div style={{ ...dropdownStyle, padding: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  No bins match "{binSearch.trim()}" in this warehouse.
                 </div>
               )}
             </div>
 
             <div className="form-group" ref={itemRef} style={{ position: 'relative' }}>
-              <label>Item</label>
+              <label>Item {itemSearching && <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>(searching...)</span>}</label>
               <input
                 className="form-input"
-                placeholder="Search SKU or name..."
+                placeholder="Type SKU or item name (min 2 chars)"
                 value={itemSearch}
                 onChange={(e) => { setItemSearch(e.target.value); updateForm('item_id', ''); setItemOpen(true); }}
                 onFocus={() => setItemOpen(true)}
                 autoComplete="off"
               />
-              {itemOpen && filteredItems.length > 0 && (
+              {itemOpen && itemResults.length > 0 && (
                 <div style={dropdownStyle}>
-                  {filteredItems.slice(0, 50).map((i) => (
+                  {itemResults.map((i) => (
                     <div key={i.item_id} style={dropdownItemStyle} onMouseDown={() => selectItem(i)}>
-                      <strong>{i.sku}</strong>  -  {i.item_name}
+                      <strong className="mono">{i.sku}</strong>  -  {i.item_name}
                     </div>
                   ))}
+                </div>
+              )}
+              {itemOpen && !itemSearching && itemSearch.trim().length >= 2 && !form.item_id && itemResults.length === 0 && (
+                <div style={{ ...dropdownStyle, padding: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  No items match "{itemSearch.trim()}".
                 </div>
               )}
             </div>
