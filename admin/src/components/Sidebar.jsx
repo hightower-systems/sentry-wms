@@ -49,10 +49,15 @@ const NAV = [
       { to: '/adjustments', label: 'Inventory Adjustments', pageKey: 'adjustments' },
       { to: '/inter-warehouse-transfers', label: 'Inventory Transfers', pageKey: 'inter-warehouse-transfers' },
       { to: '/transfer-orders', label: 'Transfer Orders', pageKey: 'transfer-orders' },
-      { to: '/warehouses', label: 'Warehouses', pageKey: 'warehouses' },
-      { to: '/bins', label: 'Bins', pageKey: 'bins' },
-      { to: '/zones', label: 'Zones', pageKey: 'zones' },
-      { to: '/preferred-bins', label: 'Preferred Bins', pageKey: 'preferred-bins' },
+      // avid-overhaul-mk1 P8: Warehouses/Bins/Zones/Preferred Bins
+      // collapsed into a single /data page with tabs. pageKeys (plural)
+      // means "show this link if the user holds at least one of these"
+      // - same backend gates still apply per tab inside /data.
+      {
+        to: '/data',
+        label: 'Data',
+        pageKeys: ['warehouses', 'bins', 'zones', 'preferred-bins'],
+      },
     ],
   },
   {
@@ -107,16 +112,19 @@ export default function Sidebar() {
   // ADMIN sees every page (allowed_pages is null/sentinel-style for
   // them on the backend, mirrored here as null). USERs only see
   // pages they have an explicit grant for; items without a pageKey
-  // (e.g. Dashboard) always render.
+  // (e.g. Dashboard) always render. P8 introduces items with
+  // `pageKeys` (plural) for grouped pages like /data - the link
+  // shows when the user holds at least one of the listed keys, and
+  // the Data page itself hides the tabs the user lacks.
   const allowedPages = user?.allowed_pages;
   const hasGrant = (item) => {
-    if (!item.pageKey) return true;
-    if (!allowedPages || allowedPages.includes('__admin__')) {
-      // Defensive: server omits allowed_pages or sends sentinel.
-      // Fall through to role check below.
-    }
+    if (!item.pageKey && !item.pageKeys) return true;
     if (user?.role === 'ADMIN') return true;
-    return Array.isArray(allowedPages) && allowedPages.includes(item.pageKey);
+    if (!Array.isArray(allowedPages)) return false;
+    if (item.pageKeys) {
+      return item.pageKeys.some((k) => allowedPages.includes(k));
+    }
+    return allowedPages.includes(item.pageKey);
   };
 
   const navGroups = NAV
