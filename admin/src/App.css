@@ -364,6 +364,63 @@ a {
   gap: 8px;
 }
 
+/* ── Put-Away bin tiles (P9.5) ───────────────── */
+
+.putaway-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.putaway-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 10px;
+  border-radius: 10px;
+  border: 2px solid var(--border-dark);
+  background: var(--white);
+  font-family: var(--sans);
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s, border-color 0.15s;
+  min-height: 72px;
+}
+
+.putaway-tile:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.putaway-tile.has-items {
+  border-color: var(--accent);
+}
+
+.putaway-tile.empty {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.putaway-tile-label {
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  word-break: break-word;
+}
+
+.putaway-tile-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.putaway-tile.has-items .putaway-tile-count {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ── Tabs (Data page, P8) ────────────────────── */
 
 .data-tabs {

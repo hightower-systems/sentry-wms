@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react';
 import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import PageHeader from '../components/PageHeader.jsx';
+import Modal from '../components/Modal.jsx';
 
-// avid-overhaul-mk1 P9.1: dashboard view of staging bins for the
-// supervisor. Each staging bin shows its SKU count + total qty; the
-// row expands to the per-item breakdown. CSV exports cover both the
-// single-bin view (workpaper for the operator walking that aisle) and
-// the warehouse-wide view (reconciliation / inventory analysis).
+// avid-overhaul-mk1 P9.1 / P9.4: dashboard view of staging bins for
+// the supervisor. Grid of rounded-rectangle bin tiles, alphabetised,
+// with a red border for bins that have items awaiting put-away and a
+// grey border for empty ones. Clicking a populated tile opens the
+// item breakdown in a modal with a per-bin CSV export; an all-data
+// CSV sits in the page header. Auto-fit grid means the row count
+// flexes 8-12+ wide depending on viewport.
 
 function csvEscape(v) {
   if (v === null || v === undefined) return '';
@@ -32,7 +35,7 @@ function downloadCsv(filename, headerRow, dataRows) {
 export default function PutAway() {
   const { warehouseId } = useWarehouse();
   const [bins, setBins] = useState([]);
-  const [expanded, setExpanded] = useState({});
+  const [focusedBin, setFocusedBin] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -45,10 +48,6 @@ export default function PutAway() {
       setBins(data.bins || []);
     }).catch(() => setLoading(false));
   }, [warehouseId]);
-
-  function toggle(binId) {
-    setExpanded((e) => ({ ...e, [binId]: !e[binId] }));
-  }
 
   function exportAll() {
     const header = ['Bin', 'SKU', 'Item Name', 'UPC', 'Quantity', 'Suggested Bin', 'Lot'];
@@ -113,83 +112,69 @@ export default function PutAway() {
         </p>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="putaway-grid">
         {bins.map((b) => {
           const isEmpty = b.sku_count === 0;
-          // P9.4: empty staging bins still render so the supervisor
-          // sees the full layout, but they are non-expandable and
-          // visually muted so the worklist signal stays clear.
-          const open = !isEmpty && !!expanded[b.bin_id];
           return (
-            <div
+            <button
               key={b.bin_id}
-              className="card"
-              style={{ padding: 0, opacity: isEmpty ? 0.55 : 1 }}
+              type="button"
+              className={`putaway-tile ${isEmpty ? 'empty' : 'has-items'}`}
+              onClick={isEmpty ? undefined : () => setFocusedBin(b)}
+              disabled={isEmpty}
+              title={isEmpty
+                ? `${b.bin_code} - empty`
+                : `${b.bin_code} - ${b.sku_count} SKU${b.sku_count === 1 ? '' : 's'}, ${b.total_qty} units`}
             >
-              <div
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '10px 14px',
-                  cursor: isEmpty ? 'default' : 'pointer',
-                  borderBottom: open ? '1px solid var(--border-dark)' : 'none',
-                }}
-                onClick={isEmpty ? undefined : () => toggle(b.bin_id)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {isEmpty ? '·' : (open ? '▾' : '▸')}
-                  </span>
-                  <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
-                    {b.bin_code}
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {isEmpty
-                      ? 'empty'
-                      : `${b.sku_count} ${b.sku_count === 1 ? 'SKU' : 'SKUs'} - ${b.total_qty} units`}
-                  </span>
-                </div>
-                {!isEmpty && (
-                  <button
-                    className="btn btn-sm"
-                    onClick={(e) => { e.stopPropagation(); exportBin(b); }}
-                    title={`Export ${b.bin_code} to CSV`}
-                  >
-                    CSV
-                  </button>
-                )}
+              <div className="putaway-tile-label">{b.bin_code}</div>
+              <div className="putaway-tile-count">
+                {isEmpty ? 'empty' : `${b.sku_count} SKU${b.sku_count === 1 ? '' : 's'}`}
               </div>
-              {open && (
-                <div style={{ padding: '10px 14px' }}>
-                  <table className="lines-table">
-                    <thead>
-                      <tr>
-                        <th>SKU</th>
-                        <th>Item Name</th>
-                        <th>UPC</th>
-                        <th style={{ textAlign: 'right' }}>Qty</th>
-                        <th>Suggested Bin</th>
-                        <th>Lot</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {b.items.map((it) => (
-                        <tr key={it.inventory_id}>
-                          <td className="mono">{it.sku}</td>
-                          <td style={{ color: 'var(--text-secondary)' }}>{it.item_name}</td>
-                          <td className="mono">{it.upc || '-'}</td>
-                          <td className="mono" style={{ textAlign: 'right' }}>{it.quantity_on_hand}</td>
-                          <td className="mono">{it.suggested_bin || '-'}</td>
-                          <td className="mono">{it.lot_number || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            </button>
           );
         })}
       </div>
+
+      {focusedBin && (
+        <Modal
+          title={`${focusedBin.bin_code} - ${focusedBin.sku_count} SKUs, ${focusedBin.total_qty} units`}
+          onClose={() => setFocusedBin(null)}
+          size="wide"
+          footer={
+            <>
+              <button className="btn" onClick={() => exportBin(focusedBin)}>
+                Export {focusedBin.bin_code} (CSV)
+              </button>
+              <button className="btn btn-primary" onClick={() => setFocusedBin(null)}>Close</button>
+            </>
+          }
+        >
+          <table className="lines-table">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Item Name</th>
+                <th>UPC</th>
+                <th style={{ textAlign: 'right' }}>Qty</th>
+                <th>Suggested Bin</th>
+                <th>Lot</th>
+              </tr>
+            </thead>
+            <tbody>
+              {focusedBin.items.map((it) => (
+                <tr key={it.inventory_id}>
+                  <td className="mono">{it.sku}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{it.item_name}</td>
+                  <td className="mono">{it.upc || '-'}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{it.quantity_on_hand}</td>
+                  <td className="mono">{it.suggested_bin || '-'}</td>
+                  <td className="mono">{it.lot_number || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Modal>
+      )}
     </div>
   );
 }
