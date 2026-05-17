@@ -261,25 +261,36 @@ def put_preferences():
 # ============================================================
 
 
-@dashboard_bp.route("/received-today", methods=["GET"])
+@dashboard_bp.route("/received", methods=["GET"])
 @require_auth
 @with_db
-def received_today():
-    """avid-overhaul-mk1 P11.3: per-PO receipts for the current day.
+def received():
+    """avid-overhaul-mk1 P11.3 / P11.6: per-PO receipts for a date range.
 
-    Aggregates audit_log RECEIVE rows across today (00:00 local
-    interpreted as today >= UTC midnight; the audit chain uses
-    TIMESTAMPTZ so the query is timezone-safe). Per PO the response
-    carries the PO header (po_number, vendor_name, status), what was
-    received today (units + distinct line items + receivers), and
-    when the most recent line landed.
+    Aggregates audit_log RECEIVE rows in [start, end] (inclusive
+    dates, treated as half-open [start, end+1day) in SQL for clean
+    index scans). Per PO the response carries the PO header, what
+    was received in range (units + distinct line items + receivers),
+    and when the most recent line landed.
 
-    warehouse_id is required so multi-warehouse instances don't
-    accidentally cross-pollinate the dashboard.
+    start / end default to CURRENT_DATE so callers without an
+    explicit range still see "today" without special-casing on the
+    client. warehouse_id is required.
     """
     warehouse_id = request.args.get("warehouse_id", type=int)
     if not warehouse_id:
         return jsonify({"error": "warehouse_id is required"}), 422
+
+    start_str = request.args.get("start") or date.today().isoformat()
+    end_str = request.args.get("end") or date.today().isoformat()
+    try:
+        start_dt = date.fromisoformat(start_str)
+        end_dt = date.fromisoformat(end_str)
+    except ValueError:
+        return jsonify({"error": "start/end must be YYYY-MM-DD"}), 422
+    if end_dt < start_dt:
+        return jsonify({"error": "end must be on or after start"}), 422
+    end_exclusive = end_dt + timedelta(days=1)
 
     rows = g.db.execute(
         text(
@@ -298,17 +309,18 @@ def received_today():
              WHERE al.action_type = 'RECEIVE'
                AND al.entity_type = 'PO'
                AND al.warehouse_id = :wid
-               AND al.created_at >= CURRENT_DATE
-               AND al.created_at < CURRENT_DATE + INTERVAL '1 day'
+               AND al.created_at >= :start
+               AND al.created_at < :end
              GROUP BY al.entity_id, po.po_number, po.vendor_name, po.status
              ORDER BY MAX(al.created_at) DESC
             """
         ),
-        {"wid": warehouse_id},
+        {"wid": warehouse_id, "start": start_dt, "end": end_exclusive},
     ).fetchall()
 
     return jsonify({
         "warehouse_id": warehouse_id,
+        "range": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
         "pos": [
             {
                 "po_id": r.po_id,
@@ -345,39 +357,62 @@ _STUCK_AGE_DAYS = 8
 @require_auth
 @with_db
 def shipping_health():
-    """avid-overhaul-mk1 P11.4: per-source_system outbound health.
+    """avid-overhaul-mk1 P11.4 / P11.6: per-source_system outbound health.
 
     Returns two slices:
 
-      * by_source: one row per source_system tag carrying the count
-        of SOs in each open status today, plus the age of the oldest
-        unshipped order. Empty status buckets stay at zero so the
-        UI columns stay consistent across rows.
+      * by_source: one row per source_system carrying the count of
+        orders received (by created_at) and shipped (by shipped_at)
+        in the requested [start, end] range, plus the global "need
+        to ship today" count (ship_by_date <= today and not yet
+        shipped). The current-state slice (unshipped + oldest age)
+        also stays so the UI can use it for header summaries.
       * stuck_orders: SOs past their ship_by_date (or older than 8
         days when ship_by_date is NULL) that have not shipped or
         been cancelled. Action-oriented watchlist for the desk.
 
-    warehouse_id is required so the dashboard never pretends to
-    aggregate across warehouses an operator does not own.
+    start / end default to CURRENT_DATE; warehouse_id is required.
+    Range parameters apply only to orders_received / orders_shipped;
+    need_to_ship_today and unshipped_count are always current-state.
     """
     warehouse_id = request.args.get("warehouse_id", type=int)
     if not warehouse_id:
         return jsonify({"error": "warehouse_id is required"}), 422
 
+    start_str = request.args.get("start") or date.today().isoformat()
+    end_str = request.args.get("end") or date.today().isoformat()
+    try:
+        start_dt = date.fromisoformat(start_str)
+        end_dt = date.fromisoformat(end_str)
+    except ValueError:
+        return jsonify({"error": "start/end must be YYYY-MM-DD"}), 422
+    if end_dt < start_dt:
+        return jsonify({"error": "end must be on or after start"}), 422
+    end_exclusive = end_dt + timedelta(days=1)
+
     # Per-source aggregate. COALESCE the source_system to a sentinel
     # so admin-created and POS-created SOs (NULL tag) still surface
-    # as a "(no tag)" row instead of disappearing.
+    # as a "(no tag)" row instead of disappearing. orders_received
+    # uses created_at because order_date is operator-supplied and
+    # may be NULL; created_at is the ingestion-time source of truth.
     by_source_rows = g.db.execute(
         text(
             """
             SELECT COALESCE(so.source_system, '(no tag)') AS source_system,
-                   COUNT(*) FILTER (WHERE so.status = 'OPEN')      AS open_count,
-                   COUNT(*) FILTER (WHERE so.status = 'PICKING')   AS picking_count,
-                   COUNT(*) FILTER (WHERE so.status = 'PICKED')    AS picked_count,
-                   COUNT(*) FILTER (WHERE so.status = 'PACKING')   AS packing_count,
-                   COUNT(*) FILTER (WHERE so.status = 'PACKED')    AS packed_count,
-                   COUNT(*) FILTER (WHERE so.status = 'SHIPPED'
-                                      AND so.shipped_at >= CURRENT_DATE) AS shipped_today,
+                   COUNT(*) FILTER (
+                       WHERE so.created_at >= :start
+                         AND so.created_at < :end
+                   ) AS orders_received,
+                   COUNT(*) FILTER (
+                       WHERE so.status = 'SHIPPED'
+                         AND so.shipped_at >= :start
+                         AND so.shipped_at < :end
+                   ) AS orders_shipped,
+                   COUNT(*) FILTER (
+                       WHERE so.ship_by_date IS NOT NULL
+                         AND so.ship_by_date <= CURRENT_DATE
+                         AND so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
+                   ) AS need_to_ship_today,
                    COUNT(*) FILTER (
                        WHERE so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
                    ) AS unshipped_count,
@@ -390,7 +425,7 @@ def shipping_health():
              ORDER BY COALESCE(so.source_system, '(no tag)')
             """
         ),
-        {"wid": warehouse_id},
+        {"wid": warehouse_id, "start": start_dt, "end": end_exclusive},
     ).fetchall()
 
     # Stuck watchlist. "Stuck" = past ship_by_date OR older than the
@@ -420,16 +455,14 @@ def shipping_health():
 
     return jsonify({
         "warehouse_id": warehouse_id,
+        "range": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
         "stuck_threshold_days": _STUCK_AGE_DAYS,
         "by_source": [
             {
                 "source_system": r.source_system,
-                "open": int(r.open_count or 0),
-                "picking": int(r.picking_count or 0),
-                "picked": int(r.picked_count or 0),
-                "packing": int(r.packing_count or 0),
-                "packed": int(r.packed_count or 0),
-                "shipped_today": int(r.shipped_today or 0),
+                "orders_received": int(r.orders_received or 0),
+                "orders_shipped": int(r.orders_shipped or 0),
+                "need_to_ship_today": int(r.need_to_ship_today or 0),
                 "unshipped_count": int(r.unshipped_count or 0),
                 "oldest_unshipped_at": (
                     r.oldest_unshipped_at.isoformat()

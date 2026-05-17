@@ -189,7 +189,7 @@ export default function Dashboard() {
           className={`data-tab${tab === 'received' ? ' active' : ''}`}
           onClick={() => setTab('received')}
         >
-          Received Today
+          Received
         </button>
         <button
           type="button"
@@ -503,21 +503,87 @@ const styles = {
 };
 
 
-// ── Received Today (P11.3) ────────────────────────────────────────────────
+// Shared date-range picker for the Received + Shipping Health tabs.
+// Mirrors the Productivity tab's RANGE_PRESETS controls so the three
+// views read as a coherent set; the parent owns rangePreset +
+// customStart / customEnd state so the dashboard can persist a
+// single range choice across tab switches if we want that later.
+function RangeControls({
+  rangePreset, setRangePreset,
+  customStart, setCustomStart, customEnd, setCustomEnd,
+  loading, onRefresh, trailingChildren,
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      marginBottom: 16, flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {RANGE_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            className={`btn btn-sm${rangePreset === p.key ? ' btn-primary' : ''}`}
+            onClick={() => setRangePreset(p.key)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {rangePreset === 'custom' && (
+        <>
+          <input
+            type="date"
+            className="form-input"
+            style={{ width: 150 }}
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+          />
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>to</span>
+          <input
+            type="date"
+            className="form-input"
+            style={{ width: 150 }}
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+          />
+        </>
+      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+        {trailingChildren}
+        <button className="btn btn-sm" onClick={onRefresh} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Received (P11.3 / P11.6) ──────────────────────────────────────────────
 
 function ReceivedTodayView({ warehouseId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [rangePreset, setRangePreset] = useState('today');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
 
   useEffect(() => {
     if (!warehouseId) return;
+    if (rangePreset === 'custom' && (!customStart || !customEnd)) return;
     load();
-  }, [warehouseId]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [warehouseId, rangePreset, customStart, customEnd]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load() {
+    const range = rangeForPreset(rangePreset, customStart, customEnd);
+    if (!range.start || !range.end) return;
     setLoading(true);
+    const qp = new URLSearchParams({
+      warehouse_id: String(warehouseId),
+      start: range.start, end: range.end,
+    });
     const res = await api.get(
-      `/v1/dashboard/received-today?warehouse_id=${warehouseId}`,
+      `/v1/dashboard/received?${qp}`,
       { silentPermissionDenied: true },
     );
     setLoading(false);
@@ -532,22 +598,25 @@ function ReceivedTodayView({ warehouseId }) {
 
   return (
     <div>
+      <RangeControls
+        rangePreset={rangePreset} setRangePreset={setRangePreset}
+        customStart={customStart} setCustomStart={setCustomStart}
+        customEnd={customEnd} setCustomEnd={setCustomEnd}
+        loading={loading} onRefresh={load}
+      />
       <div style={{
         display: 'flex', gap: 16, marginBottom: 16, fontSize: 13,
         color: 'var(--text-secondary)', flexWrap: 'wrap', alignItems: 'center',
       }}>
-        <span><strong style={{ color: 'var(--text)' }}>{rows.length}</strong> POs received today</span>
+        <span><strong style={{ color: 'var(--text)' }}>{rows.length}</strong> POs received</span>
         <span><strong style={{ color: 'var(--text)' }}>{totalLines}</strong> lines</span>
         <span><strong style={{ color: 'var(--text)' }}>{totalUnits}</strong> units</span>
         <span><strong style={{ color: 'var(--text)' }}>{distinctReceivers.size}</strong> receivers active</span>
-        <button className="btn btn-sm" onClick={load} disabled={loading} style={{ marginLeft: 'auto' }}>
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
       </div>
 
       {!loading && rows.length === 0 && (
         <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          No POs have received units today.
+          No POs received units in this range.
         </p>
       )}
 
@@ -591,16 +660,26 @@ function ReceivedTodayView({ warehouseId }) {
 function ShippingHealthView({ warehouseId }) {
   const [data, setData] = useState({ by_source: [], stuck_orders: [], stuck_threshold_days: 8 });
   const [loading, setLoading] = useState(false);
+  const [rangePreset, setRangePreset] = useState('today');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
 
   useEffect(() => {
     if (!warehouseId) return;
+    if (rangePreset === 'custom' && (!customStart || !customEnd)) return;
     load();
-  }, [warehouseId]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [warehouseId, rangePreset, customStart, customEnd]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load() {
+    const range = rangeForPreset(rangePreset, customStart, customEnd);
+    if (!range.start || !range.end) return;
     setLoading(true);
+    const qp = new URLSearchParams({
+      warehouse_id: String(warehouseId),
+      start: range.start, end: range.end,
+    });
     const res = await api.get(
-      `/v1/dashboard/shipping-health?warehouse_id=${warehouseId}`,
+      `/v1/dashboard/shipping-health?${qp}`,
       { silentPermissionDenied: true },
     );
     setLoading(false);
@@ -618,15 +697,16 @@ function ShippingHealthView({ warehouseId }) {
 
   return (
     <div>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between',
-        alignItems: 'center', marginBottom: 12,
-      }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>By source system</h3>
-        <button className="btn btn-sm" onClick={load} disabled={loading}>
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
-      </div>
+      <RangeControls
+        rangePreset={rangePreset} setRangePreset={setRangePreset}
+        customStart={customStart} setCustomStart={setCustomStart}
+        customEnd={customEnd} setCustomEnd={setCustomEnd}
+        loading={loading} onRefresh={load}
+      />
+
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 12px 0' }}>
+        By source system
+      </h3>
 
       {(data.by_source || []).length === 0 && !loading && (
         <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
@@ -637,7 +717,7 @@ function ShippingHealthView({ warehouseId }) {
       {(data.by_source || []).length > 0 && (
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 12,
           marginBottom: 24,
         }}>
@@ -696,63 +776,74 @@ function ShippingHealthView({ warehouseId }) {
   );
 }
 
-// One marketplace card on the Shipping Health by-source grid. The
-// unshipped count gets accent emphasis when above zero so the eye
-// lands on the actionable column without reading every number.
-function SourceSystemCard({ row, formatAge }) {
-  const statusRows = [
-    { label: 'Open',    value: row.open },
-    { label: 'Picking', value: row.picking },
-    { label: 'Picked',  value: row.picked },
-    { label: 'Packing', value: row.packing },
-    { label: 'Packed',  value: row.packed },
-  ];
-  const isStuck = row.unshipped_count > 0;
+// One marketplace card on the Shipping Health by-source grid.
+// Two big stats at the top (Orders Received / Orders Shipped in the
+// selected range), and the "Need to ship today" footer line beneath.
+// Need-to-ship gets accent emphasis when nonzero so the eye lands
+// on the actionable card without reading every number.
+function SourceSystemCard({ row }) {
+  const needsToShip = (row.need_to_ship_today || 0) > 0;
   return (
-    <div className="card" style={{ padding: 14 }}>
+    <div className="card" style={{ padding: 16 }}>
       <div style={{
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-        marginBottom: 10, paddingBottom: 8,
+        marginBottom: 12, paddingBottom: 8,
         borderBottom: '1px solid var(--border)',
+        textAlign: 'center',
       }}>
         <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
           {row.source_system}
         </span>
-        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-          shipped today <strong style={{ color: 'var(--text)' }}>{row.shipped_today}</strong>
-        </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, marginBottom: 12 }}>
-        {statusRows.map((s) => (
-          <div key={s.label} style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 18, fontWeight: 600, fontFamily: 'var(--mono, monospace)' }}>
-              {s.value}
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              {s.label}
-            </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontSize: 28, fontWeight: 700,
+            fontFamily: 'var(--mono, monospace)',
+            color: 'var(--text)',
+            lineHeight: 1,
+          }}>
+            {row.orders_received || 0}
           </div>
-        ))}
+          <div style={{
+            fontSize: 11, marginTop: 4,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase', letterSpacing: 0.4,
+          }}>
+            Orders Received
+          </div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontSize: 28, fontWeight: 700,
+            fontFamily: 'var(--mono, monospace)',
+            color: 'var(--text)',
+            lineHeight: 1,
+          }}>
+            {row.orders_shipped || 0}
+          </div>
+          <div style={{
+            fontSize: 11, marginTop: 4,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase', letterSpacing: 0.4,
+          }}>
+            Orders Shipped
+          </div>
+        </div>
       </div>
       <div style={{
-        display: 'flex', justifyContent: 'space-between',
-        fontSize: 12, color: 'var(--text-secondary)',
+        paddingTop: 8,
+        borderTop: '1px solid var(--border)',
+        display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8,
+        fontSize: 12,
       }}>
-        <span>
-          Unshipped{' '}
-          <strong style={{
-            color: isStuck ? 'var(--accent)' : 'var(--text)',
-            fontFamily: 'var(--mono, monospace)',
-          }}>
-            {row.unshipped_count}
-          </strong>
-        </span>
-        <span>
-          Oldest{' '}
-          <strong style={{ color: 'var(--text)', fontFamily: 'var(--mono, monospace)' }}>
-            {formatAge(row.oldest_unshipped_at)}
-          </strong>
-        </span>
+        <span style={{ color: 'var(--text-secondary)' }}>Need to ship today</span>
+        <strong style={{
+          fontSize: 16,
+          fontFamily: 'var(--mono, monospace)',
+          color: needsToShip ? 'var(--accent)' : 'var(--text)',
+        }}>
+          {row.need_to_ship_today || 0}
+        </strong>
       </div>
     </div>
   );
