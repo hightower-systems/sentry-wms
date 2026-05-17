@@ -151,7 +151,204 @@ function DetailsChips({ row }) {
   );
 }
 
+// avid-overhaul-mk1 P11.5: top-level tab switch. The Audit Log page
+// historically opened on the full audit feed; Item History was added
+// as the default tab so a supervisor with a SKU on a Linear ticket
+// lands directly on the per-item lifecycle view. Switching to the
+// 'audit' tab restores the original behavior.
 export default function AuditLog() {
+  const [tab, setTab] = useState('item-history');
+  return (
+    <div>
+      <PageHeader title="Audit log" />
+      <div className="data-tabs" style={{ marginBottom: 16 }}>
+        <button
+          type="button"
+          className={`data-tab${tab === 'item-history' ? ' active' : ''}`}
+          onClick={() => setTab('item-history')}
+        >
+          Item History
+        </button>
+        <button
+          type="button"
+          className={`data-tab${tab === 'audit' ? ' active' : ''}`}
+          onClick={() => setTab('audit')}
+        >
+          Audit Log
+        </button>
+      </div>
+      {tab === 'item-history' ? <ItemHistoryView /> : <FullAuditLogView />}
+    </div>
+  );
+}
+
+function ItemHistoryView() {
+  // SKU typeahead → resolve to item_id → /admin/audit-log?item_id=<id>.
+  // Three-character minimum keeps the 30K-SKU catalog from returning a
+  // huge result set on a two-letter prefix; the dropdown caps at 25.
+  const [itemSearch, setItemSearch] = useState('');
+  const [itemResults, setItemResults] = useState([]);
+  const [itemSearching, setItemSearching] = useState(false);
+  const [item, setItem] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [pagination, setPagination] = useState(null);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [sortKey, setSortKey] = useState('created_at');
+  const [sortDir, setSortDir] = useState('desc');
+
+  useEffect(() => {
+    const q = itemSearch.trim();
+    if (q.length < 2 || item) {
+      setItemResults([]);
+      return;
+    }
+    setItemSearching(true);
+    const handle = setTimeout(async () => {
+      const res = await api.get(
+        `/admin/items?q=${encodeURIComponent(q)}&per_page=25&active=true`,
+        { silentPermissionDenied: true },
+      );
+      setItemSearching(false);
+      if (!res?.ok) return;
+      const data = await res.json();
+      setItemResults(data.items || []);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [itemSearch, item]);
+
+  useEffect(() => {
+    if (!item) {
+      setLogs([]);
+      setPagination(null);
+      return;
+    }
+    loadHistory();
+  }, [item, page, sortKey, sortDir]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadHistory() {
+    setLoading(true);
+    const params = new URLSearchParams({
+      page, per_page: 50, item_id: item.item_id,
+      sort_by: sortKey, sort_direction: sortDir,
+    });
+    const res = await api.get(`/admin/audit-log?${params}`);
+    if (res?.ok) {
+      const data = await res.json();
+      setLogs(data.entries || []);
+      setPagination({
+        page: data.page, pages: data.pages,
+        total: data.total, per_page: data.per_page,
+      });
+    }
+    setLoading(false);
+  }
+
+  function pickItem(it) {
+    setItem(it);
+    setItemSearch(`${it.sku} - ${it.item_name}`);
+    setItemResults([]);
+    setPage(1);
+  }
+
+  function clearItem() {
+    setItem(null);
+    setItemSearch('');
+    setItemResults([]);
+    setLogs([]);
+    setPagination(null);
+    setPage(1);
+  }
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+    setPage(1);
+  }
+
+  return (
+    <div>
+      <div style={{
+        position: 'relative', marginBottom: 16, maxWidth: 480,
+      }}>
+        <label style={FILTER_LABEL_STYLE}>
+          SKU {itemSearching && <span style={{ textTransform: 'none', fontWeight: 400 }}>(searching...)</span>}
+        </label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            className="form-input"
+            placeholder="Type SKU or item name (min 2 chars)"
+            value={itemSearch}
+            onChange={(e) => { setItemSearch(e.target.value); if (item) setItem(null); }}
+            autoComplete="off"
+          />
+          {item && (
+            <button className="btn btn-sm" onClick={clearItem}>Clear</button>
+          )}
+        </div>
+        {!item && itemResults.length > 0 && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0,
+            maxHeight: 240, overflowY: 'auto', background: 'var(--white)',
+            border: '1px solid var(--border-dark)', borderRadius: 8,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.08)', zIndex: 100,
+            marginTop: 4,
+          }}>
+            {itemResults.map((it) => (
+              <div
+                key={it.item_id}
+                onMouseDown={() => pickItem(it)}
+                style={{
+                  padding: '8px 12px', cursor: 'pointer',
+                  borderBottom: '1px solid var(--border)', fontSize: 13,
+                }}
+              >
+                <strong className="mono">{it.sku}</strong>  -  {it.item_name}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!item && (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          Type a SKU or item name above to see every audit-log event
+          that touched it (receives, picks, packs, ships, adjustments,
+          transfers).
+        </p>
+      )}
+
+      {item && (
+        <AuditTable
+          logs={logs}
+          pagination={pagination}
+          loading={loading}
+          onPageChange={setPage}
+          onRowClick={setSelected}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={handleSort}
+          emptyMessage={
+            loading
+              ? 'Loading…'
+              : `No audit events for ${item.sku}.`
+          }
+        />
+      )}
+
+      {selected && (
+        <AuditDetailModal entry={selected} onClose={() => setSelected(null)} />
+      )}
+    </div>
+  );
+}
+
+function FullAuditLogView() {
   const [logs, setLogs] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
@@ -211,64 +408,8 @@ export default function AuditLog() {
     filters.start_date || filters.end_date
   );
 
-  const columns = [
-    {
-      key: 'created_at',
-      label: 'When',
-      sortable: true,
-      render: (r) => (
-        <span className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          {fmtTimestamp(r.created_at)}
-        </span>
-      ),
-    },
-    {
-      key: 'action_type',
-      label: 'Action',
-      sortable: true,
-      render: (r) => <ActionBadge action={r.action_type} />,
-    },
-    {
-      key: 'entity_type',
-      label: 'Entity',
-      sortable: true,
-      render: (r) => <EntityCell row={r} />,
-    },
-    {
-      key: 'user_id',
-      label: 'User',
-      sortable: true,
-      render: (r) => (
-        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-          <span className="mono" style={{ fontSize: 12 }}>
-            {r.username || r.user_id || '—'}
-          </span>
-          {r.warehouse_code && (
-            <span style={{
-              fontSize: 10, color: 'var(--text-tertiary)',
-              fontFamily: 'var(--mono)',
-            }}>
-              @{r.warehouse_code}
-            </span>
-          )}
-        </span>
-      ),
-    },
-    {
-      key: 'details',
-      label: 'Details',
-      render: (r) => <DetailsChips row={r} />,
-    },
-  ];
-
   return (
     <div>
-      <PageHeader title="Audit log">
-        <button className="btn" onClick={loadLogs} disabled={loading}>
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
-      </PageHeader>
-
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap',
         padding: 12, background: 'var(--surface)',
@@ -319,11 +460,15 @@ export default function AuditLog() {
         )}
       </div>
 
-      <DataTable
-        columns={columns}
-        data={logs}
+      <AuditTable
+        logs={logs}
         pagination={pagination}
+        loading={loading}
         onPageChange={setPage}
+        onRowClick={setSelected}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
         emptyMessage={
           loading
             ? 'Loading…'
@@ -331,16 +476,81 @@ export default function AuditLog() {
                 ? 'No entries match the current filters.'
                 : 'No audit log entries yet.')
         }
-        onRowClick={setSelected}
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSort={handleSort}
       />
 
       {selected && (
         <AuditDetailModal entry={selected} onClose={() => setSelected(null)} />
       )}
     </div>
+  );
+}
+
+const AUDIT_COLUMNS = [
+  {
+    key: 'created_at',
+    label: 'When',
+    sortable: true,
+    render: (r) => (
+      <span className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+        {fmtTimestamp(r.created_at)}
+      </span>
+    ),
+  },
+  {
+    key: 'action_type',
+    label: 'Action',
+    sortable: true,
+    render: (r) => <ActionBadge action={r.action_type} />,
+  },
+  {
+    key: 'entity_type',
+    label: 'Entity',
+    sortable: true,
+    render: (r) => <EntityCell row={r} />,
+  },
+  {
+    key: 'user_id',
+    label: 'User',
+    sortable: true,
+    render: (r) => (
+      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+        <span className="mono" style={{ fontSize: 12 }}>
+          {r.username || r.user_id || '—'}
+        </span>
+        {r.warehouse_code && (
+          <span style={{
+            fontSize: 10, color: 'var(--text-tertiary)',
+            fontFamily: 'var(--mono)',
+          }}>
+            @{r.warehouse_code}
+          </span>
+        )}
+      </span>
+    ),
+  },
+  {
+    key: 'details',
+    label: 'Details',
+    render: (r) => <DetailsChips row={r} />,
+  },
+];
+
+function AuditTable({
+  logs, pagination, loading, onPageChange, onRowClick,
+  sortKey, sortDir, onSort, emptyMessage,
+}) {
+  return (
+    <DataTable
+      columns={AUDIT_COLUMNS}
+      data={logs}
+      pagination={pagination}
+      onPageChange={onPageChange}
+      onRowClick={onRowClick}
+      sortKey={sortKey}
+      sortDir={sortDir}
+      onSort={onSort}
+      emptyMessage={emptyMessage}
+    />
   );
 }
 

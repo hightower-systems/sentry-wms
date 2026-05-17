@@ -362,6 +362,12 @@ def list_audit_log():
     user_id = request.args.get("user_id")
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
+    # avid-overhaul-mk1 P11.5: per-item history filter. Matches both
+    # rows where entity_type='ITEM' AND entity_id=item_id (direct item
+    # events) and rows whose details JSONB carries the item_id (e.g.
+    # PICK / RECEIVE rows scoped to an SO or PO that touched this
+    # item). The OR keeps a single page returning the full lifecycle.
+    item_id_arg = request.args.get("item_id", type=int)
 
     if action_type:
         where_clauses.append("al.action_type = :action_type")
@@ -375,6 +381,13 @@ def list_audit_log():
     if end_date:
         where_clauses.append("al.created_at <= :end_date")
         params["end_date"] = end_date
+    if item_id_arg:
+        where_clauses.append(
+            "((al.entity_type = 'ITEM' AND al.entity_id = :item_id_filter) "
+            " OR (al.details ? 'item_id' "
+            "     AND (al.details->>'item_id')::int = :item_id_filter))"
+        )
+        params["item_id_filter"] = item_id_arg
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     total = g.db.execute(text(f"SELECT COUNT(*) FROM audit_log al {where_sql}"), params).scalar()
