@@ -164,8 +164,49 @@ function ProductivityTable({ payload }) {
   );
 }
 
+// avid-overhaul-mk1 P11.2: Dashboard is now a thin tab shell. The
+// original productivity view became one of three tabs; the other two
+// (Received Today, Shipping Health) live in this file as siblings so
+// they share the warehouse context + page header. Tab selection is
+// local-only state (no URL persistence yet -- can be added once
+// stakeholders show they want shareable deep links).
 export default function Dashboard() {
   const { warehouseId } = useWarehouse();
+  const [tab, setTab] = useState('productivity');
+  return (
+    <div>
+      <PageHeader title="Dashboard" />
+      <div className="data-tabs" style={{ marginBottom: 16 }}>
+        <button
+          type="button"
+          className={`data-tab${tab === 'productivity' ? ' active' : ''}`}
+          onClick={() => setTab('productivity')}
+        >
+          Productivity
+        </button>
+        <button
+          type="button"
+          className={`data-tab${tab === 'received' ? ' active' : ''}`}
+          onClick={() => setTab('received')}
+        >
+          Received Today
+        </button>
+        <button
+          type="button"
+          className={`data-tab${tab === 'shipping' ? ' active' : ''}`}
+          onClick={() => setTab('shipping')}
+        >
+          Shipping Health
+        </button>
+      </div>
+      {tab === 'productivity' && <ProductivityView warehouseId={warehouseId} />}
+      {tab === 'received' && <ReceivedTodayView warehouseId={warehouseId} />}
+      {tab === 'shipping' && <ShippingHealthView warehouseId={warehouseId} />}
+    </div>
+  );
+}
+
+function ProductivityView({ warehouseId }) {
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState('');
   const [preferences, setPreferences] = useState({
@@ -258,8 +299,6 @@ export default function Dashboard() {
 
   return (
     <div>
-      <PageHeader title="Productivity" />
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 4 }}>
           {RANGE_PRESETS.map((p) => (
@@ -462,3 +501,219 @@ const styles = {
   th: { padding: '6px 8px', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 },
   td: { padding: '6px 8px' },
 };
+
+
+// ── Received Today (P11.3) ────────────────────────────────────────────────
+
+function ReceivedTodayView({ warehouseId }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!warehouseId) return;
+    load();
+  }, [warehouseId]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    setLoading(true);
+    const res = await api.get(
+      `/v1/dashboard/received-today?warehouse_id=${warehouseId}`,
+      { silentPermissionDenied: true },
+    );
+    setLoading(false);
+    if (!res?.ok) return;
+    const data = await res.json();
+    setRows(data.pos || []);
+  }
+
+  const totalUnits = rows.reduce((acc, r) => acc + (r.units_received || 0), 0);
+  const totalLines = rows.reduce((acc, r) => acc + (r.lines_received || 0), 0);
+  const distinctReceivers = new Set(rows.flatMap((r) => r.receivers || []));
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex', gap: 16, marginBottom: 16, fontSize: 13,
+        color: 'var(--text-secondary)', flexWrap: 'wrap', alignItems: 'center',
+      }}>
+        <span><strong style={{ color: 'var(--text)' }}>{rows.length}</strong> POs received today</span>
+        <span><strong style={{ color: 'var(--text)' }}>{totalLines}</strong> lines</span>
+        <span><strong style={{ color: 'var(--text)' }}>{totalUnits}</strong> units</span>
+        <span><strong style={{ color: 'var(--text)' }}>{distinctReceivers.size}</strong> receivers active</span>
+        <button className="btn btn-sm" onClick={load} disabled={loading} style={{ marginLeft: 'auto' }}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {!loading && rows.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          No POs have received units today.
+        </p>
+      )}
+
+      {rows.length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>PO #</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th style={{ textAlign: 'right' }}>Lines</th>
+              <th style={{ textAlign: 'right' }}>Units</th>
+              <th>Receiver(s)</th>
+              <th>Last received</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.po_id}>
+                <td className="mono">{r.po_number}</td>
+                <td>{r.vendor_name || '-'}</td>
+                <td>{r.status}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.lines_received}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.units_received}</td>
+                <td>{(r.receivers || []).join(', ') || '-'}</td>
+                <td className="mono" style={{ fontSize: 12 }}>
+                  {r.last_received_at ? new Date(r.last_received_at).toLocaleTimeString() : '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+
+// ── Shipping Health (P11.4) ───────────────────────────────────────────────
+
+function ShippingHealthView({ warehouseId }) {
+  const [data, setData] = useState({ by_source: [], stuck_orders: [], stuck_threshold_days: 8 });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!warehouseId) return;
+    load();
+  }, [warehouseId]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    setLoading(true);
+    const res = await api.get(
+      `/v1/dashboard/shipping-health?warehouse_id=${warehouseId}`,
+      { silentPermissionDenied: true },
+    );
+    setLoading(false);
+    if (!res?.ok) return;
+    setData(await res.json());
+  }
+
+  function formatAge(iso) {
+    if (!iso) return '-';
+    const ms = Date.now() - new Date(iso).getTime();
+    const days = ms / (1000 * 60 * 60 * 24);
+    if (days < 1) return `${Math.round(days * 24)}h`;
+    return `${days.toFixed(1)}d`;
+  }
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        alignItems: 'center', marginBottom: 12,
+      }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>By source system</h3>
+        <button className="btn btn-sm" onClick={load} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {(data.by_source || []).length === 0 && !loading && (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          No sales orders in this warehouse yet.
+        </p>
+      )}
+
+      {(data.by_source || []).length > 0 && (
+        <table className="data-table" style={{ marginBottom: 24 }}>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th style={{ textAlign: 'right' }}>Open</th>
+              <th style={{ textAlign: 'right' }}>Picking</th>
+              <th style={{ textAlign: 'right' }}>Picked</th>
+              <th style={{ textAlign: 'right' }}>Packing</th>
+              <th style={{ textAlign: 'right' }}>Packed</th>
+              <th style={{ textAlign: 'right' }}>Shipped today</th>
+              <th style={{ textAlign: 'right' }}>Unshipped</th>
+              <th>Oldest age</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.by_source.map((r) => (
+              <tr key={r.source_system}>
+                <td className="mono">{r.source_system}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.open}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.picking}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.picked}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.packing}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.packed}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.shipped_today}</td>
+                <td className="mono" style={{ textAlign: 'right', fontWeight: r.unshipped_count > 0 ? 600 : 400 }}>
+                  {r.unshipped_count}
+                </td>
+                <td className="mono" style={{ fontSize: 12 }}>{formatAge(r.oldest_unshipped_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px 0' }}>
+        Stuck orders
+        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 8 }}>
+          past ship-by date or older than {data.stuck_threshold_days || 8} days
+        </span>
+      </h3>
+
+      {(data.stuck_orders || []).length === 0 && !loading && (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          Nothing stuck. Outbound is current.
+        </p>
+      )}
+
+      {(data.stuck_orders || []).length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>SO #</th>
+              <th>Customer</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th>Ship by</th>
+              <th style={{ textAlign: 'right' }}>Age (days)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.stuck_orders.map((s) => (
+              <tr key={s.so_id}>
+                <td className="mono">{s.so_number}</td>
+                <td>{s.customer_name || '-'}</td>
+                <td className="mono">{s.source_system}</td>
+                <td>{s.status}</td>
+                <td className="mono" style={{ fontSize: 12 }}>
+                  {s.created_at ? new Date(s.created_at).toLocaleDateString() : '-'}
+                </td>
+                <td className="mono" style={{ fontSize: 12, color: s.ship_by_date && new Date(s.ship_by_date) < new Date() ? 'var(--accent)' : undefined }}>
+                  {s.ship_by_date || '-'}
+                </td>
+                <td className="mono" style={{ textAlign: 'right' }}>{s.age_days}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}

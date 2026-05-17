@@ -1,10 +1,12 @@
 """Productivity dashboard API (v1.8.0 #297).
 
-Three endpoints:
+Endpoints:
 
 - GET  /api/v1/dashboard/productivity   per-user metrics for a date range
 - GET  /api/v1/dashboard/preferences    user's chart_order + defaults
 - PUT  /api/v1/dashboard/preferences    upsert preferences row
+- GET  /api/v1/dashboard/received-today per-PO receipts for today (P11.3)
+- GET  /api/v1/dashboard/shipping-health per-source-system SO health (P11.4)
 
 Auth: cookie + ADMIN role for productivity (operators with admin
 visibility); preferences are per-user with the user_id derived
@@ -252,3 +254,203 @@ def put_preferences():
         {"uid": user_id},
     ).fetchone()
     return jsonify(_row_to_dict(row))
+
+
+# ============================================================
+# Received Today (P11.3)
+# ============================================================
+
+
+@dashboard_bp.route("/received-today", methods=["GET"])
+@require_auth
+@with_db
+def received_today():
+    """avid-overhaul-mk1 P11.3: per-PO receipts for the current day.
+
+    Aggregates audit_log RECEIVE rows across today (00:00 local
+    interpreted as today >= UTC midnight; the audit chain uses
+    TIMESTAMPTZ so the query is timezone-safe). Per PO the response
+    carries the PO header (po_number, vendor_name, status), what was
+    received today (units + distinct line items + receivers), and
+    when the most recent line landed.
+
+    warehouse_id is required so multi-warehouse instances don't
+    accidentally cross-pollinate the dashboard.
+    """
+    warehouse_id = request.args.get("warehouse_id", type=int)
+    if not warehouse_id:
+        return jsonify({"error": "warehouse_id is required"}), 422
+
+    rows = g.db.execute(
+        text(
+            """
+            SELECT al.entity_id AS po_id,
+                   po.po_number,
+                   po.vendor_name,
+                   po.status,
+                   SUM(COALESCE((al.details->>'quantity')::int, 0)) AS units_received,
+                   COUNT(DISTINCT (al.details->>'item_id')::int) AS lines_received,
+                   COUNT(*) AS receive_events,
+                   ARRAY_AGG(DISTINCT al.user_id) AS receivers,
+                   MAX(al.created_at) AS last_received_at
+              FROM audit_log al
+              JOIN purchase_orders po ON po.po_id = al.entity_id
+             WHERE al.action_type = 'RECEIVE'
+               AND al.entity_type = 'PO'
+               AND al.warehouse_id = :wid
+               AND al.created_at >= CURRENT_DATE
+               AND al.created_at < CURRENT_DATE + INTERVAL '1 day'
+             GROUP BY al.entity_id, po.po_number, po.vendor_name, po.status
+             ORDER BY MAX(al.created_at) DESC
+            """
+        ),
+        {"wid": warehouse_id},
+    ).fetchall()
+
+    return jsonify({
+        "warehouse_id": warehouse_id,
+        "pos": [
+            {
+                "po_id": r.po_id,
+                "po_number": r.po_number,
+                "vendor_name": r.vendor_name,
+                "status": r.status,
+                "units_received": int(r.units_received or 0),
+                "lines_received": int(r.lines_received or 0),
+                "receive_events": int(r.receive_events or 0),
+                "receivers": list(r.receivers or []),
+                "last_received_at": (
+                    r.last_received_at.isoformat()
+                    if r.last_received_at else None
+                ),
+            }
+            for r in rows
+        ],
+    })
+
+
+# ============================================================
+# Shipping Health (P11.4)
+# ============================================================
+
+
+# Watchlist threshold: any unshipped SO older than this is "stuck"
+# unless it has its own ship_by_date (which takes precedence). Eight
+# days is one full work week plus a buffer; tighter than that produces
+# too much noise for a default dashboard view.
+_STUCK_AGE_DAYS = 8
+
+
+@dashboard_bp.route("/shipping-health", methods=["GET"])
+@require_auth
+@with_db
+def shipping_health():
+    """avid-overhaul-mk1 P11.4: per-source_system outbound health.
+
+    Returns two slices:
+
+      * by_source: one row per source_system tag carrying the count
+        of SOs in each open status today, plus the age of the oldest
+        unshipped order. Empty status buckets stay at zero so the
+        UI columns stay consistent across rows.
+      * stuck_orders: SOs past their ship_by_date (or older than 8
+        days when ship_by_date is NULL) that have not shipped or
+        been cancelled. Action-oriented watchlist for the desk.
+
+    warehouse_id is required so the dashboard never pretends to
+    aggregate across warehouses an operator does not own.
+    """
+    warehouse_id = request.args.get("warehouse_id", type=int)
+    if not warehouse_id:
+        return jsonify({"error": "warehouse_id is required"}), 422
+
+    # Per-source aggregate. COALESCE the source_system to a sentinel
+    # so admin-created and POS-created SOs (NULL tag) still surface
+    # as a "(no tag)" row instead of disappearing.
+    by_source_rows = g.db.execute(
+        text(
+            """
+            SELECT COALESCE(so.source_system, '(no tag)') AS source_system,
+                   COUNT(*) FILTER (WHERE so.status = 'OPEN')      AS open_count,
+                   COUNT(*) FILTER (WHERE so.status = 'PICKING')   AS picking_count,
+                   COUNT(*) FILTER (WHERE so.status = 'PICKED')    AS picked_count,
+                   COUNT(*) FILTER (WHERE so.status = 'PACKING')   AS packing_count,
+                   COUNT(*) FILTER (WHERE so.status = 'PACKED')    AS packed_count,
+                   COUNT(*) FILTER (WHERE so.status = 'SHIPPED'
+                                      AND so.shipped_at >= CURRENT_DATE) AS shipped_today,
+                   COUNT(*) FILTER (
+                       WHERE so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
+                   ) AS unshipped_count,
+                   MIN(so.created_at) FILTER (
+                       WHERE so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
+                   ) AS oldest_unshipped_at
+              FROM sales_orders so
+             WHERE so.warehouse_id = :wid
+             GROUP BY COALESCE(so.source_system, '(no tag)')
+             ORDER BY COALESCE(so.source_system, '(no tag)')
+            """
+        ),
+        {"wid": warehouse_id},
+    ).fetchall()
+
+    # Stuck watchlist. "Stuck" = past ship_by_date OR older than the
+    # threshold when no ship_by_date is set. Capped at 100 so a
+    # backlog explosion does not blow up the payload; the UI links
+    # out to Sales Orders with a filter for the full list.
+    stuck_rows = g.db.execute(
+        text(
+            """
+            SELECT so.so_id, so.so_number, so.customer_name,
+                   so.status, so.created_at, so.ship_by_date,
+                   COALESCE(so.source_system, '(no tag)') AS source_system,
+                   EXTRACT(EPOCH FROM (NOW() - so.created_at)) / 86400 AS age_days
+              FROM sales_orders so
+             WHERE so.warehouse_id = :wid
+               AND so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
+               AND (
+                   (so.ship_by_date IS NOT NULL AND so.ship_by_date < CURRENT_DATE)
+                OR (so.ship_by_date IS NULL AND so.created_at < NOW() - make_interval(days => :threshold))
+               )
+             ORDER BY so.created_at ASC
+             LIMIT 100
+            """
+        ),
+        {"wid": warehouse_id, "threshold": _STUCK_AGE_DAYS},
+    ).fetchall()
+
+    return jsonify({
+        "warehouse_id": warehouse_id,
+        "stuck_threshold_days": _STUCK_AGE_DAYS,
+        "by_source": [
+            {
+                "source_system": r.source_system,
+                "open": int(r.open_count or 0),
+                "picking": int(r.picking_count or 0),
+                "picked": int(r.picked_count or 0),
+                "packing": int(r.packing_count or 0),
+                "packed": int(r.packed_count or 0),
+                "shipped_today": int(r.shipped_today or 0),
+                "unshipped_count": int(r.unshipped_count or 0),
+                "oldest_unshipped_at": (
+                    r.oldest_unshipped_at.isoformat()
+                    if r.oldest_unshipped_at else None
+                ),
+            }
+            for r in by_source_rows
+        ],
+        "stuck_orders": [
+            {
+                "so_id": r.so_id,
+                "so_number": r.so_number,
+                "customer_name": r.customer_name,
+                "status": r.status,
+                "source_system": r.source_system,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "ship_by_date": (
+                    r.ship_by_date.isoformat() if r.ship_by_date else None
+                ),
+                "age_days": round(float(r.age_days or 0), 1),
+            }
+            for r in stuck_rows
+        ],
+    })
