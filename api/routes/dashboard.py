@@ -486,14 +486,12 @@ def shipping_health():
         }
         for name in ("Amazon", "Ebay", "BigCommerce")
     ]
-    # Surface unclassified rows only if any exist so the bubble row
-    # stays clean for warehouses whose so_numbers all match.
-    if pattern_buckets["Other"]:
-        by_marketplace_pattern.append({
-            "marketplace": "Other",
-            "count": len(pattern_buckets["Other"]),
-            "orders": pattern_buckets["Other"],
-        })
+    # Unclassified rows are intentionally NOT exposed in the response.
+    # In production all SO numbers match one of the three marketplace
+    # patterns; surfacing an "Other" bucket only created visual noise
+    # in dev seed data. If the unclassified count starts mattering
+    # (e.g. a new marketplace lands without a pattern rule), the raw
+    # so_numbers stay searchable from Sales Orders + Audit Log.
 
     # Stuck watchlist. "Stuck" = past ship_by_date OR older than the
     # threshold when no ship_by_date is set. Capped at 100 so a

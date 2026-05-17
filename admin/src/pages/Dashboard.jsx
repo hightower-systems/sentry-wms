@@ -744,7 +744,7 @@ function ShippingHealthView({ warehouseId }) {
           </h3>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: `repeat(${Math.min(data.by_marketplace_pattern.length, 4)}, 1fr)`,
+            gridTemplateColumns: 'repeat(3, 1fr)',
             gap: 12,
             marginBottom: 24,
           }}>
