@@ -95,13 +95,14 @@ def pending_putaway(warehouse_id):
 @require_auth
 @with_db
 def staging_summary(warehouse_id):
-    """avid-overhaul-mk1 P9.1: Put-Away dashboard backing query.
+    """avid-overhaul-mk1 P9.1 / P9.4: Put-Away dashboard backing query.
 
-    Returns every staging-type bin in the warehouse, alphabetised by
-    bin_code, with the distinct-SKU count and the per-item breakdown
-    so the dashboard can expand a bin in-place without a second
-    round trip. Empty staging bins are omitted - the page is meant
-    to be a worklist.
+    Returns every staging-type bin in the warehouse (including empty
+    ones), alphabetised by bin_code, with the distinct-SKU count and
+    the per-item breakdown so the dashboard can expand a bin in-place
+    without a second round trip. Empty bins surface as zero-count
+    cards so the operator sees the full staging-bin map at a glance,
+    not just the worklist.
 
     Same bin-type filter as /pending/<warehouse_id> so the two
     surfaces are always in agreement on what counts as "needs
@@ -111,10 +112,31 @@ def staging_summary(warehouse_id):
     if not ok:
         return denied
 
-    rows = g.db.execute(
+    # Two-pass query: first the full set of staging bins so empty
+    # bins still render as cards, then the inventory rows joined to
+    # those bins. Joining inventory + items via LEFT JOIN would also
+    # work but the per-row JSON shape stays simpler with two passes.
+    bin_rows = g.db.execute(
         text(
             """
-            SELECT b.bin_id, b.bin_code,
+            SELECT b.bin_id, b.bin_code
+              FROM bins b
+             WHERE b.warehouse_id = :warehouse_id
+               AND b.bin_type IN (:bin_staging, :bin_pickable_staging)
+             ORDER BY b.bin_code
+            """
+        ),
+        {
+            "warehouse_id": warehouse_id,
+            "bin_staging": BIN_STAGING,
+            "bin_pickable_staging": BIN_PICKABLE_STAGING,
+        },
+    ).fetchall()
+
+    inv_rows = g.db.execute(
+        text(
+            """
+            SELECT b.bin_id,
                    inv.inventory_id, inv.item_id,
                    i.sku, i.item_name, i.upc,
                    inv.quantity_on_hand,
@@ -148,23 +170,21 @@ def staging_summary(warehouse_id):
         },
     ).fetchall()
 
-    # Group rows in Python because SQL ARRAY_AGG of composite rows
-    # would need anonymous record types or a wrapping helper; the
-    # row count here is bounded by staging bins x SKUs-in-flight,
-    # which is tens to low hundreds in practice.
-    bins_by_id = {}
-    bin_order = []
-    for r in rows:
-        if r.bin_id not in bins_by_id:
-            bins_by_id[r.bin_id] = {
-                "bin_id": r.bin_id,
-                "bin_code": r.bin_code,
-                "sku_count": 0,
-                "total_qty": 0,
-                "items": [],
-            }
-            bin_order.append(r.bin_id)
-        b = bins_by_id[r.bin_id]
+    bins_by_id = {
+        b.bin_id: {
+            "bin_id": b.bin_id,
+            "bin_code": b.bin_code,
+            "sku_count": 0,
+            "total_qty": 0,
+            "items": [],
+        }
+        for b in bin_rows
+    }
+
+    for r in inv_rows:
+        b = bins_by_id.get(r.bin_id)
+        if not b:
+            continue
         b["sku_count"] += 1
         b["total_qty"] += int(r.quantity_on_hand or 0)
         b["items"].append({
@@ -180,7 +200,7 @@ def staging_summary(warehouse_id):
 
     return jsonify({
         "warehouse_id": warehouse_id,
-        "bins": [bins_by_id[bid] for bid in bin_order],
+        "bins": [bins_by_id[b.bin_id] for b in bin_rows],
     })
 
 

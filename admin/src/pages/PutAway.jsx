@@ -77,6 +77,7 @@ export default function PutAway() {
 
   const totalSkus = bins.reduce((acc, b) => acc + b.sku_count, 0);
   const totalQty = bins.reduce((acc, b) => acc + b.total_qty, 0);
+  const binsWithItems = bins.reduce((acc, b) => acc + (b.sku_count > 0 ? 1 : 0), 0);
 
   return (
     <div>
@@ -95,7 +96,10 @@ export default function PutAway() {
         display: 'flex', gap: 16, marginBottom: 16, fontSize: 13,
         color: 'var(--text-secondary)',
       }}>
-        <span><strong style={{ color: 'var(--text)' }}>{bins.length}</strong> staging bins with items</span>
+        <span>
+          <strong style={{ color: 'var(--text)' }}>{binsWithItems}</strong>
+          {' / '}{bins.length} staging bins with items
+        </span>
         <span><strong style={{ color: 'var(--text)' }}>{totalSkus}</strong> total SKU rows</span>
         <span><strong style={{ color: 'var(--text)' }}>{totalQty}</strong> total units</span>
       </div>
@@ -105,41 +109,54 @@ export default function PutAway() {
       )}
       {!loading && bins.length === 0 && (
         <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          No staging bins have inventory awaiting put-away.
+          No staging bins exist in this warehouse.
         </p>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {bins.map((b) => {
-          const open = !!expanded[b.bin_id];
+          const isEmpty = b.sku_count === 0;
+          // P9.4: empty staging bins still render so the supervisor
+          // sees the full layout, but they are non-expandable and
+          // visually muted so the worklist signal stays clear.
+          const open = !isEmpty && !!expanded[b.bin_id];
           return (
-            <div key={b.bin_id} className="card" style={{ padding: 0 }}>
+            <div
+              key={b.bin_id}
+              className="card"
+              style={{ padding: 0, opacity: isEmpty ? 0.55 : 1 }}
+            >
               <div
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '10px 14px', cursor: 'pointer',
+                  padding: '10px 14px',
+                  cursor: isEmpty ? 'default' : 'pointer',
                   borderBottom: open ? '1px solid var(--border-dark)' : 'none',
                 }}
-                onClick={() => toggle(b.bin_id)}
+                onClick={isEmpty ? undefined : () => toggle(b.bin_id)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {open ? '▾' : '▸'}
+                    {isEmpty ? '·' : (open ? '▾' : '▸')}
                   </span>
                   <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
                     {b.bin_code}
                   </span>
                   <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {b.sku_count} {b.sku_count === 1 ? 'SKU' : 'SKUs'} - {b.total_qty} units
+                    {isEmpty
+                      ? 'empty'
+                      : `${b.sku_count} ${b.sku_count === 1 ? 'SKU' : 'SKUs'} - ${b.total_qty} units`}
                   </span>
                 </div>
-                <button
-                  className="btn btn-sm"
-                  onClick={(e) => { e.stopPropagation(); exportBin(b); }}
-                  title={`Export ${b.bin_code} to CSV`}
-                >
-                  CSV
-                </button>
+                {!isEmpty && (
+                  <button
+                    className="btn btn-sm"
+                    onClick={(e) => { e.stopPropagation(); exportBin(b); }}
+                    title={`Export ${b.bin_code} to CSV`}
+                  >
+                    CSV
+                  </button>
+                )}
               </div>
               {open && (
                 <div style={{ padding: '10px 14px' }}>
