@@ -706,7 +706,7 @@ function ShippingHealthView({ warehouseId }) {
       />
 
       <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 12px 0' }}>
-        By source system
+        Marketplace Breakdown
       </h3>
 
       {(data.by_source || []).length === 0 && !loading && (
@@ -815,13 +815,11 @@ function displayMarketplace(name) {
   return MARKETPLACE_DISPLAY[name.toLowerCase()] || name;
 }
 
-// One marketplace card on the Shipping Health by-source grid.
-// Two big stats at the top (Orders Received / Orders Shipped in the
-// selected range), and the "Need to ship today" footer line beneath.
-// Need-to-ship gets accent emphasis when nonzero so the eye lands
-// on the actionable card without reading every number.
+// One marketplace card on the Marketplace Breakdown grid. Two big
+// stats (Orders Received / Orders Shipped in the selected range);
+// the "need to ship today" callout lives in its own bubble row
+// beneath the breakdown so the same data point does not show twice.
 function SourceSystemCard({ row }) {
-  const needsToShip = (row.need_to_ship_today || 0) > 0;
   return (
     <div className="card" style={{ padding: 16 }}>
       <div style={{
@@ -833,7 +831,7 @@ function SourceSystemCard({ row }) {
           {displayMarketplace(row.source_system)}
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{
             fontSize: 28, fontWeight: 700,
@@ -868,21 +866,6 @@ function SourceSystemCard({ row }) {
             Orders Shipped
           </div>
         </div>
-      </div>
-      <div style={{
-        paddingTop: 8,
-        borderTop: '1px solid var(--border)',
-        display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 8,
-        fontSize: 12,
-      }}>
-        <span style={{ color: 'var(--text-secondary)' }}>Need to ship today</span>
-        <strong style={{
-          fontSize: 16,
-          fontFamily: 'var(--mono, monospace)',
-          color: needsToShip ? 'var(--accent)' : 'var(--text)',
-        }}>
-          {row.need_to_ship_today || 0}
-        </strong>
       </div>
     </div>
   );
@@ -934,7 +917,7 @@ function MarketplacePatternBubble({ row, onClick }) {
           aria-label="caught up"
           title="No orders need to ship for this marketplace"
         >
-          &#8593;
+          &#10003;
         </span>
       )}
     </button>
