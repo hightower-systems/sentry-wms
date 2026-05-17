@@ -32,9 +32,9 @@ const NAV = [
     label: 'Outbound',
     items: [
       { to: '/sales-orders', label: 'Sales Orders', pageKey: 'sales-orders' },
-      { to: '/pos-activity', label: 'POS Activity', pageKey: 'pos-activity' },
       { to: '/picking-tickets', label: 'Picking Tickets', pageKey: 'picking-tickets' },
       { to: '/fraud', label: 'Fraud', pageKey: 'fraud' },
+      { to: '/pos-activity', label: 'POS Activity', pageKey: 'pos-activity' },
       // avid-overhaul-mk1 P10: Picking/Packing/Shipping mobile-only.
       // The admin-side mirrors were retired; supervisors use Sales
       // Orders + Picking Tickets here and the C6000 scanners handle

@@ -91,6 +91,99 @@ def pending_putaway(warehouse_id):
     })
 
 
+@putaway_bp.route("/staging-summary/<int:warehouse_id>")
+@require_auth
+@with_db
+def staging_summary(warehouse_id):
+    """avid-overhaul-mk1 P9.1: Put-Away dashboard backing query.
+
+    Returns every staging-type bin in the warehouse, alphabetised by
+    bin_code, with the distinct-SKU count and the per-item breakdown
+    so the dashboard can expand a bin in-place without a second
+    round trip. Empty staging bins are omitted - the page is meant
+    to be a worklist.
+
+    Same bin-type filter as /pending/<warehouse_id> so the two
+    surfaces are always in agreement on what counts as "needs
+    putaway".
+    """
+    ok, denied = check_warehouse_access(warehouse_id)
+    if not ok:
+        return denied
+
+    rows = g.db.execute(
+        text(
+            """
+            SELECT b.bin_id, b.bin_code,
+                   inv.inventory_id, inv.item_id,
+                   i.sku, i.item_name, i.upc,
+                   inv.quantity_on_hand,
+                   inv.lot_number,
+                   COALESCE(
+                       (SELECT pbb.bin_code
+                        FROM preferred_bins pb
+                        JOIN bins pbb ON pbb.bin_id = pb.bin_id
+                        WHERE pb.item_id = inv.item_id
+                          AND pbb.warehouse_id = :warehouse_id
+                        ORDER BY pb.priority ASC
+                        LIMIT 1),
+                       (SELECT db.bin_code
+                        FROM bins db
+                        WHERE db.bin_id = i.default_bin_id
+                          AND db.warehouse_id = :warehouse_id)
+                   ) AS suggested_bin
+              FROM bins b
+              JOIN inventory inv ON inv.bin_id = b.bin_id
+              JOIN items i ON i.item_id = inv.item_id
+             WHERE b.warehouse_id = :warehouse_id
+               AND b.bin_type IN (:bin_staging, :bin_pickable_staging)
+               AND inv.quantity_on_hand > 0
+             ORDER BY b.bin_code, i.sku
+            """
+        ),
+        {
+            "warehouse_id": warehouse_id,
+            "bin_staging": BIN_STAGING,
+            "bin_pickable_staging": BIN_PICKABLE_STAGING,
+        },
+    ).fetchall()
+
+    # Group rows in Python because SQL ARRAY_AGG of composite rows
+    # would need anonymous record types or a wrapping helper; the
+    # row count here is bounded by staging bins x SKUs-in-flight,
+    # which is tens to low hundreds in practice.
+    bins_by_id = {}
+    bin_order = []
+    for r in rows:
+        if r.bin_id not in bins_by_id:
+            bins_by_id[r.bin_id] = {
+                "bin_id": r.bin_id,
+                "bin_code": r.bin_code,
+                "sku_count": 0,
+                "total_qty": 0,
+                "items": [],
+            }
+            bin_order.append(r.bin_id)
+        b = bins_by_id[r.bin_id]
+        b["sku_count"] += 1
+        b["total_qty"] += int(r.quantity_on_hand or 0)
+        b["items"].append({
+            "inventory_id": r.inventory_id,
+            "item_id": r.item_id,
+            "sku": r.sku,
+            "item_name": r.item_name,
+            "upc": r.upc,
+            "quantity_on_hand": r.quantity_on_hand,
+            "lot_number": r.lot_number,
+            "suggested_bin": r.suggested_bin,
+        })
+
+    return jsonify({
+        "warehouse_id": warehouse_id,
+        "bins": [bins_by_id[bid] for bid in bin_order],
+    })
+
+
 @putaway_bp.route("/suggest/<int:item_id>")
 @require_auth
 @with_db
