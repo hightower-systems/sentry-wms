@@ -15,7 +15,8 @@ const COLOR_TOP = '#8e2715';   // Sentry red (top performer per card)
 const COLOR_OTHER = '#c4722a'; // Copper (every other user)
 
 const EVENT_LABELS = {
-  picking:       { title: 'Picking',      unit: 'units' },
+  // P11.1: picking is now measured in distinct orders, not units.
+  picking:       { title: 'Picking',      unit: 'orders' },
   packing:       { title: 'Packing',      unit: 'units' },
   shipped:       { title: 'Shipped',      unit: 'orders' },
   received_skus: { title: 'Received',     unit: 'unique SKUs' },

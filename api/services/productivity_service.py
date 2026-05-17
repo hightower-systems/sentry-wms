@@ -8,7 +8,7 @@ audit rows.
 
 Five event kinds, each with its own metric:
 
-  picking       SUM(details.quantity_picked)
+  picking       COUNT(DISTINCT entity_id) WHERE entity_type='SO'  (P11.1)
   packing       SUM(details.total_items)
   received_skus COUNT(DISTINCT details.item_id)
   putaway_skus  COUNT(DISTINCT entity_id) WHERE entity_type='ITEM'
@@ -55,7 +55,11 @@ _cache: Dict[Tuple[int, str, str], Tuple[float, dict]] = {}
 
 DASHBOARD_EVENTS: List[Tuple[str, str, str]] = [
     # (slug, action_type, metric_kind)
-    ("picking",       "PICK",    "units"),
+    # P11.1: picking measures distinct SOs picked, not summed line
+    # quantities. A picker who closes ten 1-unit SOs is doing more
+    # discrete work than one who fills a single 10-unit SO; the unit
+    # count buried that signal under raw throughput.
+    ("picking",       "PICK",    "orders"),
     ("packing",       "PACK",    "units"),
     ("shipped",       "SHIP",    "orders"),
     ("received_skus", "RECEIVE", "unique_skus"),
@@ -63,7 +67,7 @@ DASHBOARD_EVENTS: List[Tuple[str, str, str]] = [
 ]
 
 EVENT_LABELS = {
-    "picking":       "Picking (units)",
+    "picking":       "Picking (orders)",
     "packing":       "Packing (units)",
     "shipped":       "Shipped (orders)",
     "received_skus": "Received (unique SKUs)",
@@ -80,15 +84,21 @@ EVENT_LABELS = {
 
 
 def _agg_picking(db, warehouse_id, start, end):
+    # P11.1: count distinct SOs the user closed, not summed units.
+    # PICK rows are written one-per-line at pick-confirm time with
+    # entity_type='SO' and entity_id=so_id, so COUNT(DISTINCT
+    # entity_id) collapses multi-line SOs back to one credit per
+    # picker per SO. The 'SO' entity filter excludes the TO-line
+    # picks (entity_type='TO_LINE') that also use action='PICK'.
     rows = db.execute(
         text(
             """
-            SELECT user_id, COALESCE(SUM((details->>'quantity_picked')::int), 0) AS v
+            SELECT user_id, COUNT(DISTINCT entity_id) AS v
               FROM audit_log
              WHERE action_type = 'PICK'
+               AND entity_type = 'SO'
                AND created_at >= :start AND created_at < :end
                AND warehouse_id = :wid
-               AND details ? 'quantity_picked'
              GROUP BY user_id
             """
         ),

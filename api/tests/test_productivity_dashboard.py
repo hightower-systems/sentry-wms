@@ -94,10 +94,22 @@ def _today_range():
 
 
 class TestProductivityAggregation:
-    def test_picking_units_sum(self, client, auth_headers):
-        _seed_audit("PICK", "alice", 1, {"quantity_picked": 5, "sku": "A", "item_id": 1})
-        _seed_audit("PICK", "alice", 1, {"quantity_picked": 3, "sku": "B", "item_id": 2})
-        _seed_audit("PICK", "bob",   1, {"quantity_picked": 7, "sku": "A", "item_id": 1})
+    def test_picking_distinct_orders(self, client, auth_headers):
+        # P11.1: picking metric is "distinct SOs picked", so two PICK
+        # lines on the same SO collapse to one credit. alice picks two
+        # different SOs (one of them across two lines); bob picks one.
+        _seed_audit("PICK", "alice", 1,
+                    {"quantity_picked": 5, "sku": "A", "item_id": 1},
+                    entity_type="SO", entity_id=101)
+        _seed_audit("PICK", "alice", 1,
+                    {"quantity_picked": 3, "sku": "B", "item_id": 2},
+                    entity_type="SO", entity_id=101)
+        _seed_audit("PICK", "alice", 1,
+                    {"quantity_picked": 2, "sku": "C", "item_id": 3},
+                    entity_type="SO", entity_id=102)
+        _seed_audit("PICK", "bob",   1,
+                    {"quantity_picked": 7, "sku": "A", "item_id": 1},
+                    entity_type="SO", entity_id=201)
         start, end = _today_range()
         resp = client.get(
             f"/api/v1/dashboard/productivity?start={start}&end={end}&warehouse_id=1",
@@ -106,9 +118,9 @@ class TestProductivityAggregation:
         assert resp.status_code == 200, resp.get_json()
         body = resp.get_json()
         users_by_id = {u["user_id"]: u for u in body["users"]}
-        assert users_by_id["alice"]["metrics"]["picking"] == 8
-        assert users_by_id["bob"]["metrics"]["picking"] == 7
-        # Sort by total desc; alice (8) > bob (7)
+        assert users_by_id["alice"]["metrics"]["picking"] == 2
+        assert users_by_id["bob"]["metrics"]["picking"] == 1
+        # Sort by total desc; alice (2) > bob (1)
         assert [u["user_id"] for u in body["users"]] == ["alice", "bob"]
 
     def test_received_skus_distinct(self, client, auth_headers):
@@ -261,15 +273,20 @@ class TestCache:
         # Seed one row, run the query, mutate the row, run the same
         # query again. Cache should return the original payload (cache
         # hit), not the post-mutation count.
-        _seed_audit("PICK", "alice", 1, {"quantity_picked": 5, "sku": "A", "item_id": 1})
+        # P11.1: picking is distinct-SO so we seed on a specific so_id.
+        _seed_audit("PICK", "alice", 1,
+                    {"quantity_picked": 5, "sku": "A", "item_id": 1},
+                    entity_type="SO", entity_id=301)
         start, end = _today_range()
         url = f"/api/v1/dashboard/productivity?start={start}&end={end}&warehouse_id=1"
         first = client.get(url, headers=auth_headers).get_json()
-        # Add another pick; cache should NOT reflect this.
-        _seed_audit("PICK", "alice", 1, {"quantity_picked": 100, "sku": "A", "item_id": 1})
+        # Add a pick on a different SO; cache should NOT reflect this.
+        _seed_audit("PICK", "alice", 1,
+                    {"quantity_picked": 100, "sku": "A", "item_id": 1},
+                    entity_type="SO", entity_id=302)
         second = client.get(url, headers=auth_headers).get_json()
-        assert first["users"][0]["metrics"]["picking"] == 5
-        assert second["users"][0]["metrics"]["picking"] == 5
+        assert first["users"][0]["metrics"]["picking"] == 1
+        assert second["users"][0]["metrics"]["picking"] == 1
 
 
 # ----------------------------------------------------------------------
