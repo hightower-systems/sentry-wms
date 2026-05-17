@@ -749,7 +749,9 @@ def list_sales_orders():
 def get_sales_order(so_id):
     so = g.db.execute(
         text("""
-            SELECT so_id, so_number, so_barcode, customer_name, status, priority,
+            SELECT so_id, so_number, so_barcode,
+                   customer_name, customer_phone, customer_address,
+                   status, priority,
                    warehouse_id, ship_method, ship_address,
                    order_date, ship_by_date, created_at, picked_at, packed_at,
                    shipped_at, created_by,
@@ -783,7 +785,15 @@ def get_sales_order(so_id):
     return jsonify({
         "sales_order": {
             "so_id": so.so_id, "so_number": so.so_number, "so_barcode": so.so_barcode,
-            "customer_name": so.customer_name, "status": so.status, "priority": so.priority,
+            "customer_name": so.customer_name,
+            # P11.x: customer_phone + customer_address were missing
+            # from this response, so the edit modal reloaded with the
+            # phone field blank after a save and operators assumed
+            # the save had failed. Both fields are returned now so
+            # round-trip edits display the new value.
+            "customer_phone": so.customer_phone,
+            "customer_address": so.customer_address,
+            "status": so.status, "priority": so.priority,
             "warehouse_id": so.warehouse_id, "ship_method": so.ship_method, "ship_address": so.ship_address,
             "order_date": so.order_date.isoformat() if so.order_date else None,
             "ship_by_date": so.ship_by_date.isoformat() if so.ship_by_date else None,
