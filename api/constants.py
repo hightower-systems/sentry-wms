@@ -192,7 +192,10 @@ ALL_PAGE_KEYS = (
     "inventory", "cycle-counts", "count-approvals",
     "purchase-orders", "receiving", "putaway",
     "sales-orders", "pos-activity", "picking-tickets", "fraud",
-    "picking", "packing", "shipping",
+    # avid-overhaul-mk1 P10: 'picking', 'packing', 'shipping' retired.
+    # The mobile (C6000) flow is the canonical surface; admin-side
+    # mirrors duplicated supervisor state. Migration 061 prunes any
+    # stragglers in user_page_permissions.
     "items", "vendors",
     "adjustments", "inter-warehouse-transfers", "transfer-orders",
     "warehouses", "bins", "zones", "preferred-bins",

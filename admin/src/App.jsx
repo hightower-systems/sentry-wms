@@ -12,13 +12,10 @@ import Receiving from './pages/Receiving.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
 import SalesOrders from './pages/SalesOrders.jsx';
 import PutAway from './pages/PutAway.jsx';
-import Picking from './pages/Picking.jsx';
 import PickingTickets from './pages/PickingTickets.jsx';
 import PickingTicketPrint from './pages/PickingTicketPrint.jsx';
 import PickingTicketPrintAll from './pages/PickingTicketPrintAll.jsx';
 import Fraud from './pages/Fraud.jsx';
-import Packing from './pages/Packing.jsx';
-import Shipping from './pages/Shipping.jsx';
 import Bins from './pages/Bins.jsx';
 import Zones from './pages/Zones.jsx';
 import Items from './pages/Items.jsx';
@@ -97,11 +94,14 @@ export default function App() {
         <Route path="/putaway" element={<ErrorBoundary fallbackMessage="Could not load put-away."><PutAway /></ErrorBoundary>} />
         <Route path="/sales-orders" element={<ErrorBoundary fallbackMessage="Could not load sales orders."><SalesOrders /></ErrorBoundary>} />
         <Route path="/pos-activity" element={<ErrorBoundary fallbackMessage="Could not load POS activity."><POSActivity /></ErrorBoundary>} />
-        <Route path="/picking" element={<ErrorBoundary fallbackMessage="Could not load picking."><Picking /></ErrorBoundary>} />
         <Route path="/fraud" element={<ErrorBoundary fallbackMessage="Could not load fraud queue."><Fraud /></ErrorBoundary>} />
         <Route path="/picking-tickets" element={<ErrorBoundary fallbackMessage="Could not load picking tickets."><PickingTickets /></ErrorBoundary>} />
-        <Route path="/packing" element={<ErrorBoundary fallbackMessage="Could not load packing."><Packing /></ErrorBoundary>} />
-        <Route path="/shipping" element={<ErrorBoundary fallbackMessage="Could not load shipping."><Shipping /></ErrorBoundary>} />
+        {/* avid-overhaul-mk1 P10: /picking, /packing, /shipping admin
+            pages retired. The workflows live on the Chainway C6000
+            mobile scanners; the admin-side mirrors duplicated state
+            without adding control surface. Sales Orders + Picking
+            Tickets cover the supervisor view; dashboard counts still
+            surface throughput. */}
         <Route path="/bins" element={<ErrorBoundary fallbackMessage="Could not load bins."><Bins /></ErrorBoundary>} />
         <Route path="/zones" element={<ErrorBoundary fallbackMessage="Could not load zones."><Zones /></ErrorBoundary>} />
         <Route path="/items" element={<ErrorBoundary fallbackMessage="Could not load items."><Items /></ErrorBoundary>} />

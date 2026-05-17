@@ -46,9 +46,10 @@ const PAGE_GROUPS = [
       { key: 'pos-activity', label: 'POS Activity' },
       { key: 'picking-tickets', label: 'Picking Tickets' },
       { key: 'fraud', label: 'Fraud' },
-      { key: 'picking', label: 'Picking' },
-      { key: 'packing', label: 'Packing' },
-      { key: 'shipping', label: 'Shipping' },
+      // avid-overhaul-mk1 P10: picking/packing/shipping retired in
+      // favour of the mobile flow; corresponding page_keys are gone
+      // from ALL_PAGE_KEYS so a stale grant cannot persist past the
+      // next permissions save.
     ],
   },
   {
