@@ -436,13 +436,18 @@ a {
   font-weight: 500;
   color: var(--text-secondary);
   text-decoration: none;
+  border: none;
   border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
   transition: color 0.15s, border-color 0.15s;
   margin-bottom: -1px;
 }
 
 .data-tab:hover {
   color: var(--text);
+  background: transparent;
 }
 
 .data-tab.active {

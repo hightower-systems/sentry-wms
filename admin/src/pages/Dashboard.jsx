@@ -635,38 +635,16 @@ function ShippingHealthView({ warehouseId }) {
       )}
 
       {(data.by_source || []).length > 0 && (
-        <table className="data-table" style={{ marginBottom: 24 }}>
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th style={{ textAlign: 'right' }}>Open</th>
-              <th style={{ textAlign: 'right' }}>Picking</th>
-              <th style={{ textAlign: 'right' }}>Picked</th>
-              <th style={{ textAlign: 'right' }}>Packing</th>
-              <th style={{ textAlign: 'right' }}>Packed</th>
-              <th style={{ textAlign: 'right' }}>Shipped today</th>
-              <th style={{ textAlign: 'right' }}>Unshipped</th>
-              <th>Oldest age</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.by_source.map((r) => (
-              <tr key={r.source_system}>
-                <td className="mono">{r.source_system}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{r.open}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{r.picking}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{r.picked}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{r.packing}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{r.packed}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{r.shipped_today}</td>
-                <td className="mono" style={{ textAlign: 'right', fontWeight: r.unshipped_count > 0 ? 600 : 400 }}>
-                  {r.unshipped_count}
-                </td>
-                <td className="mono" style={{ fontSize: 12 }}>{formatAge(r.oldest_unshipped_at)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+          gap: 12,
+          marginBottom: 24,
+        }}>
+          {data.by_source.map((r) => (
+            <SourceSystemCard key={r.source_system} row={r} formatAge={formatAge} />
+          ))}
+        </div>
       )}
 
       <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px 0' }}>
@@ -714,6 +692,68 @@ function ShippingHealthView({ warehouseId }) {
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+// One marketplace card on the Shipping Health by-source grid. The
+// unshipped count gets accent emphasis when above zero so the eye
+// lands on the actionable column without reading every number.
+function SourceSystemCard({ row, formatAge }) {
+  const statusRows = [
+    { label: 'Open',    value: row.open },
+    { label: 'Picking', value: row.picking },
+    { label: 'Picked',  value: row.picked },
+    { label: 'Packing', value: row.packing },
+    { label: 'Packed',  value: row.packed },
+  ];
+  const isStuck = row.unshipped_count > 0;
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        marginBottom: 10, paddingBottom: 8,
+        borderBottom: '1px solid var(--border)',
+      }}>
+        <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
+          {row.source_system}
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          shipped today <strong style={{ color: 'var(--text)' }}>{row.shipped_today}</strong>
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, marginBottom: 12 }}>
+        {statusRows.map((s) => (
+          <div key={s.label} style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 18, fontWeight: 600, fontFamily: 'var(--mono, monospace)' }}>
+              {s.value}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              {s.label}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        fontSize: 12, color: 'var(--text-secondary)',
+      }}>
+        <span>
+          Unshipped{' '}
+          <strong style={{
+            color: isStuck ? 'var(--accent)' : 'var(--text)',
+            fontFamily: 'var(--mono, monospace)',
+          }}>
+            {row.unshipped_count}
+          </strong>
+        </span>
+        <span>
+          Oldest{' '}
+          <strong style={{ color: 'var(--text)', fontFamily: 'var(--mono, monospace)' }}>
+            {formatAge(row.oldest_unshipped_at)}
+          </strong>
+        </span>
+      </div>
     </div>
   );
 }
