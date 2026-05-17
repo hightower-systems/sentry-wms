@@ -237,10 +237,13 @@ def require_role(*roles):
 def has_override(override_key: str) -> bool:
     """avid-overhaul-mk1 P7: feature-flag grant lookup.
 
-    Returns True if the current user is ADMIN, or if their
-    allowed_pages contains override_key. Used by PO/SO route handlers
-    to lift the OPEN-only status gate when a non-admin holds the
-    matching override (po-full-edit, so-full-edit).
+    Returns True iff the user explicitly holds override_key in their
+    allowed_pages list. Unlike @require_admin_or_page_permission, an
+    ADMIN role does NOT auto-pass: the PO CLOSED/ARCHIVED gate that
+    existed pre-P7 is a deliberate safety net (an admin re-opens via
+    the status dropdown before resuming line work, preserving a clean
+    audit trail). Overrides are the new lower-bar path for non-admins
+    who need to bypass that gate; ADMIN keeps the original behavior.
 
     Read-only: does not 403 on its own. Callers branch on the
     boolean to either widen the allowed-status set or surface a
@@ -249,7 +252,9 @@ def has_override(override_key: str) -> bool:
     """
     user = g.current_user
     allowed = user.get("allowed_pages")
-    return allowed is None or override_key in allowed
+    if allowed is None:
+        return False
+    return override_key in allowed
 
 
 def require_admin_or_page_permission(page_key):
