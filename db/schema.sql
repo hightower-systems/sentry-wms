@@ -240,7 +240,10 @@ CREATE TABLE sales_orders (
     -- the admin SO edit surface can repoint an order whose ERP-supplied
     -- system tag was wrong, without rewriting inbound history. NULL on
     -- admin-created and POS-created SOs that never went through inbound.
-    source_system VARCHAR(64) REFERENCES inbound_source_systems_allowlist(source_system),
+    -- FK to inbound_source_systems_allowlist is added later in this
+    -- file via ALTER TABLE so the inline CREATE order does not require
+    -- the allowlist table to be declared above sales_orders.
+    source_system VARCHAR(64),
     -- v1.10.0 Pipe C: POS endpoint surface columns. Web orders carry
     -- order_source='web' / order_type='sale' (defaults). POS-source
     -- orders carry external_txn_ref + idempotency_key + cached_response_body
@@ -820,6 +823,16 @@ CREATE TABLE inbound_source_systems_allowlist (
     notes          TEXT,
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- avid-overhaul-mk1 P7 (mig 060): FK from sales_orders.source_system
+-- to the allowlist. Declared here, after both tables exist, because
+-- sales_orders is defined at line 180 -- ahead of the allowlist -- so
+-- inlining the REFERENCES clause on the column would fail to load
+-- from a clean schema.
+ALTER TABLE sales_orders
+    ADD CONSTRAINT sales_orders_source_system_fkey
+    FOREIGN KEY (source_system)
+    REFERENCES inbound_source_systems_allowlist(source_system);
 
 -- v1.7.0 forensic audit (V-157 pattern, mirrors wms_tokens_audit).
 CREATE TABLE inbound_source_systems_allowlist_audit (
