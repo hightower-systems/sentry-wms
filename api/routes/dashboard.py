@@ -428,16 +428,18 @@ def shipping_health():
         {"wid": warehouse_id, "start": start_dt, "end": end_exclusive},
     ).fetchall()
 
-    # avid-overhaul-mk1 P11.7: marketplace classification by so_number
-    # pattern. Production SO numbers identify their marketplace by
-    # shape, not by a source_system tag:
+    # avid-overhaul-mk1 P11.7 / P11.8: marketplace classification by
+    # so_number pattern. Production SO numbers identify their
+    # marketplace by shape, not by a source_system tag:
     #   * Amazon: three digits then a hyphen (123-1234567)
     #   * Ebay:   two digits then a hyphen   (12-3456789)
     #   * BigCommerce: no hyphen at all      (BC123456)
     # Anything that does not match all three falls into "Other" so
     # the dashboard exposes the unclassified backlog rather than
-    # hiding it. Counts include any unshipped SO whose ship_by_date
-    # is today or earlier -- the actionable "ship this now" set.
+    # hiding it. Each bucket carries the SO list so clicking a
+    # bubble can drop straight into "what specifically needs to
+    # ship". 200-row cap per bucket keeps the payload bounded; a
+    # bigger backlog should land in the Sales Orders search anyway.
     pattern_rows = g.db.execute(
         text(
             r"""
@@ -448,29 +450,50 @@ def shipping_health():
                     WHEN POSITION('-' IN so.so_number) = 0 THEN 'BigCommerce'
                     ELSE 'Other'
                 END AS marketplace,
-                COUNT(*) AS count
+                so.so_id, so.so_number, so.customer_name,
+                so.status, so.ship_by_date
               FROM sales_orders so
              WHERE so.warehouse_id = :wid
                AND so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
                AND so.ship_by_date IS NOT NULL
                AND so.ship_by_date <= CURRENT_DATE
-             GROUP BY marketplace
+             ORDER BY so.ship_by_date ASC, so.so_id ASC
             """
         ),
         {"wid": warehouse_id},
     ).fetchall()
-    pattern_map = {r.marketplace: int(r.count or 0) for r in pattern_rows}
+    pattern_buckets: dict[str, list] = {
+        "Amazon": [], "Ebay": [], "BigCommerce": [], "Other": [],
+    }
+    for r in pattern_rows:
+        bucket = pattern_buckets.get(r.marketplace)
+        if bucket is None:
+            continue
+        if len(bucket) >= 200:
+            continue
+        bucket.append({
+            "so_id": r.so_id,
+            "so_number": r.so_number,
+            "customer_name": r.customer_name,
+            "status": r.status,
+            "ship_by_date": r.ship_by_date.isoformat() if r.ship_by_date else None,
+        })
     by_marketplace_pattern = [
-        {"marketplace": "Amazon",      "count": pattern_map.get("Amazon", 0)},
-        {"marketplace": "Ebay",        "count": pattern_map.get("Ebay", 0)},
-        {"marketplace": "BigCommerce", "count": pattern_map.get("BigCommerce", 0)},
+        {
+            "marketplace": name,
+            "count": len(pattern_buckets[name]),
+            "orders": pattern_buckets[name],
+        }
+        for name in ("Amazon", "Ebay", "BigCommerce")
     ]
     # Surface unclassified rows only if any exist so the bubble row
     # stays clean for warehouses whose so_numbers all match.
-    if pattern_map.get("Other", 0) > 0:
-        by_marketplace_pattern.append(
-            {"marketplace": "Other", "count": pattern_map["Other"]},
-        )
+    if pattern_buckets["Other"]:
+        by_marketplace_pattern.append({
+            "marketplace": "Other",
+            "count": len(pattern_buckets["Other"]),
+            "orders": pattern_buckets["Other"],
+        })
 
     # Stuck watchlist. "Stuck" = past ship_by_date OR older than the
     # threshold when no ship_by_date is set. Capped at 100 so a

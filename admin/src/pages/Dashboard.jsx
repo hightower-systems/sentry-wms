@@ -658,11 +658,12 @@ function ReceivedTodayView({ warehouseId }) {
 // ── Shipping Health (P11.4) ───────────────────────────────────────────────
 
 function ShippingHealthView({ warehouseId }) {
-  const [data, setData] = useState({ by_source: [], stuck_orders: [], stuck_threshold_days: 8 });
+  const [data, setData] = useState({ by_source: [], by_marketplace_pattern: [], stuck_threshold_days: 8 });
   const [loading, setLoading] = useState(false);
   const [rangePreset, setRangePreset] = useState('today');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [focusedMarketplace, setFocusedMarketplace] = useState(null);
 
   useEffect(() => {
     if (!warehouseId) return;
@@ -727,26 +728,20 @@ function ShippingHealthView({ warehouseId }) {
         </div>
       )}
 
-      {/* avid-overhaul-mk1 P11.7: marketplace classification by
-          so_number pattern. Distinct from the source_system tag
-          view above: production SO numbers identify their
-          marketplace by shape (3-digit-hyphen / 2-digit-hyphen /
-          no-hyphen) regardless of whether the row carries a
-          source_system tag. The thicker divider + section label
-          makes the slice change obvious to a reader. */}
+      {/* avid-overhaul-mk1 P11.7 / P11.8: marketplace classification
+          by so_number pattern. Thicker divider sets the slice apart
+          from the source_system cards above; bubbles show today's
+          ship-now backlog per marketplace. Click a non-zero bubble
+          to see the SO numbers behind the count. */}
       {(data.by_marketplace_pattern || []).length > 0 && (
         <>
           <div style={{
             marginTop: 8, marginBottom: 16,
             borderTop: '3px solid var(--border-dark)',
           }} />
-          <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px 0' }}>
-            Need to ship - by SO number pattern
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 12px 0' }}>
+            Orders that need to ship today
           </h3>
-          <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>
-            Unshipped orders past or on today's ship-by date, bucketed by
-            so_number shape (Amazon 123-... / Ebay 12-... / BigCommerce no-hyphen).
-          </p>
           <div style={{
             display: 'grid',
             gridTemplateColumns: `repeat(${Math.min(data.by_marketplace_pattern.length, 4)}, 1fr)`,
@@ -754,56 +749,54 @@ function ShippingHealthView({ warehouseId }) {
             marginBottom: 24,
           }}>
             {data.by_marketplace_pattern.map((m) => (
-              <MarketplacePatternBubble key={m.marketplace} row={m} />
+              <MarketplacePatternBubble
+                key={m.marketplace}
+                row={m}
+                onClick={() => setFocusedMarketplace(m)}
+              />
             ))}
           </div>
         </>
       )}
 
-      <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px 0' }}>
-        Stuck orders
-        <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 8 }}>
-          past ship-by date or older than {data.stuck_threshold_days || 8} days
-        </span>
-      </h3>
-
-      {(data.stuck_orders || []).length === 0 && !loading && (
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          Nothing stuck. Outbound is current.
-        </p>
-      )}
-
-      {(data.stuck_orders || []).length > 0 && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>SO #</th>
-              <th>Customer</th>
-              <th>Source</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Ship by</th>
-              <th style={{ textAlign: 'right' }}>Age (days)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.stuck_orders.map((s) => (
-              <tr key={s.so_id}>
-                <td className="mono">{s.so_number}</td>
-                <td>{s.customer_name || '-'}</td>
-                <td className="mono">{s.source_system}</td>
-                <td>{s.status}</td>
-                <td className="mono" style={{ fontSize: 12 }}>
-                  {s.created_at ? new Date(s.created_at).toLocaleDateString() : '-'}
-                </td>
-                <td className="mono" style={{ fontSize: 12, color: s.ship_by_date && new Date(s.ship_by_date) < new Date() ? 'var(--accent)' : undefined }}>
-                  {s.ship_by_date || '-'}
-                </td>
-                <td className="mono" style={{ textAlign: 'right' }}>{s.age_days}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {focusedMarketplace && (
+        <Modal
+          title={`${focusedMarketplace.marketplace} - orders that need to ship today`}
+          onClose={() => setFocusedMarketplace(null)}
+          size="wide"
+          footer={
+            <button className="btn btn-primary" onClick={() => setFocusedMarketplace(null)}>Close</button>
+          }
+        >
+          {(focusedMarketplace.orders || []).length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              No orders to show.
+            </p>
+          ) : (
+            <table className="lines-table">
+              <thead>
+                <tr>
+                  <th>SO #</th>
+                  <th>Customer</th>
+                  <th>Status</th>
+                  <th>Ship by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {focusedMarketplace.orders.map((o) => (
+                  <tr key={o.so_id}>
+                    <td className="mono">{o.so_number}</td>
+                    <td>{o.customer_name || '-'}</td>
+                    <td>{o.status}</td>
+                    <td className="mono" style={{ fontSize: 12, color: 'var(--accent)' }}>
+                      {o.ship_by_date || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Modal>
       )}
     </div>
   );
@@ -895,33 +888,55 @@ function SourceSystemCard({ row }) {
   );
 }
 
-// Marketplace bubble for the lower "need to ship by so_number pattern"
-// row. Rounded pill so it reads as a different surface from the
-// source_system cards above; count gets accent color when > 0.
-function MarketplacePatternBubble({ row }) {
+// Marketplace bubble for the lower "need to ship today" row.
+// When count > 0: rendered as a button-style clickable card showing
+// the count in accent red; clicking opens a modal with the SO list.
+// When count == 0: marketplace name on top, a green up-arrow below
+// indicating the operator is caught up. Non-interactive in that case.
+function MarketplacePatternBubble({ row, onClick }) {
   const hasWork = (row.count || 0) > 0;
   return (
-    <div
+    <button
+      type="button"
+      onClick={hasWork ? onClick : undefined}
+      disabled={!hasWork}
       className="card"
       style={{
-        padding: '16px 14px',
-        borderRadius: 999,
-        display: 'flex', alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
+        padding: 16,
+        borderRadius: 16,
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        gap: 6,
+        cursor: hasWork ? 'pointer' : 'default',
+        border: hasWork ? '2px solid var(--accent)' : '1px solid var(--border-dark)',
+        background: 'var(--white)',
+        fontFamily: 'inherit',
+        transition: 'transform 0.1s, box-shadow 0.15s',
       }}
     >
       <span style={{ fontSize: 14, fontWeight: 600 }}>
         {row.marketplace}
       </span>
-      <span style={{
-        fontSize: 24, fontWeight: 700,
-        fontFamily: 'var(--mono, monospace)',
-        color: hasWork ? 'var(--accent)' : 'var(--text-secondary)',
-        lineHeight: 1,
-      }}>
-        {row.count}
-      </span>
-    </div>
+      {hasWork ? (
+        <span style={{
+          fontSize: 32, fontWeight: 700,
+          fontFamily: 'var(--mono, monospace)',
+          color: 'var(--accent)',
+          lineHeight: 1,
+        }}>
+          {row.count}
+        </span>
+      ) : (
+        <span
+          style={{
+            fontSize: 32, lineHeight: 1, fontWeight: 700,
+            color: '#1f9d55',
+          }}
+          aria-label="caught up"
+          title="No orders need to ship for this marketplace"
+        >
+          &#8593;
+        </span>
+      )}
+    </button>
   );
 }
