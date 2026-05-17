@@ -428,6 +428,50 @@ def shipping_health():
         {"wid": warehouse_id, "start": start_dt, "end": end_exclusive},
     ).fetchall()
 
+    # avid-overhaul-mk1 P11.7: marketplace classification by so_number
+    # pattern. Production SO numbers identify their marketplace by
+    # shape, not by a source_system tag:
+    #   * Amazon: three digits then a hyphen (123-1234567)
+    #   * Ebay:   two digits then a hyphen   (12-3456789)
+    #   * BigCommerce: no hyphen at all      (BC123456)
+    # Anything that does not match all three falls into "Other" so
+    # the dashboard exposes the unclassified backlog rather than
+    # hiding it. Counts include any unshipped SO whose ship_by_date
+    # is today or earlier -- the actionable "ship this now" set.
+    pattern_rows = g.db.execute(
+        text(
+            r"""
+            SELECT
+                CASE
+                    WHEN so.so_number ~ '^[0-9]{3}-'       THEN 'Amazon'
+                    WHEN so.so_number ~ '^[0-9]{2}-'       THEN 'Ebay'
+                    WHEN POSITION('-' IN so.so_number) = 0 THEN 'BigCommerce'
+                    ELSE 'Other'
+                END AS marketplace,
+                COUNT(*) AS count
+              FROM sales_orders so
+             WHERE so.warehouse_id = :wid
+               AND so.status NOT IN ('SHIPPED', 'CANCELLED', 'FRAUD_REVIEW')
+               AND so.ship_by_date IS NOT NULL
+               AND so.ship_by_date <= CURRENT_DATE
+             GROUP BY marketplace
+            """
+        ),
+        {"wid": warehouse_id},
+    ).fetchall()
+    pattern_map = {r.marketplace: int(r.count or 0) for r in pattern_rows}
+    by_marketplace_pattern = [
+        {"marketplace": "Amazon",      "count": pattern_map.get("Amazon", 0)},
+        {"marketplace": "Ebay",        "count": pattern_map.get("Ebay", 0)},
+        {"marketplace": "BigCommerce", "count": pattern_map.get("BigCommerce", 0)},
+    ]
+    # Surface unclassified rows only if any exist so the bubble row
+    # stays clean for warehouses whose so_numbers all match.
+    if pattern_map.get("Other", 0) > 0:
+        by_marketplace_pattern.append(
+            {"marketplace": "Other", "count": pattern_map["Other"]},
+        )
+
     # Stuck watchlist. "Stuck" = past ship_by_date OR older than the
     # threshold when no ship_by_date is set. Capped at 100 so a
     # backlog explosion does not blow up the payload; the UI links
@@ -457,6 +501,7 @@ def shipping_health():
         "warehouse_id": warehouse_id,
         "range": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
         "stuck_threshold_days": _STUCK_AGE_DAYS,
+        "by_marketplace_pattern": by_marketplace_pattern,
         "by_source": [
             {
                 "source_system": r.source_system,

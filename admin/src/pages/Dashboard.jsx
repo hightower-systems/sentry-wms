@@ -727,6 +727,39 @@ function ShippingHealthView({ warehouseId }) {
         </div>
       )}
 
+      {/* avid-overhaul-mk1 P11.7: marketplace classification by
+          so_number pattern. Distinct from the source_system tag
+          view above: production SO numbers identify their
+          marketplace by shape (3-digit-hyphen / 2-digit-hyphen /
+          no-hyphen) regardless of whether the row carries a
+          source_system tag. The thicker divider + section label
+          makes the slice change obvious to a reader. */}
+      {(data.by_marketplace_pattern || []).length > 0 && (
+        <>
+          <div style={{
+            marginTop: 8, marginBottom: 16,
+            borderTop: '3px solid var(--border-dark)',
+          }} />
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px 0' }}>
+            Need to ship - by SO number pattern
+          </h3>
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>
+            Unshipped orders past or on today's ship-by date, bucketed by
+            so_number shape (Amazon 123-... / Ebay 12-... / BigCommerce no-hyphen).
+          </p>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${Math.min(data.by_marketplace_pattern.length, 4)}, 1fr)`,
+            gap: 12,
+            marginBottom: 24,
+          }}>
+            {data.by_marketplace_pattern.map((m) => (
+              <MarketplacePatternBubble key={m.marketplace} row={m} />
+            ))}
+          </div>
+        </>
+      )}
+
       <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 8px 0' }}>
         Stuck orders
         <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 8 }}>
@@ -776,6 +809,19 @@ function ShippingHealthView({ warehouseId }) {
   );
 }
 
+// Display map: source_system tags are lowercase in the allowlist but
+// stakeholders read them on the dashboard as proper marketplace names.
+const MARKETPLACE_DISPLAY = {
+  amazon: 'Amazon',
+  ebay: 'Ebay',
+  bigcommerce: 'BigCommerce',
+};
+
+function displayMarketplace(name) {
+  if (!name) return name;
+  return MARKETPLACE_DISPLAY[name.toLowerCase()] || name;
+}
+
 // One marketplace card on the Shipping Health by-source grid.
 // Two big stats at the top (Orders Received / Orders Shipped in the
 // selected range), and the "Need to ship today" footer line beneath.
@@ -790,8 +836,8 @@ function SourceSystemCard({ row }) {
         borderBottom: '1px solid var(--border)',
         textAlign: 'center',
       }}>
-        <span className="mono" style={{ fontSize: 14, fontWeight: 600 }}>
-          {row.source_system}
+        <span style={{ fontSize: 16, fontWeight: 600 }}>
+          {displayMarketplace(row.source_system)}
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
@@ -845,6 +891,37 @@ function SourceSystemCard({ row }) {
           {row.need_to_ship_today || 0}
         </strong>
       </div>
+    </div>
+  );
+}
+
+// Marketplace bubble for the lower "need to ship by so_number pattern"
+// row. Rounded pill so it reads as a different surface from the
+// source_system cards above; count gets accent color when > 0.
+function MarketplacePatternBubble({ row }) {
+  const hasWork = (row.count || 0) > 0;
+  return (
+    <div
+      className="card"
+      style={{
+        padding: '16px 14px',
+        borderRadius: 999,
+        display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+      }}
+    >
+      <span style={{ fontSize: 14, fontWeight: 600 }}>
+        {row.marketplace}
+      </span>
+      <span style={{
+        fontSize: 24, fontWeight: 700,
+        fontFamily: 'var(--mono, monospace)',
+        color: hasWork ? 'var(--accent)' : 'var(--text-secondary)',
+        lineHeight: 1,
+      }}>
+        {row.count}
+      </span>
     </div>
   );
 }
