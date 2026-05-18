@@ -548,7 +548,13 @@ BEGIN
                COALESCE(NEW.warehouse_id::text, '') || '|' ||
                COALESCE(NEW.details::text, '') || '|' ||
                COALESCE(NEW.created_at::text, NOW()::text);
-    NEW.row_hash := digest(NEW.prev_hash || payload::bytea, 'sha256');
+    -- avid-overhaul-mk1 (mig 062): convert_to instead of ::bytea so
+    -- backslash escapes inside the serialised JSON payload (e.g. \n
+    -- emitted by JSONB::text for a memo with line breaks) do not
+    -- trip Postgres' bytea escape parser. UTF-8 byte-wise encoding
+    -- of ASCII content is identical to the old cast, so existing
+    -- row_hash values still verify against the new function.
+    NEW.row_hash := digest(NEW.prev_hash || convert_to(payload, 'UTF8'), 'sha256');
     UPDATE audit_log_chain_head
        SET row_hash = NEW.row_hash, updated_at = NOW()
      WHERE singleton = TRUE;
@@ -592,7 +598,10 @@ BEGIN
                    COALESCE(r.warehouse_id::text, '') || '|' ||
                    COALESCE(r.details::text, '') || '|' ||
                    COALESCE(r.created_at::text, '');
-        computed := digest(r.prev_hash || payload::bytea, 'sha256');
+        -- avid-overhaul-mk1 (mig 062): keep this in lock-step with
+        -- audit_log_chain_hash above; using ::bytea here would
+        -- reject every row written after the trigger fix.
+        computed := digest(r.prev_hash || convert_to(payload, 'UTF8'), 'sha256');
         IF computed IS DISTINCT FROM r.row_hash THEN
             RETURN r.log_id;
         END IF;
