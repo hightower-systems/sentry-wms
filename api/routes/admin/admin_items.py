@@ -39,8 +39,6 @@ def list_items():
     per_page = min(request.args.get("per_page", 50, type=int), 1000)
     category = request.args.get("category")
     active = request.args.get("active")
-    # avid-overhaul-mk1 mig 058: filter by canonical vendor.
-    vendor_id = request.args.get("vendor_id")
 
     search = request.args.get("q", "")
 
@@ -52,9 +50,6 @@ def list_items():
     if active is not None:
         where_clauses.append("i.is_active = :active")
         params["active"] = active.lower() == "true"
-    if vendor_id:
-        where_clauses.append("i.vendor_id = :vendor_id")
-        params["vendor_id"] = vendor_id
     if search:
         # barcode_aliases is a JSONB array of alternate scannable
         # barcodes (vendor packs, distributor labels, secondary UPCs).
@@ -80,12 +75,10 @@ def list_items():
         text(f"""
             SELECT i.item_id, i.sku, i.item_name, i.upc, i.category, i.weight_lbs,
                    i.default_bin_id, i.is_active, i.created_at,
-                   i.vendor_id, v.vendor_name,
                    b.bin_code AS default_bin_code
             FROM items i
             LEFT JOIN preferred_bins pb ON pb.item_id = i.item_id AND pb.priority = 1
             LEFT JOIN bins b ON b.bin_id = COALESCE(pb.bin_id, i.default_bin_id)
-            LEFT JOIN vendors v ON v.canonical_id = i.vendor_id
             {where_sql}
             ORDER BY i.item_id LIMIT :limit OFFSET :offset
         """),
@@ -97,8 +90,6 @@ def list_items():
             {"item_id": r.item_id, "sku": r.sku, "item_name": r.item_name, "upc": r.upc,
              "category": r.category, "weight_lbs": float(r.weight_lbs) if r.weight_lbs else None,
              "default_bin_id": r.default_bin_id, "default_bin_code": r.default_bin_code,
-             "vendor_id": str(r.vendor_id) if r.vendor_id else None,
-             "vendor_name": r.vendor_name,
              "is_active": r.is_active,
              "created_at": r.created_at.isoformat() if r.created_at else None}
             for r in rows
@@ -118,10 +109,8 @@ def get_item(item_id):
                    i.category, i.weight_lbs, i.length_in, i.width_in, i.height_in,
                    i.default_bin_id, i.reorder_point, i.reorder_qty,
                    i.is_lot_tracked, i.is_serial_tracked, i.is_active,
-                   i.created_at, i.updated_at,
-                   i.vendor_id, v.vendor_name
+                   i.created_at, i.updated_at
               FROM items i
-              LEFT JOIN vendors v ON v.canonical_id = i.vendor_id
              WHERE i.item_id = :iid
         """),
         {"iid": item_id},
@@ -158,8 +147,6 @@ def get_item(item_id):
             "default_bin_id": item.default_bin_id, "reorder_point": item.reorder_point,
             "reorder_qty": item.reorder_qty, "is_lot_tracked": item.is_lot_tracked,
             "is_serial_tracked": item.is_serial_tracked, "is_active": item.is_active,
-            "vendor_id": str(item.vendor_id) if item.vendor_id else None,
-            "vendor_name": item.vendor_name,
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         },
@@ -193,22 +180,17 @@ def create_item(validated):
         if dup_upc:
             return jsonify({"error": f"Duplicate UPC: {data['upc']}"}), 400
 
-    # Empty-string vendor_id arrives from the picker's "no vendor" option
-    # but the DB column is UUID, so coerce to NULL before INSERT.
-    vendor_id = data.get("vendor_id") or None
-
     result = g.db.execute(
         text("""
-            INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, default_bin_id, vendor_id, external_id)
-            VALUES (:sku, :name, :desc, :upc, :cat, :weight, :bin, :vendor_id, :ext_id)
-            RETURNING item_id, sku, item_name, description, upc, category, weight_lbs, default_bin_id, vendor_id, is_active, created_at
+            INSERT INTO items (sku, item_name, description, upc, category, weight_lbs, default_bin_id, external_id)
+            VALUES (:sku, :name, :desc, :upc, :cat, :weight, :bin, :ext_id)
+            RETURNING item_id, sku, item_name, description, upc, category, weight_lbs, default_bin_id, is_active, created_at
         """),
         {
             "sku": data["sku"], "name": data["item_name"], "desc": data.get("description"),
             "upc": data.get("upc"), "cat": data.get("category"),
             "weight": float(data["weight_lbs"]) if data.get("weight_lbs") is not None else None,
             "bin": data.get("default_bin_id"),
-            "vendor_id": vendor_id,
             "ext_id": str(uuid.uuid4()),
         },
     )
@@ -219,7 +201,6 @@ def create_item(validated):
         "description": row.description, "upc": row.upc, "category": row.category,
         "weight_lbs": float(row.weight_lbs) if row.weight_lbs else None,
         "default_bin_id": row.default_bin_id, "is_active": row.is_active,
-        "vendor_id": str(row.vendor_id) if row.vendor_id else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }), 201
 
@@ -236,17 +217,12 @@ def update_item(item_id, validated):
     if not existing:
         return jsonify({"error": "Item not found"}), 404
 
-    ALLOWED_FIELDS = {"sku", "item_name", "description", "upc", "category", "weight_lbs", "default_bin_id", "reorder_point", "reorder_qty", "is_active", "vendor_id"}
+    ALLOWED_FIELDS = {"sku", "item_name", "description", "upc", "category", "weight_lbs", "default_bin_id", "reorder_point", "reorder_qty", "is_active"}
     fields, params = [], {"iid": item_id}
     for col in ALLOWED_FIELDS:
         if col in data:
             fields.append(f"{col} = :{col}")
-            # Empty-string vendor_id from the picker's "no vendor" option
-            # clears the column. Other fields keep their literal value.
-            if col == "vendor_id":
-                params[col] = data[col] or None
-            else:
-                params[col] = data[col]
+            params[col] = data[col]
 
     if not fields:
         return jsonify({"error": "No valid fields provided"}), 400

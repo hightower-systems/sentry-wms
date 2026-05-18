@@ -1,14 +1,10 @@
 """Admin CRUD for the canonical vendors table.
 
 The upstream vendors table ships without an admin-facing endpoint;
-avid-overhaul-mk1 P5.1 adds one so the Items page can link to a
-canonical vendor (FK in mig 058) and operators can manage the
-roster without round-tripping through the inbound pipe.
-
-Delete is application-gated: a vendor referenced by any item is
-rejected with a clean 400 before the FK ON DELETE RESTRICT fires.
-Soft-archive via is_active=false is the supported way to retire a
-vendor that is still attached to items.
+avid-overhaul-mk1 P5.1 adds one so operators can manage the roster
+without round-tripping through the inbound pipe. The items.vendor_id
+linkage (originally PR #13 mig 058) is deferred — soft-archive via
+is_active=false remains the supported way to retire a vendor.
 """
 
 import math
@@ -191,18 +187,6 @@ def delete_vendor(canonical_id):
     ).fetchone()
     if not existing:
         return jsonify({"error": "Vendor not found"}), 404
-
-    in_use = g.db.execute(
-        text("SELECT 1 FROM items WHERE vendor_id = :cid LIMIT 1"),
-        {"cid": str(canonical_id)},
-    ).fetchone()
-    if in_use:
-        return jsonify({
-            "error": (
-                "Vendor is referenced by one or more items; "
-                "soft-archive via is_active=false instead of deleting"
-            ),
-        }), 400
 
     g.db.execute(
         text("DELETE FROM vendors WHERE canonical_id = :cid"),

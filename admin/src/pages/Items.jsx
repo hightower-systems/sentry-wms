@@ -23,28 +23,14 @@ export default function Items() {
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
-  // mig 058 vendor filter + picker. Loaded once on mount; the
-  // picker (dropdown) and the filter share the same list so a vendor
-  // archived elsewhere drops out of both surfaces simultaneously.
-  const [vendors, setVendors] = useState([]);
-  const [vendorFilter, setVendorFilter] = useState('');
 
-  useEffect(() => { loadItems(); }, [page, search, filter, vendorFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    api.get('/admin/vendors?active=true&per_page=500', { silentPermissionDenied: true }).then(async (res) => {
-      if (!res?.ok) return;
-      const data = await res.json();
-      setVendors(data.vendors || []);
-    });
-  }, []);
+  useEffect(() => { loadItems(); }, [page, search, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadItems() {
     const params = new URLSearchParams({ page, per_page: 50 });
     if (search) params.set('q', search);
     if (filter === 'active') params.set('active', 'true');
     else if (filter === 'archived') params.set('active', 'false');
-    if (vendorFilter) params.set('vendor_id', vendorFilter);
     const res = await api.get(`/admin/items?${params}`);
     if (res?.ok) {
       const data = await res.json();
@@ -94,9 +80,6 @@ export default function Items() {
       category: form.category || null,
       weight_lbs: (form.weight_lbs || form.weight) ? Number(form.weight_lbs || form.weight) : null,
       default_bin_id: form.default_bin_id ? Number(form.default_bin_id) : null,
-      // Empty string -> NULL on the backend so picking "(no vendor)"
-      // clears the column on edit.
-      vendor_id: form.vendor_id ?? '',
     };
     const res = editId
       ? await api.put(`/admin/items/${editId}`, body)
@@ -147,7 +130,6 @@ export default function Items() {
     { key: 'item_name', label: 'Item Name' },
     { key: 'upc', label: 'UPC', mono: true, render: (r) => r.upc || '-' },
     { key: 'default_bin_code', label: 'Default Bin', mono: true, render: (r) => r.default_bin_code || '\u2013' },
-    { key: 'vendor_name', label: 'Vendor', render: (r) => r.vendor_name || '-' },
     { key: 'category', label: 'Category', render: (r) => r.category || '-' },
     { key: 'weight_lbs', label: 'Weight', render: (r) => r.weight_lbs ? `${r.weight_lbs} lb` : '-' },
     { key: 'is_active', label: 'Active', render: (r) => r.is_active ? 'Yes' : 'No' },
@@ -182,18 +164,6 @@ export default function Items() {
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
-        <select
-          className="form-select"
-          value={vendorFilter}
-          onChange={(e) => { setVendorFilter(e.target.value); setPage(1); }}
-          style={{ width: 'auto', minWidth: 180 }}
-          title="Filter items by canonical vendor"
-        >
-          <option value="">All vendors</option>
-          {vendors.map((v) => (
-            <option key={v.canonical_id} value={v.canonical_id}>{v.vendor_name}</option>
-          ))}
-        </select>
       </div>
       <DataTable columns={columns} data={items} pagination={pagination} onPageChange={setPage} onRowClick={viewItem} />
 
@@ -204,7 +174,6 @@ export default function Items() {
           <div className="detail-grid">
             <span className="detail-label">SKU</span><span className="mono">{detail.sku}</span>
             <span className="detail-label">UPC</span><span className="mono">{detail.upc || '-'}</span>
-            <span className="detail-label">Vendor</span><span>{detail.vendor_name || '-'}</span>
             <span className="detail-label">Category</span><span>{detail.category || '-'}</span>
             <span className="detail-label">Weight</span><span>{(detail.weight_lbs || detail.weight) ? `${detail.weight_lbs || detail.weight} lb` : '-'}</span>
             <span className="detail-label">Active</span><span>{detail.is_active ? 'Yes' : 'No'}</span>
@@ -270,19 +239,6 @@ export default function Items() {
               <label>Weight (lb)</label>
               <input className="form-input" type="number" step="0.01" value={form.weight_lbs ?? form.weight ?? ''} onChange={(e) => setForm({ ...form, weight_lbs: e.target.value, weight: e.target.value })} />
             </div>
-          </div>
-          <div className="form-group">
-            <label>Vendor</label>
-            <select
-              className="form-select"
-              value={form.vendor_id || ''}
-              onChange={(e) => setForm({ ...form, vendor_id: e.target.value })}
-            >
-              <option value="">(no vendor)</option>
-              {vendors.map((v) => (
-                <option key={v.canonical_id} value={v.canonical_id}>{v.vendor_name}</option>
-              ))}
-            </select>
           </div>
         </Modal>
       )}
