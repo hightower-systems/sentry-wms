@@ -32,7 +32,7 @@ from constants import (
     ACTION_TO_REJECTED,
     ACTION_TO_SUBMITTED,
 )
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.csv_import import TransferOrderImportRow
@@ -137,7 +137,7 @@ def _serialise_to_approval(row) -> dict:
 
 @admin_bp.route("/transfer-orders", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def list_transfer_orders():
     page = request.args.get("page", 1, type=int)
@@ -192,7 +192,7 @@ def list_transfer_orders():
 
 @admin_bp.route("/transfer-orders/<int:to_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def get_transfer_order(to_id):
     header = g.db.execute(
@@ -319,7 +319,7 @@ def _release_inventory_allocation(
 
 @admin_bp.route("/transfer-orders/<int:to_id>/cancel", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def cancel_transfer_order(to_id):
     header = g.db.execute(
@@ -385,7 +385,7 @@ def cancel_transfer_order(to_id):
 
 @admin_bp.route("/transfer-orders/<int:to_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def delete_transfer_order(to_id):
     header = g.db.execute(
@@ -458,7 +458,7 @@ def delete_transfer_order(to_id):
     methods=["POST"],
 )
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def short_close_to_line(to_id, line_id):
     line = g.db.execute(
@@ -548,7 +548,7 @@ def _resolve_warehouse_id(db, code: str) -> Optional[int]:
 
 @admin_bp.route("/transfer-orders/import", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def import_transfer_order():
     """Build a single TO from a list of (sku, quantity) records.
@@ -789,7 +789,7 @@ def import_transfer_order():
     "/transfer-orders/<int:to_id>/start-picking", methods=["POST"],
 )
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def start_to_picking(to_id):
     """Create a pick_batch + pick_tasks for the TO so the picker can
@@ -1236,7 +1236,7 @@ def _credit_destination_inventory(
     methods=["POST"],
 )
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def approve_transfer_order_approval(to_id, approval_id):
     approval = g.db.execute(
@@ -1432,7 +1432,7 @@ def approve_transfer_order_approval(to_id, approval_id):
     methods=["POST"],
 )
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def reject_transfer_order_approval(to_id, approval_id):
     body = request.get_json() or {}

@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
 import { useWarehouse } from '../warehouse.jsx';
 import DataTable from '../components/DataTable.jsx';
@@ -14,8 +13,15 @@ import StatusTag from '../components/StatusTag.jsx';
 const PICKABLE_STATUSES = ['OPEN', 'ALLOCATED', 'PICKING', 'PICKED'];
 const STATUS_OPTIONS = [...PICKABLE_STATUSES, 'ALL'];
 
+// Open an individual picking ticket in a standalone tab (no admin
+// Layout chrome) so the ticket fills the window and the per-ticket
+// print CSS does not fight a sidebar/topbar parent. Mirrors the
+// Print All flow.
+function openTicketInNewTab(soId) {
+  window.open(`/picking-tickets/${soId}/print`, '_blank', 'noopener');
+}
+
 export default function PickingTickets() {
-  const navigate = useNavigate();
   const { warehouseId } = useWarehouse();
   const [status, setStatus] = useState('OPEN');
   const [orders, setOrders] = useState([]);
@@ -28,6 +34,15 @@ export default function PickingTickets() {
   // already-pushed SOs).
   const [refreshCounter, setRefreshCounter] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // Default sort: ship-by date ascending so the oldest must-ship-by
+  // orders rise to the top of the queue. Picker can re-sort by
+  // clicking any column header.
+  const [sortKey, setSortKey] = useState('ship_by_date');
+  const [sortDir, setSortDir] = useState('asc');
+  // mig 057: default to hiding orders whose picking ticket was
+  // already confirm-rendered. Operator opts back in to verify a
+  // reprint or audit historical queue state.
+  const [hidePrinted, setHidePrinted] = useState(true);
 
   useEffect(() => {
     if (!warehouseId) return;
@@ -36,9 +51,20 @@ export default function PickingTickets() {
     (async () => {
       const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const responses = await Promise.all(
-        statuses.map((s) =>
-          api.get(`/admin/sales-orders?status=${s}&warehouse_id=${warehouseId}&per_page=50`),
-        ),
+        statuses.map((s) => {
+          const qs = new URLSearchParams({
+            status: s,
+            warehouse_id: String(warehouseId),
+            per_page: '50',
+            // Picking-tickets queue wants the lowest-pick_sequence
+            // bin per SO so the picker can walk the warehouse in
+            // physical order. The flag opts into the per-row
+            // primary-bin subquery.
+            include_primary_bin: 'true',
+          });
+          if (hidePrinted) qs.set('hide_printed', 'true');
+          return api.get(`/admin/sales-orders?${qs}`);
+        }),
       );
       const all = [];
       for (const res of responses) {
@@ -53,7 +79,7 @@ export default function PickingTickets() {
       }
     })();
     return () => { cancelled = true; };
-  }, [warehouseId, status, refreshCounter]);
+  }, [warehouseId, status, refreshCounter, hidePrinted]);
 
   async function openTicket() {
     const term = search.trim();
@@ -76,7 +102,7 @@ export default function PickingTickets() {
       setLookupError(`No sales order found matching "${term}".`);
       return;
     }
-    navigate(`/picking-tickets/${exact.so_id}/print`);
+    openTicketInNewTab(exact.so_id);
   }
 
   function onSearchKey(e) {
@@ -96,16 +122,28 @@ export default function PickingTickets() {
   }
 
   const columns = [
-    { key: 'so_number', label: 'SO Number', mono: true },
-    { key: 'customer_name', label: 'Customer' },
+    { key: 'so_number', label: 'SO Number', mono: true, sortable: true },
+    { key: 'customer_name', label: 'Customer', sortable: true },
     {
       key: 'ship_by_date',
       label: 'Ship By',
       mono: true,
+      sortable: true,
       render: (r) => (r.ship_by_date ? new Date(r.ship_by_date).toLocaleDateString() : '-'),
     },
-    { key: 'ship_method', label: 'Ship Method', render: (r) => r.ship_method || '-' },
-    { key: 'status', label: 'Status', render: (r) => <StatusTag status={r.status} /> },
+    { key: 'ship_method', label: 'Ship Method', sortable: true, render: (r) => r.ship_method || '-' },
+    {
+      // Lowest-pick_sequence preferred bin across the SO's line items.
+      // Sorting by this column orders the queue in warehouse-walking
+      // order so the picker can fill the cart left-to-right and the
+      // shipper unpacks in the same order.
+      key: 'primary_bin_code',
+      label: 'Bin',
+      mono: true,
+      sortable: true,
+      render: (r) => r.primary_bin_code || '-',
+    },
+    { key: 'status', label: 'Status', sortable: true, render: (r) => <StatusTag status={r.status} /> },
     {
       key: 'actions',
       label: '',
@@ -114,12 +152,47 @@ export default function PickingTickets() {
           className="btn btn-sm btn-primary"
           onClick={(e) => {
             e.stopPropagation();
-            navigate(`/picking-tickets/${r.so_id}/print`);
+            openTicketInNewTab(r.so_id);
           }}
         >Print Ticket</button>
       ),
     },
   ];
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
+
+  // Sort happens client-side because the list is already paged to 50
+  // per status (typically the entire queue) and the picker wants the
+  // visible rows reordered immediately without a round trip.
+  const sortedOrders = useMemo(() => {
+    if (!sortKey) return orders;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...orders].sort((a, b) => {
+      // Sorting by the Bin column uses pick_sequence (numeric) so the
+      // queue order matches physical walking order in the warehouse,
+      // not bin-code alphabetical (which would mix aisles randomly).
+      const key = sortKey === 'primary_bin_code' ? 'primary_bin_pick_sequence' : sortKey;
+      let av = a[key];
+      let bv = b[key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;  // nulls always at the bottom
+      if (bv == null) return -1;
+      if (key === 'ship_by_date') {
+        return (new Date(av) - new Date(bv)) * dir;
+      }
+      if (key === 'primary_bin_pick_sequence') {
+        return (av - bv) * dir;
+      }
+      return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
+    });
+  }, [orders, sortKey, sortDir]);
 
   return (
     <div>
@@ -166,6 +239,17 @@ export default function PickingTickets() {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 13, color: '#555', cursor: 'pointer',
+            }} title="Hide orders whose picking ticket has already been rendered (mig 057 printed_at)">
+              <input
+                type="checkbox"
+                checked={hidePrinted}
+                onChange={(e) => setHidePrinted(e.target.checked)}
+              />
+              Hide Printed
+            </label>
             <button
               className="btn btn-secondary"
               onClick={() => setRefreshCounter((c) => c + 1)}
@@ -185,9 +269,12 @@ export default function PickingTickets() {
         </div>
         <DataTable
           columns={columns}
-          data={orders}
+          data={sortedOrders}
           emptyMessage="No orders ready for picking"
-          onRowClick={(r) => navigate(`/picking-tickets/${r.so_id}/print`)}
+          onRowClick={(r) => openTicketInNewTab(r.so_id)}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={handleSort}
         />
       </div>
     </div>

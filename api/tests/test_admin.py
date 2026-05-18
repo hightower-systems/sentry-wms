@@ -32,6 +32,41 @@ def _picker_headers(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _web_user_with_pages(client, page_keys, username="webuser1"):
+    """Create a USER role with the given web-admin page grants and
+    return auth headers. Used by P6.1 tests to drive the permission
+    decorator and the /auth/me allowed_pages payload.
+
+    warehouse_ids is populated alongside the legacy warehouse_id so
+    require_auth's warehouse-scope check passes when a test endpoint
+    is called with warehouse_id=1 - otherwise the middleware would
+    reject the request with 403 before the page-permission gate runs
+    and the test would not actually be exercising what it claims to.
+    """
+    conn = get_raw_connection()
+    cur = conn.cursor()
+    import bcrypt
+    pw_hash = bcrypt.hashpw(b"webuser123", bcrypt.gensalt()).decode("utf-8")
+    cur.execute(
+        "INSERT INTO users (username, password_hash, full_name, role, "
+        "warehouse_id, warehouse_ids, external_id) "
+        "VALUES (%s, %s, 'Web User', 'USER', 1, ARRAY[1], gen_random_uuid()) "
+        "RETURNING user_id",
+        (username, pw_hash),
+    )
+    user_id = cur.fetchone()[0]
+    for pk in page_keys:
+        cur.execute(
+            "INSERT INTO user_page_permissions (user_id, page_key) VALUES (%s, %s)",
+            (user_id, pk),
+        )
+    cur.close()
+
+    resp = client.post("/api/auth/login", json={"username": username, "password": "webuser123"})
+    token = resp.get_json()["token"]
+    return user_id, {"Authorization": f"Bearer {token}"}
+
+
 # ── Warehouses ────────────────────────────────────────────────────────────────
 
 class TestWarehouses:
@@ -293,11 +328,265 @@ class TestPurchaseOrders:
         assert resp.status_code == 200
         assert resp.get_json()["vendor_name"] == "Updated Vendor"
 
-    def test_update_purchase_order_not_open(self, client, auth_headers):
-        # Close the PO first
+    def test_update_purchase_order_blocked_when_closed(self, client, auth_headers):
+        # Closing the PO blocks header edits. The status field is the
+        # one path that still works (so an admin can re-open via the
+        # dropdown); plain header edits return 400.
         client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
         resp = client.put("/api/admin/purchase-orders/1", json={"vendor_name": "Fail"}, headers=auth_headers)
         assert resp.status_code == 400
+
+
+class TestPurchaseOrderStatusChange:
+    """PUT /admin/purchase-orders/<id> with a status field reaches the
+    state machine: anywhere -> anywhere except CLOSED -> ARCHIVED is
+    the only direct path to ARCHIVED."""
+
+    def test_status_change_open_to_partial(self, client, auth_headers):
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "PARTIAL"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "PARTIAL"
+
+    def test_status_change_unblocks_closed_for_header_edits(self, client, auth_headers):
+        # Close, then reopen via the dropdown, then header edit lands.
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        reopen = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "OPEN"},
+            headers=auth_headers,
+        )
+        assert reopen.status_code == 200
+        assert reopen.get_json()["status"] == "OPEN"
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"vendor_name": "Reopened Vendor"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["vendor_name"] == "Reopened Vendor"
+
+    def test_archive_requires_closed_first(self, client, auth_headers):
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "CLOSED" in resp.get_json()["error"]
+
+    def test_archive_after_close_succeeds(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ARCHIVED"
+
+    def test_unarchive_from_archived_is_allowed(self, client, auth_headers):
+        # ARCHIVED is not terminal; a status dropdown change can move
+        # the PO back to any other status so an admin can resume work.
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "OPEN"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "OPEN"
+
+    def test_invalid_status_rejected(self, client, auth_headers):
+        resp = client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "BOGUS"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestPurchaseOrderArchivedFiltering:
+    """ARCHIVED POs drop out of the default list view and resurface
+    via include_archived=true or an explicit status=ARCHIVED filter."""
+
+    def test_archived_hidden_by_default(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.get("/api/admin/purchase-orders", headers=auth_headers)
+        po_ids = [po["po_id"] for po in resp.get_json()["purchase_orders"]]
+        assert 1 not in po_ids
+
+    def test_archived_visible_with_include_archived(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.get(
+            "/api/admin/purchase-orders?include_archived=true",
+            headers=auth_headers,
+        )
+        po_ids = [po["po_id"] for po in resp.get_json()["purchase_orders"]]
+        assert 1 in po_ids
+
+    def test_status_archived_filter_returns_archived(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        client.put(
+            "/api/admin/purchase-orders/1",
+            json={"status": "ARCHIVED"},
+            headers=auth_headers,
+        )
+        resp = client.get(
+            "/api/admin/purchase-orders?status=ARCHIVED",
+            headers=auth_headers,
+        )
+        data = resp.get_json()
+        assert all(po["status"] == "ARCHIVED" for po in data["purchase_orders"])
+        assert any(po["po_id"] == 1 for po in data["purchase_orders"])
+
+
+class TestPurchaseOrderLineCRUD:
+    """POST / PATCH / DELETE on /admin/purchase-orders/<po_id>/lines."""
+
+    def test_add_line_succeeds(self, client, auth_headers):
+        # Item 11 (TST-011) is not on PO 1 in the seed.
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 11, "quantity_ordered": 25},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["quantity_ordered"] == 25
+        assert data["quantity_received"] == 0
+        assert data["sku"] == "TST-011"
+
+    def test_add_duplicate_line_rejected(self, client, auth_headers):
+        # PO 1 already has item 1 on it in the seed.
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 1, "quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "already on this PO" in resp.get_json()["error"]
+
+    def test_add_line_rejects_unknown_item(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 9999, "quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_add_line_blocked_when_closed(self, client, auth_headers):
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 11, "quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "CLOSED" in resp.get_json()["error"]
+
+    def test_update_line_quantity(self, client, auth_headers):
+        # PO 1 line 1 has quantity_ordered = 100 in seed; raise to 150.
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line_id = detail["lines"][0]["po_line_id"]
+        resp = client.patch(
+            f"/api/admin/purchase-orders/1/lines/{po_line_id}",
+            json={"quantity_ordered": 150},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["quantity_ordered"] == 150
+
+    def test_update_line_rejects_qty_below_received(self, client, auth_headers):
+        # Receive part of line 1 first, then try to drop ordered below
+        # received and confirm the guard fires.
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line = detail["lines"][0]
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [{
+                    "item_id": po_line["item_id"],
+                    "quantity": 10,
+                    "bin_id": 1,
+                }],
+            },
+            headers=auth_headers,
+        )
+        resp = client.patch(
+            f"/api/admin/purchase-orders/1/lines/{po_line['po_line_id']}",
+            json={"quantity_ordered": 5},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "less than" in resp.get_json()["error"]
+
+    def test_remove_line_succeeds_when_no_receipts(self, client, auth_headers):
+        # Add a fresh line, then remove it without receiving against it.
+        add = client.post(
+            "/api/admin/purchase-orders/1/lines",
+            json={"item_id": 11, "quantity_ordered": 10},
+            headers=auth_headers,
+        )
+        po_line_id = add.get_json()["po_line_id"]
+        resp = client.delete(
+            f"/api/admin/purchase-orders/1/lines/{po_line_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] is True
+
+    def test_remove_line_blocked_when_received(self, client, auth_headers):
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line = detail["lines"][0]
+        client.post(
+            "/api/receiving/receive",
+            json={
+                "po_id": 1,
+                "items": [{
+                    "item_id": po_line["item_id"],
+                    "quantity": 5,
+                    "bin_id": 1,
+                }],
+            },
+            headers=auth_headers,
+        )
+        resp = client.delete(
+            f"/api/admin/purchase-orders/1/lines/{po_line['po_line_id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "received units" in resp.get_json()["error"]
+
+    def test_remove_line_blocked_when_closed(self, client, auth_headers):
+        detail = client.get("/api/admin/purchase-orders/1", headers=auth_headers).get_json()
+        po_line_id = detail["lines"][-1]["po_line_id"]
+        client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
+        resp = client.delete(
+            f"/api/admin/purchase-orders/1/lines/{po_line_id}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "CLOSED" in resp.get_json()["error"]
 
     def test_close_purchase_order(self, client, auth_headers):
         resp = client.post("/api/admin/purchase-orders/1/close", headers=auth_headers)
@@ -349,6 +638,372 @@ class TestSalesOrders:
         assert "carrier" in so
         assert "tracking_number" in so
         assert "shipped_at" in so
+
+    def test_list_sales_orders_includes_printed_at(self, client, auth_headers):
+        # mig 057 column. Default value is NULL until /mark-printed
+        # stamps it.
+        resp = client.get("/api/admin/sales-orders", headers=auth_headers)
+        so = resp.get_json()["sales_orders"][0]
+        assert "printed_at" in so
+        assert so["printed_at"] is None
+
+
+class TestSalesOrdersHidePrintedAndMarkPrinted:
+    """avid-overhaul-mk1 mig 057: printed_at column drives the
+    Picking Tickets queue's hide-printed filter. The endpoint that
+    stamps printed_at is /admin/sales-orders/mark-printed - server
+    only sets the timestamp when the client confirms the ticket
+    render reached the operator."""
+
+    def test_mark_printed_stamps_timestamp(self, client, auth_headers):
+        # SO 1 starts unprinted.
+        before = client.get("/api/admin/sales-orders/1", headers=auth_headers).get_json()
+        assert before["sales_order"].get("printed_at") in (None, "")
+        resp = client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data["marked"]) == 1
+        assert data["marked"][0]["so_id"] == 1
+        assert data["marked"][0]["printed_at"] is not None
+
+        # Now the row carries the timestamp.
+        printed_at = _query_val("SELECT printed_at FROM sales_orders WHERE so_id = 1")
+        assert printed_at is not None
+
+    def test_mark_printed_is_idempotent(self, client, auth_headers):
+        # Stamping twice does not update an already-printed row, so the
+        # original render-confirm timestamp survives.
+        client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        first = _query_val("SELECT printed_at FROM sales_orders WHERE so_id = 1")
+        resp = client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert len(resp.get_json()["marked"]) == 0  # row was already non-null
+        second = _query_val("SELECT printed_at FROM sales_orders WHERE so_id = 1")
+        assert second == first
+
+    def test_hide_printed_filters_list(self, client, auth_headers):
+        # Mark SO 1 as printed, then assert the hide_printed list
+        # excludes it while the unfiltered list still shows it.
+        client.post(
+            "/api/admin/sales-orders/mark-printed",
+            json={"so_ids": [1]},
+            headers=auth_headers,
+        )
+        unfiltered = client.get(
+            "/api/admin/sales-orders?warehouse_id=1&per_page=200",
+            headers=auth_headers,
+        ).get_json()
+        filtered = client.get(
+            "/api/admin/sales-orders?warehouse_id=1&per_page=200&hide_printed=true",
+            headers=auth_headers,
+        ).get_json()
+        unfiltered_ids = {s["so_id"] for s in unfiltered["sales_orders"]}
+        filtered_ids = {s["so_id"] for s in filtered["sales_orders"]}
+        assert 1 in unfiltered_ids
+        assert 1 not in filtered_ids
+
+
+class TestWebAdminPagePermissions:
+    """avid-overhaul-mk1 P6.1: per-page web-admin grants. Covers the
+    /auth/me allowed_pages payload, the GET/PUT user permissions
+    endpoints, and the validation gate on unknown page_keys."""
+
+    def test_auth_me_admin_returns_all_pages(self, client, auth_headers):
+        resp = client.get("/api/auth/me", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["role"] == "ADMIN"
+        # ADMIN sees every registered page; spot-check a couple.
+        assert "items" in data["allowed_pages"]
+        assert "settings" in data["allowed_pages"]
+        assert "purchase-orders" in data["allowed_pages"]
+
+    def test_auth_me_user_returns_explicit_grants_only(self, client):
+        _, headers = _web_user_with_pages(
+            client, ["items", "inventory"], username="pages_me_user",
+        )
+        resp = client.get("/api/auth/me", headers=headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["role"] == "USER"
+        assert set(data["allowed_pages"]) == {"items", "inventory"}
+
+    def test_get_permissions_for_admin_returns_full_catalog(self, client, auth_headers):
+        # Self-lookup: the seeded admin user is id 1.
+        resp = client.get("/api/admin/users/1/permissions", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["is_full_access"] is True
+        assert "items" in data["page_keys"]
+
+    def test_get_permissions_for_user_returns_granted_only(self, client, auth_headers):
+        user_id, _ = _web_user_with_pages(
+            client, ["items", "vendors"], username="pages_get_user",
+        )
+        resp = client.get(
+            f"/api/admin/users/{user_id}/permissions", headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["is_full_access"] is False
+        assert sorted(data["page_keys"]) == ["items", "vendors"]
+
+    def test_put_permissions_replaces_set(self, client, auth_headers):
+        user_id, _ = _web_user_with_pages(
+            client, ["items"], username="pages_put_user",
+        )
+        resp = client.put(
+            f"/api/admin/users/{user_id}/permissions",
+            json={"page_keys": ["sales-orders", "purchase-orders", "vendors"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert sorted(resp.get_json()["page_keys"]) == [
+            "purchase-orders", "sales-orders", "vendors",
+        ]
+        # "items" grant is gone now (replace, not merge).
+        check = client.get(
+            f"/api/admin/users/{user_id}/permissions", headers=auth_headers,
+        ).get_json()
+        assert "items" not in check["page_keys"]
+
+    def test_put_permissions_rejects_unknown_keys(self, client, auth_headers):
+        user_id, _ = _web_user_with_pages(
+            client, [], username="pages_unknown_user",
+        )
+        resp = client.put(
+            f"/api/admin/users/{user_id}/permissions",
+            json={"page_keys": ["items", "made-up-page"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "made-up-page" in resp.get_json()["unknown"]
+
+    def test_put_permissions_for_admin_is_noop(self, client, auth_headers):
+        # Admin's effective grant set is "always all pages"; the table
+        # row count for an ADMIN should never grow.
+        resp = client.put(
+            "/api/admin/users/1/permissions",
+            json={"page_keys": ["items"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["is_full_access"] is True
+        count = _query_val(
+            "SELECT COUNT(*) FROM user_page_permissions WHERE user_id = 1"
+        )
+        assert count == 0
+
+
+class TestPagePermissionEnforcement:
+    """avid-overhaul-mk1 P6.1b: confirms @require_admin_or_page_permission
+    actually gates the wired endpoints. A USER with the "items" grant
+    gets through to /admin/items but is rejected from /admin/vendors
+    and /admin/purchase-orders with the structured 403 the frontend
+    looks for."""
+
+    def test_user_with_items_grant_can_list_items(self, client):
+        _, headers = _web_user_with_pages(
+            client, ["items"], username="perm_user_items",
+        )
+        resp = client.get("/api/admin/items", headers=headers)
+        assert resp.status_code == 200
+
+    def test_user_without_grant_is_rejected_with_page_key(self, client):
+        _, headers = _web_user_with_pages(
+            client, ["items"], username="perm_user_no_vendors",
+        )
+        resp = client.get("/api/admin/vendors", headers=headers)
+        assert resp.status_code == 403
+        body = resp.get_json()
+        assert body["error"] == "Permission denied"
+        assert body["page_key"] == "vendors"
+
+    def test_user_with_no_grants_is_rejected_everywhere(self, client):
+        _, headers = _web_user_with_pages(
+            client, [], username="perm_user_empty",
+        )
+        for path in [
+            "/api/admin/items",
+            "/api/admin/sales-orders",
+            "/api/admin/purchase-orders",
+        ]:
+            resp = client.get(path, headers=headers)
+            assert resp.status_code == 403, f"{path} unexpectedly returned {resp.status_code}"
+
+    def test_user_can_hit_dashboard_without_grants(self, client):
+        # /dashboard intentionally has no permission gate so the sidebar
+        # can show badges for any authenticated USER.
+        _, headers = _web_user_with_pages(
+            client, [], username="perm_user_dashboard",
+        )
+        resp = client.get(
+            "/api/admin/dashboard?warehouse_id=1", headers=headers,
+        )
+        assert resp.status_code == 200
+
+    def test_user_can_hit_topbar_search_without_grants(self, client):
+        # /search keeps any-auth access so the topbar typeahead works
+        # for USERs regardless of their page grants.
+        _, headers = _web_user_with_pages(
+            client, [], username="perm_user_search",
+        )
+        resp = client.get(
+            "/api/admin/search?q=TST&warehouse_id=1", headers=headers,
+        )
+        assert resp.status_code == 200
+
+
+class TestVendorsCRUD:
+    """avid-overhaul-mk1 P5.1: admin CRUD over the canonical vendors
+    table. Validates create / list / get / update / delete plus the
+    in-use guard that blocks deleting a vendor referenced by an item."""
+
+    def test_create_and_get_vendor(self, client, auth_headers):
+        resp = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Acme Tackle Co", "email": "buyer@acme.example"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 201
+        v = resp.get_json()["vendor"]
+        assert v["vendor_name"] == "Acme Tackle Co"
+        assert v["email"] == "buyer@acme.example"
+        assert v["is_active"] is True
+        assert v["canonical_id"]
+
+        detail = client.get(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert detail.status_code == 200
+        assert detail.get_json()["vendor"]["canonical_id"] == v["canonical_id"]
+
+    def test_list_vendors_filters_by_active(self, client, auth_headers):
+        client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Archived Vendor", "is_active": False},
+            headers=auth_headers,
+        )
+        client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Active Vendor", "is_active": True},
+            headers=auth_headers,
+        )
+        active = client.get(
+            "/api/admin/vendors?active=true",
+            headers=auth_headers,
+        ).get_json()
+        archived = client.get(
+            "/api/admin/vendors?active=false",
+            headers=auth_headers,
+        ).get_json()
+        active_names = {v["vendor_name"] for v in active["vendors"]}
+        archived_names = {v["vendor_name"] for v in archived["vendors"]}
+        assert "Active Vendor" in active_names
+        assert "Active Vendor" not in archived_names
+        assert "Archived Vendor" in archived_names
+        assert "Archived Vendor" not in active_names
+
+    def test_update_vendor(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Edit Target"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        resp = client.put(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            json={"contact_name": "Jane Buyer", "phone": "555-0100"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        updated = resp.get_json()["vendor"]
+        assert updated["contact_name"] == "Jane Buyer"
+        assert updated["phone"] == "555-0100"
+        assert updated["vendor_name"] == "Edit Target"  # untouched
+
+    def test_delete_unreferenced_vendor(self, client, auth_headers):
+        v = client.post(
+            "/api/admin/vendors",
+            json={"vendor_name": "Disposable Vendor"},
+            headers=auth_headers,
+        ).get_json()["vendor"]
+        resp = client.delete(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] is True
+        # Vendor is gone.
+        missing = client.get(
+            f"/api/admin/vendors/{v['canonical_id']}",
+            headers=auth_headers,
+        )
+        assert missing.status_code == 404
+
+class TestSalesOrdersPrimaryBin:
+    """avid-overhaul-mk1 P4.1: include_primary_bin=true on the SO list
+    surfaces the bin_code + pick_sequence of the LOWEST-pick_sequence
+    preferred bin across an SO's line items, so the picking-tickets
+    page can sort the queue in physical walk order."""
+
+    def test_default_response_omits_primary_bin_fields(self, client, auth_headers):
+        # Other pages should not pay the per-row subquery cost.
+        resp = client.get("/api/admin/sales-orders", headers=auth_headers)
+        so = resp.get_json()["sales_orders"][0]
+        assert "primary_bin_code" not in so
+        assert "primary_bin_pick_sequence" not in so
+
+    def test_include_primary_bin_returns_lowest_pick_sequence_bin(self, client, auth_headers):
+        # Item 1 (TST-001) has default_bin_id=3 (A-01-01) per seed but
+        # is not in preferred_bins by default. Insert preferred_bins
+        # rows so the computation has something to lock onto:
+        #   item 1 -> bin 3 (A-01-01, pick_sequence=100)
+        #   item 1 -> bin 4 (A-01-02, pick_sequence=200)
+        # The primary bin should be the lower pick_sequence (bin 3).
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO preferred_bins (item_id, bin_id, priority) VALUES (1, 3, 1)"
+        )
+        cur.execute(
+            "INSERT INTO preferred_bins (item_id, bin_id, priority) VALUES (1, 4, 2)"
+        )
+        cur.close()
+
+        resp = client.get(
+            "/api/admin/sales-orders?include_primary_bin=true&q=SO-2026-001",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        so = next(s for s in resp.get_json()["sales_orders"] if s["so_number"] == "SO-2026-001")
+        assert so["primary_bin_code"] == "A-01-01"
+        assert so["primary_bin_pick_sequence"] == 100
+
+    def test_include_primary_bin_null_when_no_preferred_bin(self, client, auth_headers):
+        # No preferred_bins rows for the items on this SO -> primary
+        # bin fields surface as null rather than failing the request.
+        resp = client.get(
+            "/api/admin/sales-orders?include_primary_bin=true&q=SO-2026-002",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        rows = resp.get_json()["sales_orders"]
+        if rows:
+            assert rows[0]["primary_bin_code"] is None
+            assert rows[0]["primary_bin_pick_sequence"] is None
 
     def test_get_sales_order(self, client, auth_headers):
         resp = client.get("/api/admin/sales-orders/1", headers=auth_headers)
@@ -1492,6 +2147,50 @@ class TestBinDelete:
         assert resp.status_code == 404
 
 
+class TestItemsSearchQ:
+    """The Items page search must reach the identifiers an operator
+    will type or scan: SKU, item name, primary UPC, and any entry in
+    the barcode_aliases JSONB array."""
+
+    def test_q_matches_sku(self, client, auth_headers):
+        resp = client.get("/api/admin/items?q=TST-005", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(i["sku"] == "TST-005" for i in data["items"])
+
+    def test_q_matches_upc(self, client, auth_headers):
+        # TST-005 has UPC 100000000005 in the seed.
+        resp = client.get("/api/admin/items?q=100000000005", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert any(i["sku"] == "TST-005" for i in data["items"])
+
+    def test_q_matches_barcode_alias(self, client, auth_headers):
+        # Attach an alternate barcode to TST-001 and confirm the
+        # search resolves it. Direct SQL because the admin create
+        # / update endpoints do not surface barcode_aliases yet.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE items SET barcode_aliases = %s::jsonb WHERE sku = 'TST-001'",
+            ('["ALT-9999-A", "ALT-9999-B"]',),
+        )
+        cur.close()
+
+        resp = client.get("/api/admin/items?q=ALT-9999-B", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 1
+        assert data["items"][0]["sku"] == "TST-001"
+
+    def test_q_no_match_returns_empty(self, client, auth_headers):
+        resp = client.get("/api/admin/items?q=no-such-thing-zzz", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.get_json()["total"] == 0
+
+
 class TestInventorySearchQ:
     """Issue #82: /admin/inventory must honour the `q` query parameter
     so the admin panel's SKU / item-name search actually filters rows."""
@@ -1524,3 +2223,60 @@ class TestInventorySearchQ:
         resp = client.get("/api/admin/inventory?warehouse_id=1&q=%20%20%20", headers=auth_headers)
         assert resp.status_code == 200
         assert resp.get_json()["total"] == baseline
+
+    def test_q_matches_upc(self, client, auth_headers):
+        # TST-005 has UPC 100000000005 in the seed. Operators scanning a
+        # barcode at the inventory page expect the row to surface even
+        # though the SKU is different.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&q=100000000005",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(r["sku"] == "TST-005" for r in data["inventory"])
+
+    def test_q_matches_bin_code(self, client, auth_headers):
+        # TST-005 lives in bin A-02-02 per seed. Searching by the bin
+        # code returns the rows physically in that bin.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&q=A-02-02",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 1
+        assert all(r["bin_code"] == "A-02-02" for r in data["inventory"])
+
+
+class TestInventoryBinFilter:
+    """The Inventory page exposes a bin-scoped dropdown that sends
+    bin_id; the backend has to honour it so the dropdown narrows the
+    list instead of being a silent no-op."""
+
+    def test_bin_id_filter_narrows_to_single_bin(self, client, auth_headers):
+        # Bin 11 (B-01-03) holds TST-009 and TST-010 per the shared-bin
+        # seed line; the filter should return exactly those rows.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&bin_id=11",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] >= 2
+        assert all(r["bin_id"] == 11 for r in data["inventory"])
+        skus = {r["sku"] for r in data["inventory"]}
+        assert {"TST-009", "TST-010"}.issubset(skus)
+
+    def test_bin_id_filter_with_search_intersects(self, client, auth_headers):
+        # bin_id and q must AND together: bin 11 + sku TST-010 returns
+        # only TST-010, not TST-009 which shares the bin.
+        resp = client.get(
+            "/api/admin/inventory?warehouse_id=1&bin_id=11&q=TST-010",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 1
+        assert data["inventory"][0]["sku"] == "TST-010"

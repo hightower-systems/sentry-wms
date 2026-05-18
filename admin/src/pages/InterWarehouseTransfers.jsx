@@ -1,12 +1,61 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api.js';
 import PageHeader from '../components/PageHeader.jsx';
 
+// avid-overhaul-mk1 P9.3: bin + item lookups switched from preloaded
+// dropdowns to debounced server-side search so 30K SKUs and 3K bins
+// stop hiding past the per_page cutoff. Same pattern as Adjustments
+// (P9.2). The two bin pickers (source + dest) operate independently
+// so a transfer between two large warehouses no longer blocks on a
+// 50-row default.
+
+const dropdownStyle = {
+  position: 'absolute',
+  top: '100%',
+  left: 0,
+  right: 0,
+  maxHeight: 200,
+  overflowY: 'auto',
+  background: '#fff',
+  border: '1px solid #ddd',
+  borderRadius: 8,
+  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+  zIndex: 100,
+};
+
+const dropdownItemStyle = {
+  padding: '8px 12px',
+  cursor: 'pointer',
+  borderBottom: '1px solid #f0f0f0',
+  fontSize: 13,
+};
+
+function useDebouncedBinSearch(warehouseId, query, selectedId) {
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const q = (query || '').trim();
+    if (!warehouseId || q.length < 1 || selectedId) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      const res = await api.get(
+        `/admin/bins?warehouse_id=${warehouseId}&q=${encodeURIComponent(q)}&per_page=25`,
+      );
+      setSearching(false);
+      if (!res?.ok) return;
+      const data = await res.json();
+      setResults(data.bins || []);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [warehouseId, query, selectedId]);
+  return { results, searching };
+}
+
 export default function InterWarehouseTransfers() {
   const [warehouses, setWarehouses] = useState([]);
-  const [sourceBins, setSourceBins] = useState([]);
-  const [destBins, setDestBins] = useState([]);
-  const [items, setItems] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -21,55 +70,81 @@ export default function InterWarehouseTransfers() {
     quantity: '',
   });
 
+  // Typeahead state per lookup field.
+  const [sourceBinSearch, setSourceBinSearch] = useState('');
+  const [sourceBinOpen, setSourceBinOpen] = useState(false);
+  const [destBinSearch, setDestBinSearch] = useState('');
+  const [destBinOpen, setDestBinOpen] = useState(false);
+  const [itemSearch, setItemSearch] = useState('');
+  const [itemOpen, setItemOpen] = useState(false);
+  const [itemResults, setItemResults] = useState([]);
+  const [itemSearching, setItemSearching] = useState(false);
+  const sourceBinRef = useRef(null);
+  const destBinRef = useRef(null);
+  const itemRef = useRef(null);
+
+  const sourceBinQuery = useDebouncedBinSearch(
+    form.source_warehouse_id, sourceBinSearch, form.source_bin_id,
+  );
+  const destBinQuery = useDebouncedBinSearch(
+    form.destination_warehouse_id, destBinSearch, form.destination_bin_id,
+  );
+
+  // Item search is warehouse-agnostic at the catalog level - the
+  // transfer endpoint validates that the chosen item actually has
+  // inventory in the source bin, so an unrelated catalog match just
+  // bounces back with a clear error.
+  useEffect(() => {
+    const q = itemSearch.trim();
+    if (q.length < 2 || form.item_id) {
+      setItemResults([]);
+      return;
+    }
+    setItemSearching(true);
+    const handle = setTimeout(async () => {
+      const res = await api.get(
+        `/admin/items?q=${encodeURIComponent(q)}&per_page=25&active=true`,
+      );
+      setItemSearching(false);
+      if (!res?.ok) return;
+      const data = await res.json();
+      setItemResults(data.items || []);
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [itemSearch, form.item_id]);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (sourceBinRef.current && !sourceBinRef.current.contains(e.target)) setSourceBinOpen(false);
+      if (destBinRef.current && !destBinRef.current.contains(e.target)) setDestBinOpen(false);
+      if (itemRef.current && !itemRef.current.contains(e.target)) setItemOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   useEffect(() => {
     loadWarehouses();
     loadTransfers();
   }, []);
 
-  // Load source bins and items when source warehouse changes
+  // Reset source bin selection when source warehouse changes so a
+  // stale (warehouse A, bin from B) state cannot reach the submit.
   useEffect(() => {
-    if (form.source_warehouse_id) {
-      loadBins(form.source_warehouse_id, 'source');
-      loadItems(form.source_warehouse_id);
-    } else {
-      setSourceBins([]);
-      setItems([]);
-    }
-    setForm((f) => ({ ...f, source_bin_id: '', item_id: '' }));
+    setForm((f) => ({ ...f, source_bin_id: '' }));
+    setSourceBinSearch('');
   }, [form.source_warehouse_id]);
 
-  // Load dest bins when destination warehouse changes
   useEffect(() => {
-    if (form.destination_warehouse_id) {
-      loadBins(form.destination_warehouse_id, 'dest');
-    } else {
-      setDestBins([]);
-    }
     setForm((f) => ({ ...f, destination_bin_id: '' }));
+    setDestBinSearch('');
   }, [form.destination_warehouse_id]);
 
   async function loadWarehouses() {
-    const res = await api.get('/admin/warehouses');
+    const res = await api.get('/admin/warehouses', { silentPermissionDenied: true });
     if (res?.ok) {
       const data = await res.json();
       setWarehouses(data.warehouses || []);
-    }
-  }
-
-  async function loadBins(warehouseId, target) {
-    const res = await api.get(`/admin/bins?warehouse_id=${warehouseId}`);
-    if (res?.ok) {
-      const data = await res.json();
-      if (target === 'source') setSourceBins(data.bins || []);
-      else setDestBins(data.bins || []);
-    }
-  }
-
-  async function loadItems(warehouseId) {
-    const res = await api.get(`/admin/items?warehouse_id=${warehouseId}&per_page=1000`);
-    if (res?.ok) {
-      const data = await res.json();
-      setItems(data.items || []);
     }
   }
 
@@ -83,6 +158,24 @@ export default function InterWarehouseTransfers() {
 
   function updateField(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function selectSourceBin(b) {
+    setForm((f) => ({ ...f, source_bin_id: b.bin_id }));
+    setSourceBinSearch(b.bin_code);
+    setSourceBinOpen(false);
+  }
+
+  function selectDestBin(b) {
+    setForm((f) => ({ ...f, destination_bin_id: b.bin_id }));
+    setDestBinSearch(b.bin_code);
+    setDestBinOpen(false);
+  }
+
+  function selectItem(i) {
+    setForm((f) => ({ ...f, item_id: i.item_id }));
+    setItemSearch(`${i.sku}  -  ${i.item_name}`);
+    setItemOpen(false);
   }
 
   async function handleSubmit(e) {
@@ -115,6 +208,9 @@ export default function InterWarehouseTransfers() {
         const data = await res.json();
         setSuccess(data.message || 'Transfer created successfully.');
         setForm({ source_warehouse_id: '', source_bin_id: '', destination_warehouse_id: '', destination_bin_id: '', item_id: '', quantity: '' });
+        setSourceBinSearch('');
+        setDestBinSearch('');
+        setItemSearch('');
         loadTransfers();
       } else {
         const data = await res.json().catch(() => null);
@@ -157,14 +253,31 @@ export default function InterWarehouseTransfers() {
                 ))}
               </select>
             </div>
-            <div className="form-group">
-              <label>Source Bin</label>
-              <select className="form-select" value={form.source_bin_id} onChange={(e) => updateField('source_bin_id', e.target.value)} disabled={!form.source_warehouse_id}>
-                <option value="">Select bin...</option>
-                {sourceBins.map((b) => (
-                  <option key={b.bin_id} value={b.bin_id}>{b.bin_code} ({b.bin_type})</option>
-                ))}
-              </select>
+            <div className="form-group" ref={sourceBinRef} style={{ position: 'relative' }}>
+              <label>Source Bin {sourceBinQuery.searching && <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>(searching...)</span>}</label>
+              <input
+                className="form-input mono"
+                placeholder={form.source_warehouse_id ? 'Type bin code to search' : 'Pick warehouse first'}
+                value={sourceBinSearch}
+                onChange={(e) => { setSourceBinSearch(e.target.value); updateField('source_bin_id', ''); setSourceBinOpen(true); }}
+                onFocus={() => setSourceBinOpen(true)}
+                disabled={!form.source_warehouse_id}
+                autoComplete="off"
+              />
+              {sourceBinOpen && sourceBinQuery.results.length > 0 && (
+                <div style={dropdownStyle}>
+                  {sourceBinQuery.results.map((b) => (
+                    <div key={b.bin_id} style={dropdownItemStyle} onMouseDown={() => selectSourceBin(b)}>
+                      <span className="mono">{b.bin_code}</span> {b.bin_type ? `(${b.bin_type})` : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {sourceBinOpen && !sourceBinQuery.searching && sourceBinSearch.trim().length >= 1 && !form.source_bin_id && sourceBinQuery.results.length === 0 && (
+                <div style={{ ...dropdownStyle, padding: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  No bins match "{sourceBinSearch.trim()}" in this warehouse.
+                </div>
+              )}
             </div>
           </div>
 
@@ -178,26 +291,59 @@ export default function InterWarehouseTransfers() {
                 ))}
               </select>
             </div>
-            <div className="form-group">
-              <label>Destination Bin</label>
-              <select className="form-select" value={form.destination_bin_id} onChange={(e) => updateField('destination_bin_id', e.target.value)} disabled={!form.destination_warehouse_id}>
-                <option value="">Select bin...</option>
-                {destBins.map((b) => (
-                  <option key={b.bin_id} value={b.bin_id}>{b.bin_code} ({b.bin_type})</option>
-                ))}
-              </select>
+            <div className="form-group" ref={destBinRef} style={{ position: 'relative' }}>
+              <label>Destination Bin {destBinQuery.searching && <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>(searching...)</span>}</label>
+              <input
+                className="form-input mono"
+                placeholder={form.destination_warehouse_id ? 'Type bin code to search' : 'Pick warehouse first'}
+                value={destBinSearch}
+                onChange={(e) => { setDestBinSearch(e.target.value); updateField('destination_bin_id', ''); setDestBinOpen(true); }}
+                onFocus={() => setDestBinOpen(true)}
+                disabled={!form.destination_warehouse_id}
+                autoComplete="off"
+              />
+              {destBinOpen && destBinQuery.results.length > 0 && (
+                <div style={dropdownStyle}>
+                  {destBinQuery.results.map((b) => (
+                    <div key={b.bin_id} style={dropdownItemStyle} onMouseDown={() => selectDestBin(b)}>
+                      <span className="mono">{b.bin_code}</span> {b.bin_type ? `(${b.bin_type})` : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {destBinOpen && !destBinQuery.searching && destBinSearch.trim().length >= 1 && !form.destination_bin_id && destBinQuery.results.length === 0 && (
+                <div style={{ ...dropdownStyle, padding: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  No bins match "{destBinSearch.trim()}" in this warehouse.
+                </div>
+              )}
             </div>
           </div>
 
           <div className="form-row">
-            <div className="form-group">
-              <label>Item</label>
-              <select className="form-select" value={form.item_id} onChange={(e) => updateField('item_id', e.target.value)} disabled={!form.source_warehouse_id}>
-                <option value="">Select item...</option>
-                {items.map((i) => (
-                  <option key={i.item_id} value={i.item_id}>{i.sku}  -  {i.item_name}</option>
-                ))}
-              </select>
+            <div className="form-group" ref={itemRef} style={{ position: 'relative' }}>
+              <label>Item {itemSearching && <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>(searching...)</span>}</label>
+              <input
+                className="form-input"
+                placeholder="Type SKU or item name (min 2 chars)"
+                value={itemSearch}
+                onChange={(e) => { setItemSearch(e.target.value); updateField('item_id', ''); setItemOpen(true); }}
+                onFocus={() => setItemOpen(true)}
+                autoComplete="off"
+              />
+              {itemOpen && itemResults.length > 0 && (
+                <div style={dropdownStyle}>
+                  {itemResults.map((i) => (
+                    <div key={i.item_id} style={dropdownItemStyle} onMouseDown={() => selectItem(i)}>
+                      <strong className="mono">{i.sku}</strong>  -  {i.item_name}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {itemOpen && !itemSearching && itemSearch.trim().length >= 2 && !form.item_id && itemResults.length === 0 && (
+                <div style={{ ...dropdownStyle, padding: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  No items match "{itemSearch.trim()}".
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label>Quantity</label>

@@ -7,6 +7,10 @@ PO_OPEN = "OPEN"
 PO_PARTIAL = "PARTIAL"
 PO_RECEIVED = "RECEIVED"
 PO_CLOSED = "CLOSED"
+# ARCHIVED: terminal status for POs the operator wants out of the
+# active list. Hidden from /admin/purchase-orders by default; only
+# reachable via the status dropdown when the PO is already CLOSED.
+PO_ARCHIVED = "ARCHIVED"
 
 # Purchase Order Line statuses
 POL_PENDING = "PENDING"
@@ -141,6 +145,17 @@ ACTION_SO_ADDRESS_EDITED = "SO_ADDRESS_EDITED"
 ACTION_SO_FRAUD_CLEARED = "SO_FRAUD_CLEARED"
 ACTION_SO_MEMO_EDITED = "SO_MEMO_EDITED"
 
+# PO line edit + status surfaces. One audit row per mutation so the
+# historical record of what was ordered survives later edits. Status
+# transitions get their own action so the audit query "when did this
+# PO move from OPEN to RECEIVED" stays answerable. Line CRUD carries
+# {sku, quantity_ordered, quantity_received} in details so a deleted
+# line can still be reconstructed.
+ACTION_PO_STATUS_CHANGED = "PO_STATUS_CHANGED"
+ACTION_PO_LINE_ADDED = "PO_LINE_ADDED"
+ACTION_PO_LINE_UPDATED = "PO_LINE_UPDATED"
+ACTION_PO_LINE_REMOVED = "PO_LINE_REMOVED"
+
 # v1.8.0 (#290) transfer order lifecycle. Same audit shape as the
 # cycle count adjustment surface: one row per state transition;
 # details JSONB carries the surrounding context. entity_type is 'TO'
@@ -166,3 +181,51 @@ BIN_PICKABLE = "Pickable"
 # User roles
 ROLE_ADMIN = "ADMIN"
 ROLE_USER = "USER"
+
+# avid-overhaul-mk1 mig 059: source of truth for the per-page web-admin
+# permission grid. Keys MATCH the React admin URL slugs so the sidebar
+# filter and the @require_admin_or_page_permission decorator can both
+# read straight off this list. Adding a new admin page is a two-step
+# change: append the key here and grant it to any users who need it.
+ALL_PAGE_KEYS = (
+    "dashboard",
+    "inventory", "cycle-counts", "count-approvals",
+    "purchase-orders", "receiving", "putaway",
+    "sales-orders", "pos-activity", "picking-tickets", "fraud",
+    # avid-overhaul-mk1 P10: 'picking', 'packing', 'shipping' retired.
+    # The mobile (C6000) flow is the canonical surface; admin-side
+    # mirrors duplicated supervisor state. Migration 061 prunes any
+    # stragglers in user_page_permissions.
+    "items", "vendors",
+    "adjustments", "inter-warehouse-transfers", "transfer-orders",
+    "warehouses", "bins", "zones", "preferred-bins",
+    "users", "api-tokens", "inbound", "consumer-groups",
+    "webhooks", "audit-log", "imports", "integrations", "settings",
+)
+
+# avid-overhaul-mk1 P7: feature-flag grants that ride on the same
+# user_page_permissions table but are not pages in the sidebar. Granting
+# one lifts the status gate on PO/SO edits so a non-admin operator can
+# repair an order past the OPEN window (e.g. fix a customer-supplied
+# typo on a CLOSED PO or repoint an SO's source_system after an ERP
+# mis-tag). ADMIN bypasses these checks; non-admins must hold the
+# override key. Kept out of ALL_PAGE_KEYS so the sidebar permission
+# grid renders them in a separate "Overrides" group.
+OVERRIDE_PO_FULL_EDIT = "po-full-edit"
+OVERRIDE_SO_FULL_EDIT = "so-full-edit"
+ALL_OVERRIDE_KEYS = (
+    OVERRIDE_PO_FULL_EDIT,
+    OVERRIDE_SO_FULL_EDIT,
+)
+
+# avid-overhaul-mk1 P7: SO mutation audit actions. Mirror the PO line
+# CRUD coverage so the "what was on this order before it shipped"
+# question survives any post-OPEN edit. details JSONB carries the
+# before/after diff so an investigator can reconstruct the change
+# without scanning the row itself.
+ACTION_SO_LINE_ADDED = "SO_LINE_ADDED"
+ACTION_SO_LINE_UPDATED = "SO_LINE_UPDATED"
+ACTION_SO_LINE_REMOVED = "SO_LINE_REMOVED"
+ACTION_SO_HEADER_EDITED = "SO_HEADER_EDITED"
+ACTION_SO_SOURCE_SYSTEM_REASSIGNED = "SO_SOURCE_SYSTEM_REASSIGNED"
+ACTION_SO_ALLOCATION_RELEASED = "SO_ALLOCATION_RELEASED"

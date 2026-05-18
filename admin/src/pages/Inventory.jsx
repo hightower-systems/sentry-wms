@@ -9,9 +9,7 @@ import PageHeader from '../components/PageHeader.jsx';
 // click into the dropdown), making cross-warehouse inventory inspection
 // impossible. The page-level filters seed from the topbar context (so
 // existing behavior is unchanged for users who were using the topbar) but
-// can be independently changed without affecting global state. Bin filter
-// is new — the underlying API endpoint already supports bin_id query
-// param; the UI just never exposed it.
+// can be independently changed without affecting global state.
 
 export default function Inventory() {
   const { warehouseId: topbarWarehouseId } = useWarehouse();
@@ -31,7 +29,7 @@ export default function Inventory() {
   // Load all warehouses once for the filter dropdown. Independent of topbar
   // context so the page-level filter works even if topbar picker doesn't.
   useEffect(() => {
-    api.get('/admin/warehouses').then(async (res) => {
+    api.get('/admin/warehouses', { silentPermissionDenied: true }).then(async (res) => {
       if (!res?.ok) return;
       const json = await res.json();
       const list = json.warehouses || [];
@@ -54,7 +52,7 @@ export default function Inventory() {
       return;
     }
     const params = new URLSearchParams({ warehouse_id: warehouseFilter, per_page: 200 });
-    api.get(`/admin/bins?${params}`).then(async (res) => {
+    api.get(`/admin/bins?${params}`, { silentPermissionDenied: true }).then(async (res) => {
       if (!res?.ok) return;
       const json = await res.json();
       setBins(json.bins || []);

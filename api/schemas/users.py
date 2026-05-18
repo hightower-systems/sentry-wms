@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field, field_validator
 VALID_ROLES = ("ADMIN", "USER")
 
 
+class UpdateUserPagePermissionsRequest(BaseModel):
+    """avid-overhaul-mk1 P6.1: replaces a user's full per-page grant
+    set in one PUT. The handler validates each key against
+    constants.ALL_PAGE_KEYS so a typo lands as a clean 400 rather
+    than a silent grant that the sidebar will never honor."""
+
+    page_keys: List[str] = Field(default_factory=list, max_length=200)
+
+
 class CreateUserRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=150)
     password: str = Field(..., min_length=1, max_length=256)

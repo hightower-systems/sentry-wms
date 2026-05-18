@@ -37,6 +37,48 @@ class TestPendingPutaway:
         data = resp.get_json()
         assert len(data["pending_items"]) == 0
 
+    def test_pending_items_surface_suggested_bin_from_default(self, client, auth_headers):
+        # Item 1 (TST-001) has default_bin_id = 3 (A-01-01) in warehouse 1,
+        # no preferred_bins. The pending list should fall back to the
+        # default bin and expose it inline so the operator does not need
+        # to scan each row to see where it goes.
+        _receive_to_staging(client, auth_headers, item_id=1, quantity=10)
+
+        resp = client.get("/api/putaway/pending/1", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        row = next(p for p in data["pending_items"] if p["sku"] == "TST-001")
+        assert row["suggested_bin"] == "A-01-01"
+
+    def test_pending_items_prefer_preferred_bin_over_default(self, client, auth_headers):
+        # priority-1 preferred_bins entry must win over items.default_bin_id.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO preferred_bins (item_id, bin_id, priority) VALUES (1, 4, 1)")
+        cur.close()
+        _receive_to_staging(client, auth_headers, item_id=1, quantity=10)
+
+        resp = client.get("/api/putaway/pending/1", headers=auth_headers)
+        data = resp.get_json()
+        row = next(p for p in data["pending_items"] if p["sku"] == "TST-001")
+        # Bin 4 in seed data is A-01-02; default would have been A-01-01.
+        assert row["suggested_bin"] == "A-01-02"
+
+    def test_pending_items_suggested_bin_null_when_no_hint(self, client, auth_headers):
+        # No preferred_bins, no default_bin_id -> suggested_bin is null
+        # rather than falling through to an unrelated bin.
+        conn = get_raw_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE items SET default_bin_id = NULL WHERE item_id = 1")
+        cur.execute("DELETE FROM preferred_bins WHERE item_id = 1")
+        cur.close()
+        _receive_to_staging(client, auth_headers, item_id=1, quantity=10)
+
+        resp = client.get("/api/putaway/pending/1", headers=auth_headers)
+        data = resp.get_json()
+        row = next(p for p in data["pending_items"] if p["sku"] == "TST-001")
+        assert row["suggested_bin"] is None
+
 
 class TestBinSuggestion:
     def test_suggest_returns_default_bin(self, client, auth_headers):

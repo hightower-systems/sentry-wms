@@ -15,7 +15,8 @@ const COLOR_TOP = '#8e2715';   // Sentry red (top performer per card)
 const COLOR_OTHER = '#c4722a'; // Copper (every other user)
 
 const EVENT_LABELS = {
-  picking:       { title: 'Picking',      unit: 'units' },
+  // P11.1: picking is now measured in distinct orders, not units.
+  picking:       { title: 'Picking',      unit: 'orders' },
   packing:       { title: 'Packing',      unit: 'units' },
   shipped:       { title: 'Shipped',      unit: 'orders' },
   received_skus: { title: 'Received',     unit: 'unique SKUs' },
@@ -163,8 +164,49 @@ function ProductivityTable({ payload }) {
   );
 }
 
+// avid-overhaul-mk1 P11.2: Dashboard is now a thin tab shell. The
+// original productivity view became one of three tabs; the other two
+// (Received Today, Shipping Health) live in this file as siblings so
+// they share the warehouse context + page header. Tab selection is
+// local-only state (no URL persistence yet -- can be added once
+// stakeholders show they want shareable deep links).
 export default function Dashboard() {
   const { warehouseId } = useWarehouse();
+  const [tab, setTab] = useState('productivity');
+  return (
+    <div>
+      <PageHeader title="Dashboard" />
+      <div className="data-tabs" style={{ marginBottom: 16 }}>
+        <button
+          type="button"
+          className={`data-tab${tab === 'productivity' ? ' active' : ''}`}
+          onClick={() => setTab('productivity')}
+        >
+          Productivity
+        </button>
+        <button
+          type="button"
+          className={`data-tab${tab === 'received' ? ' active' : ''}`}
+          onClick={() => setTab('received')}
+        >
+          Received
+        </button>
+        <button
+          type="button"
+          className={`data-tab${tab === 'shipping' ? ' active' : ''}`}
+          onClick={() => setTab('shipping')}
+        >
+          Shipping Health
+        </button>
+      </div>
+      {tab === 'productivity' && <ProductivityView warehouseId={warehouseId} />}
+      {tab === 'received' && <ReceivedTodayView warehouseId={warehouseId} />}
+      {tab === 'shipping' && <ShippingHealthView warehouseId={warehouseId} />}
+    </div>
+  );
+}
+
+function ProductivityView({ warehouseId }) {
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState('');
   const [preferences, setPreferences] = useState({
@@ -205,9 +247,17 @@ export default function Dashboard() {
     const qp = new URLSearchParams({
       start: range.start, end: range.end, warehouse_id: String(warehouseId),
     });
-    const res = await api.get(`/v1/dashboard/productivity?${qp}`);
+    // P6.1: productivity is ADMIN-only upstream; a USER hitting the
+    // home page should not see "Forbidden" inline. Silent the popup
+    // and on 403 just clear the payload so the widget shows nothing.
+    const res = await api.get(
+      `/v1/dashboard/productivity?${qp}`,
+      { silentPermissionDenied: true },
+    );
     if (res?.ok) {
       setPayload(await res.json());
+    } else if (res?.status === 403) {
+      setPayload(null);
     } else {
       const data = await res?.json();
       setPayload(null);
@@ -249,8 +299,6 @@ export default function Dashboard() {
 
   return (
     <div>
-      <PageHeader title="Productivity" />
-
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 4 }}>
           {RANGE_PRESETS.map((p) => (
@@ -453,3 +501,425 @@ const styles = {
   th: { padding: '6px 8px', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 },
   td: { padding: '6px 8px' },
 };
+
+
+// Shared date-range picker for the Received + Shipping Health tabs.
+// Mirrors the Productivity tab's RANGE_PRESETS controls so the three
+// views read as a coherent set; the parent owns rangePreset +
+// customStart / customEnd state so the dashboard can persist a
+// single range choice across tab switches if we want that later.
+function RangeControls({
+  rangePreset, setRangePreset,
+  customStart, setCustomStart, customEnd, setCustomEnd,
+  loading, onRefresh, trailingChildren,
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      marginBottom: 16, flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {RANGE_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            className={`btn btn-sm${rangePreset === p.key ? ' btn-primary' : ''}`}
+            onClick={() => setRangePreset(p.key)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {rangePreset === 'custom' && (
+        <>
+          <input
+            type="date"
+            className="form-input"
+            style={{ width: 150 }}
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+          />
+          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>to</span>
+          <input
+            type="date"
+            className="form-input"
+            style={{ width: 150 }}
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+          />
+        </>
+      )}
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+        {trailingChildren}
+        <button className="btn btn-sm" onClick={onRefresh} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Received (P11.3 / P11.6) ──────────────────────────────────────────────
+
+function ReceivedTodayView({ warehouseId }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [rangePreset, setRangePreset] = useState('today');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+
+  useEffect(() => {
+    if (!warehouseId) return;
+    if (rangePreset === 'custom' && (!customStart || !customEnd)) return;
+    load();
+  }, [warehouseId, rangePreset, customStart, customEnd]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    const range = rangeForPreset(rangePreset, customStart, customEnd);
+    if (!range.start || !range.end) return;
+    setLoading(true);
+    const qp = new URLSearchParams({
+      warehouse_id: String(warehouseId),
+      start: range.start, end: range.end,
+    });
+    const res = await api.get(
+      `/v1/dashboard/received?${qp}`,
+      { silentPermissionDenied: true },
+    );
+    setLoading(false);
+    if (!res?.ok) return;
+    const data = await res.json();
+    setRows(data.pos || []);
+  }
+
+  const totalUnits = rows.reduce((acc, r) => acc + (r.units_received || 0), 0);
+  const totalLines = rows.reduce((acc, r) => acc + (r.lines_received || 0), 0);
+  const distinctReceivers = new Set(rows.flatMap((r) => r.receivers || []));
+
+  return (
+    <div>
+      <RangeControls
+        rangePreset={rangePreset} setRangePreset={setRangePreset}
+        customStart={customStart} setCustomStart={setCustomStart}
+        customEnd={customEnd} setCustomEnd={setCustomEnd}
+        loading={loading} onRefresh={load}
+      />
+      <div style={{
+        display: 'flex', gap: 16, marginBottom: 16, fontSize: 13,
+        color: 'var(--text-secondary)', flexWrap: 'wrap', alignItems: 'center',
+      }}>
+        <span><strong style={{ color: 'var(--text)' }}>{rows.length}</strong> POs received</span>
+        <span><strong style={{ color: 'var(--text)' }}>{totalLines}</strong> lines</span>
+        <span><strong style={{ color: 'var(--text)' }}>{totalUnits}</strong> units</span>
+        <span><strong style={{ color: 'var(--text)' }}>{distinctReceivers.size}</strong> receivers active</span>
+      </div>
+
+      {!loading && rows.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          No POs received units in this range.
+        </p>
+      )}
+
+      {rows.length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>PO #</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th style={{ textAlign: 'right' }}>Lines</th>
+              <th style={{ textAlign: 'right' }}>Units</th>
+              <th>Receiver(s)</th>
+              <th>Last received</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.po_id}>
+                <td className="mono">{r.po_number}</td>
+                <td>{r.vendor_name || '-'}</td>
+                <td>{r.status}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.lines_received}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{r.units_received}</td>
+                <td>{(r.receivers || []).join(', ') || '-'}</td>
+                <td className="mono" style={{ fontSize: 12 }}>
+                  {r.last_received_at ? new Date(r.last_received_at).toLocaleTimeString() : '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+
+// ── Shipping Health (P11.4) ───────────────────────────────────────────────
+
+function ShippingHealthView({ warehouseId }) {
+  const [data, setData] = useState({ by_source: [], by_marketplace_pattern: [], stuck_threshold_days: 8 });
+  const [loading, setLoading] = useState(false);
+  const [rangePreset, setRangePreset] = useState('today');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [focusedMarketplace, setFocusedMarketplace] = useState(null);
+
+  useEffect(() => {
+    if (!warehouseId) return;
+    if (rangePreset === 'custom' && (!customStart || !customEnd)) return;
+    load();
+  }, [warehouseId, rangePreset, customStart, customEnd]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function load() {
+    const range = rangeForPreset(rangePreset, customStart, customEnd);
+    if (!range.start || !range.end) return;
+    setLoading(true);
+    const qp = new URLSearchParams({
+      warehouse_id: String(warehouseId),
+      start: range.start, end: range.end,
+    });
+    const res = await api.get(
+      `/v1/dashboard/shipping-health?${qp}`,
+      { silentPermissionDenied: true },
+    );
+    setLoading(false);
+    if (!res?.ok) return;
+    setData(await res.json());
+  }
+
+  function formatAge(iso) {
+    if (!iso) return '-';
+    const ms = Date.now() - new Date(iso).getTime();
+    const days = ms / (1000 * 60 * 60 * 24);
+    if (days < 1) return `${Math.round(days * 24)}h`;
+    return `${days.toFixed(1)}d`;
+  }
+
+  return (
+    <div>
+      <RangeControls
+        rangePreset={rangePreset} setRangePreset={setRangePreset}
+        customStart={customStart} setCustomStart={setCustomStart}
+        customEnd={customEnd} setCustomEnd={setCustomEnd}
+        loading={loading} onRefresh={load}
+      />
+
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 12px 0' }}>
+        Marketplace Breakdown
+      </h3>
+
+      {(data.by_source || []).length === 0 && !loading && (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          No sales orders in this warehouse yet.
+        </p>
+      )}
+
+      {(data.by_source || []).length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12,
+          marginBottom: 24,
+        }}>
+          {data.by_source.map((r) => (
+            <SourceSystemCard key={r.source_system} row={r} formatAge={formatAge} />
+          ))}
+        </div>
+      )}
+
+      {/* avid-overhaul-mk1 P11.7 / P11.8: marketplace classification
+          by so_number pattern. Thicker divider sets the slice apart
+          from the source_system cards above; bubbles show today's
+          ship-now backlog per marketplace. Click a non-zero bubble
+          to see the SO numbers behind the count. */}
+      {(data.by_marketplace_pattern || []).length > 0 && (
+        <>
+          <div style={{
+            marginTop: 8, marginBottom: 16,
+            borderTop: '3px solid var(--border-dark)',
+          }} />
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 12px 0' }}>
+            Orders that need to ship today
+          </h3>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 12,
+            marginBottom: 24,
+          }}>
+            {data.by_marketplace_pattern.map((m) => (
+              <MarketplacePatternBubble
+                key={m.marketplace}
+                row={m}
+                onClick={() => setFocusedMarketplace(m)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {focusedMarketplace && (
+        <Modal
+          title={`${focusedMarketplace.marketplace} - orders that need to ship today`}
+          onClose={() => setFocusedMarketplace(null)}
+          size="wide"
+          footer={
+            <button className="btn btn-primary" onClick={() => setFocusedMarketplace(null)}>Close</button>
+          }
+        >
+          {(focusedMarketplace.orders || []).length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              No orders to show.
+            </p>
+          ) : (
+            <table className="lines-table">
+              <thead>
+                <tr>
+                  <th>SO #</th>
+                  <th>Customer</th>
+                  <th>Status</th>
+                  <th>Ship by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {focusedMarketplace.orders.map((o) => (
+                  <tr key={o.so_id}>
+                    <td className="mono">{o.so_number}</td>
+                    <td>{o.customer_name || '-'}</td>
+                    <td>{o.status}</td>
+                    <td className="mono" style={{ fontSize: 12, color: 'var(--accent)' }}>
+                      {o.ship_by_date || '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Display map: source_system tags are lowercase in the allowlist but
+// stakeholders read them on the dashboard as proper marketplace names.
+const MARKETPLACE_DISPLAY = {
+  amazon: 'Amazon',
+  ebay: 'Ebay',
+  bigcommerce: 'BigCommerce',
+};
+
+function displayMarketplace(name) {
+  if (!name) return name;
+  return MARKETPLACE_DISPLAY[name.toLowerCase()] || name;
+}
+
+// One marketplace card on the Marketplace Breakdown grid. Two big
+// stats (Orders Received / Orders Shipped in the selected range);
+// the "need to ship today" callout lives in its own bubble row
+// beneath the breakdown so the same data point does not show twice.
+function SourceSystemCard({ row }) {
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{
+        marginBottom: 12, paddingBottom: 8,
+        borderBottom: '1px solid var(--border)',
+        textAlign: 'center',
+      }}>
+        <span style={{ fontSize: 16, fontWeight: 600 }}>
+          {displayMarketplace(row.source_system)}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontSize: 28, fontWeight: 700,
+            fontFamily: 'var(--mono, monospace)',
+            color: 'var(--text)',
+            lineHeight: 1,
+          }}>
+            {row.orders_received || 0}
+          </div>
+          <div style={{
+            fontSize: 11, marginTop: 4,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase', letterSpacing: 0.4,
+          }}>
+            Orders Received
+          </div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontSize: 28, fontWeight: 700,
+            fontFamily: 'var(--mono, monospace)',
+            color: 'var(--text)',
+            lineHeight: 1,
+          }}>
+            {row.orders_shipped || 0}
+          </div>
+          <div style={{
+            fontSize: 11, marginTop: 4,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase', letterSpacing: 0.4,
+          }}>
+            Orders Shipped
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Marketplace bubble for the lower "need to ship today" row.
+// When count > 0: rendered as a button-style clickable card showing
+// the count in accent red; clicking opens a modal with the SO list.
+// When count == 0: marketplace name on top, a green up-arrow below
+// indicating the operator is caught up. Non-interactive in that case.
+function MarketplacePatternBubble({ row, onClick }) {
+  const hasWork = (row.count || 0) > 0;
+  return (
+    <button
+      type="button"
+      onClick={hasWork ? onClick : undefined}
+      disabled={!hasWork}
+      className="card"
+      style={{
+        padding: 16,
+        borderRadius: 16,
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        gap: 6,
+        cursor: hasWork ? 'pointer' : 'default',
+        border: hasWork ? '2px solid var(--accent)' : '1px solid var(--border-dark)',
+        background: 'var(--white)',
+        fontFamily: 'inherit',
+        transition: 'transform 0.1s, box-shadow 0.15s',
+      }}
+    >
+      <span style={{ fontSize: 14, fontWeight: 600 }}>
+        {row.marketplace}
+      </span>
+      {hasWork ? (
+        <span style={{
+          fontSize: 32, fontWeight: 700,
+          fontFamily: 'var(--mono, monospace)',
+          color: 'var(--accent)',
+          lineHeight: 1,
+        }}>
+          {row.count}
+        </span>
+      ) : (
+        <span
+          style={{
+            fontSize: 32, lineHeight: 1, fontWeight: 700,
+            color: '#1f9d55',
+          }}
+          aria-label="caught up"
+          title="No orders need to ship for this marketplace"
+        >
+          &#10003;
+        </span>
+      )}
+    </button>
+  );
+}

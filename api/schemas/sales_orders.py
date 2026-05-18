@@ -64,6 +64,33 @@ class UpdateSalesOrderRequest(BaseModel):
     carrier: Optional[str] = Field(None, max_length=64)
     tracking_number: Optional[str] = Field(None, max_length=128)
     shipped_at: Optional[str] = Field(None, max_length=64)
+    # avid-overhaul-mk1 P7: source_system reassignment. ADMIN-only OR
+    # so-full-edit override; the canonical allowlist FK enforces that
+    # the value is a recognised tag. Empty string clears the column.
+    source_system: Optional[str] = Field(None, max_length=64)
+
+
+class AddSalesOrderLineRequest(BaseModel):
+    """avid-overhaul-mk1 P7: add a new line to an existing SO.
+
+    item_id must already exist; the handler rejects duplicates against
+    (so_id, item_id) so allocation/pick paths stay deterministic when
+    fetching lines by item_id.
+    """
+
+    item_id: int = Field(..., gt=0)
+    quantity_ordered: int = Field(..., gt=0, le=1000000)
+
+
+class UpdateSalesOrderLineRequest(BaseModel):
+    """avid-overhaul-mk1 P7: edit an existing SO line's quantity_ordered.
+
+    Reducing below quantity_picked / quantity_shipped is rejected (those
+    units have already left their source bin or shipped). Reducing below
+    quantity_allocated triggers an allocation release on the backend.
+    """
+
+    quantity_ordered: int = Field(..., gt=0, le=1000000)
 
 
 class UpdateSalesOrderAddressRequest(BaseModel):
@@ -109,3 +136,15 @@ class UpdateSalesOrderMemoRequest(BaseModel):
     not log dumps."""
 
     memo: Optional[str] = Field(..., max_length=4000)
+
+
+class MarkSalesOrdersPrintedRequest(BaseModel):
+    """avid-overhaul-mk1 mig 057: POST body to stamp printed_at on
+    a batch of SOs. Sent by the picking-ticket print page after the
+    client-side render confirms the ticket reached the operator. The
+    server is intentionally NOT the trigger: Print All fetches data
+    for many SOs and any of them could fail to render client-side;
+    marking them printed unconditionally would silently drop those
+    tickets from the queue."""
+
+    so_ids: List[int] = Field(..., min_length=1, max_length=200)

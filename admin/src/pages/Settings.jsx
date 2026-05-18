@@ -116,9 +116,14 @@ export default function Settings() {
   // lines can accept an SKU (what operators memorize) instead of a
   // raw item_id (a database autoincrement). Loaded lazily when either
   // modal opens so Settings' first paint does not fetch /admin/items.
+  //
+  // The cache holds the first 1000 active items for instant typeahead
+  // and autocomplete; catalogues larger than 1000 fall back to a
+  // per-SKU server lookup in resolveSku so a less-common SKU at line
+  // submit time still resolves correctly instead of silently failing.
   async function ensureItemsLoaded() {
     if (itemsLoaded) return;
-    const res = await api.get('/admin/items?per_page=1000&active=true');
+    const res = await api.get('/admin/items?per_page=1000&active=true', { silentPermissionDenied: true });
     if (res?.ok) {
       const data = await res.json();
       const map = new Map();
@@ -130,8 +135,20 @@ export default function Settings() {
     }
   }
 
-  function resolveSku(sku) {
-    return itemsBySku.get(String(sku || '').trim().toLowerCase());
+  async function resolveSku(sku) {
+    const key = String(sku || '').trim().toLowerCase();
+    if (!key) return null;
+    if (itemsBySku.has(key)) return itemsBySku.get(key);
+    // Cache miss: catalogue > 1000 items or the SKU is brand new. A
+    // narrow server-side query backs the cache so submit does not
+    // depend on the pre-loaded slice.
+    const res = await api.get(`/admin/items?q=${encodeURIComponent(sku)}&per_page=10&active=true`);
+    if (!res?.ok) return null;
+    const data = await res.json();
+    const match = (data.items || []).find(
+      (i) => String(i.sku || '').trim().toLowerCase() === key,
+    );
+    return match ? match.item_id : null;
   }
 
   function openPoModal() {
@@ -172,14 +189,18 @@ export default function Settings() {
 
   async function createPO() {
     setFormError(''); setFormSuccess('');
+    const entries = poForm.lines.filter((x) => x.sku);
+    // Resolve all SKUs in parallel so a multi-line PO does not pay
+    // a round-trip per line when the cache misses.
+    const ids = await Promise.all(entries.map((l) => resolveSku(l.sku)));
     const resolved = [];
-    for (const l of poForm.lines.filter((x) => x.sku)) {
-      const itemId = resolveSku(l.sku);
+    for (let i = 0; i < entries.length; i++) {
+      const itemId = ids[i];
       if (!itemId) {
-        setFormError(`Unknown SKU: ${l.sku}`);
+        setFormError(`Unknown SKU: ${entries[i].sku}`);
         return;
       }
-      resolved.push({ item_id: itemId, quantity_ordered: Number(l.quantity_ordered) });
+      resolved.push({ item_id: itemId, quantity_ordered: Number(entries[i].quantity_ordered) });
     }
     const body = {
       po_number: poForm.po_number,
@@ -210,14 +231,16 @@ export default function Settings() {
   async function createSO() {
     setFormError(''); setFormSuccess('');
     const shipAddress = [soForm.address_line_1, soForm.address_line_2, soForm.city, soForm.state, soForm.zip].filter(Boolean).join(', ');
+    const entries = soForm.lines.filter((x) => x.sku);
+    const ids = await Promise.all(entries.map((l) => resolveSku(l.sku)));
     const resolved = [];
-    for (const l of soForm.lines.filter((x) => x.sku)) {
-      const itemId = resolveSku(l.sku);
+    for (let i = 0; i < entries.length; i++) {
+      const itemId = ids[i];
       if (!itemId) {
-        setFormError(`Unknown SKU: ${l.sku}`);
+        setFormError(`Unknown SKU: ${entries[i].sku}`);
         return;
       }
-      resolved.push({ item_id: itemId, quantity_ordered: Number(l.quantity_ordered) });
+      resolved.push({ item_id: itemId, quantity_ordered: Number(entries[i].quantity_ordered) });
     }
     const body = {
       so_number: soForm.order_number,

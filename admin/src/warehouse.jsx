@@ -14,7 +14,11 @@ export function WarehouseProvider({ children }) {
 
   useEffect(() => {
     if (!user) return;
-    api.get('/admin/warehouses').then(async (res) => {
+    // P6.1: topbar warehouse picker needs this list but a USER without
+    // the "warehouses" page grant should not see the global modal.
+    // The picker just goes empty (the warehouse_id sessionStorage
+    // value can still drive every other call).
+    api.get('/admin/warehouses', { silentPermissionDenied: true }).then(async (res) => {
       if (!res?.ok) return;
       const data = await res.json();
       const list = data.warehouses || [];

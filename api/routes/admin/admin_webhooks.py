@@ -40,7 +40,7 @@ from constants import (
     ACTION_WEBHOOK_SUBSCRIPTION_DELETE_SOFT,
     ACTION_WEBHOOK_SUBSCRIPTION_UPDATE,
 )
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.webhooks import (
@@ -239,7 +239,7 @@ def _check_url_tombstone(canonical_url: str, acknowledge_url_reuse: bool):
 
 @admin_bp.route("/webhooks", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @limiter.limit("60 per minute")
 @validate_body(CreateWebhookRequest)
 @with_db
@@ -463,7 +463,7 @@ def create_webhook(validated):
 
 @admin_bp.route("/webhooks", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @with_db
 def list_webhooks():
     """List every webhook subscription with a 24h stats rollup."""
@@ -488,7 +488,7 @@ def list_webhooks():
 
 @admin_bp.route("/webhooks/<subscription_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @with_db
 def get_webhook(subscription_id):
     """Detail view for a single webhook subscription."""
@@ -514,7 +514,7 @@ def get_webhook(subscription_id):
 
 @admin_bp.route("/webhooks/<subscription_id>", methods=["PATCH"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @limiter.limit("60 per minute")
 @validate_body(UpdateWebhookRequest)
 @with_db
@@ -861,7 +861,7 @@ def update_webhook(validated, subscription_id):
 
 @admin_bp.route("/webhooks/<subscription_id>/rotate-secret", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @limiter.limit("60 per minute")
 @with_db
 def rotate_webhook_secret(subscription_id):
@@ -981,7 +981,7 @@ def rotate_webhook_secret(subscription_id):
 
 @admin_bp.route("/webhooks/<subscription_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @limiter.limit("60 per minute")
 @with_db
 def delete_webhook(subscription_id):
@@ -1185,7 +1185,7 @@ _DLQ_LIMIT_DEFAULT = 50
 
 @admin_bp.route("/webhooks/<subscription_id>/dlq", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @with_db
 def list_dlq(subscription_id):
     """Paginated DLQ viewer. Returns the dead-letter delivery
@@ -1313,7 +1313,7 @@ def list_dlq(subscription_id):
     "/webhooks/<subscription_id>/replay/<int:delivery_id>", methods=["POST"]
 )
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @limiter.limit("60 per minute")
 @with_db
 def replay_single(subscription_id, delivery_id):
@@ -1513,7 +1513,7 @@ def _replay_filter_clauses(f) -> tuple[str, dict, str]:
 
 @admin_bp.route("/webhooks/<subscription_id>/replay-batch", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @limiter.limit("60 per minute")
 @validate_body(ReplayBatchRequest)
 @with_db
@@ -1900,7 +1900,7 @@ def _compute_lag(subscription_row) -> int | None:
 
 @admin_bp.route("/webhooks/<subscription_id>/stats", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @with_db
 def webhook_stats(subscription_id):
     """Per-subscription stats with a 30s in-process cache.
@@ -2046,7 +2046,7 @@ _WEBHOOK_ERRORS_LIMIT_DEFAULT = 50
 
 @admin_bp.route("/webhook-errors", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("webhooks")
 @with_db
 def list_webhook_errors():
     """Cross-subscription error log. Returns delivery rows in

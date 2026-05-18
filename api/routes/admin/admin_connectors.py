@@ -9,7 +9,7 @@ from flask import g, jsonify
 
 from connectors import registry
 from connectors.url_guard import BlockedDestinationError
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.connectors import DeleteCredentialsRequest, SaveCredentialsRequest, TestConnectionRequest
@@ -24,7 +24,7 @@ VALID_SYNC_TYPES = ("orders", "items", "inventory", "fulfillment")
 
 @admin_bp.route("/connectors", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 def list_connectors():
     """List all registered connectors with their config schemas and capabilities."""
     connectors = registry.list_all()
@@ -42,7 +42,7 @@ def list_connectors():
 
 @admin_bp.route("/connectors/<connector_name>/config-schema", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 def get_config_schema(connector_name):
     """Get the required credential fields for a specific connector."""
     try:
@@ -60,7 +60,7 @@ def get_config_schema(connector_name):
 
 @admin_bp.route("/connectors/<connector_name>/credentials", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @limiter.limit("10 per minute")
 @validate_body(SaveCredentialsRequest)
 @with_db
@@ -86,7 +86,7 @@ def save_credentials(connector_name, validated):
 
 @admin_bp.route("/connectors/<connector_name>/credentials", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @with_db
 def get_credentials(connector_name):
     """List stored credential keys for a connector+warehouse. Values are masked."""
@@ -126,7 +126,7 @@ def get_credentials(connector_name):
 
 @admin_bp.route("/connectors/<connector_name>/test", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @limiter.limit("10 per minute")
 @validate_body(TestConnectionRequest)
 @with_db
@@ -165,7 +165,7 @@ def test_connection(connector_name, validated):
 
 @admin_bp.route("/connectors/<connector_name>/credentials", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @validate_body(DeleteCredentialsRequest)
 @with_db
 def remove_credentials(connector_name, validated):
@@ -192,7 +192,7 @@ def remove_credentials(connector_name, validated):
 
 @admin_bp.route("/connectors/<connector_name>/sync-status", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @with_db
 def get_sync_status(connector_name):
     """Return sync state for all sync types for this connector+warehouse.
@@ -219,7 +219,7 @@ def get_sync_status(connector_name):
 
 @admin_bp.route("/connectors/<connector_name>/sync-reset", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @limiter.limit("10 per minute")
 @with_db
 def reset_sync_state(connector_name):
@@ -283,7 +283,7 @@ def reset_sync_state(connector_name):
 
 @admin_bp.route("/connectors/<connector_name>/sync/<sync_type>", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("integrations")
 @limiter.limit("20 per minute")
 @with_db
 def trigger_sync(connector_name, sync_type):

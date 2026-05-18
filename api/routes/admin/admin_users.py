@@ -12,13 +12,19 @@ from constants import (
     PO_OPEN, PO_PARTIAL, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED,
     ADJ_PENDING, ADJ_APPROVED, ADJ_REJECTED,
     BIN_STAGING, ACTION_ADJUST,
+    ALL_OVERRIDE_KEYS,
+    ALL_PAGE_KEYS,
 )
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import VALID_ROLES, admin_bp
 from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustmentsRequest
 from schemas.settings import UpdateSettingsRequest
-from schemas.users import CreateUserRequest, UpdateUserRequest
+from schemas.users import (
+    CreateUserRequest,
+    UpdateUserPagePermissionsRequest,
+    UpdateUserRequest,
+)
 from services.audit_service import write_audit_log
 from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
 from services.auth_service import validate_password
@@ -30,7 +36,7 @@ from utils.validation import validate_body
 
 @admin_bp.route("/users", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("users")
 @with_db
 def list_users():
     page = request.args.get("page", 1, type=int)
@@ -60,7 +66,7 @@ def list_users():
 
 @admin_bp.route("/users", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("users")
 @validate_body(CreateUserRequest)
 @with_db
 def create_user(validated):
@@ -103,7 +109,7 @@ def create_user(validated):
 
 @admin_bp.route("/users/<int:user_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("users")
 @validate_body(UpdateUserRequest)
 @with_db
 def update_user(user_id, validated):
@@ -192,7 +198,7 @@ def update_user(user_id, validated):
 
 @admin_bp.route("/users/<int:user_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("users")
 @with_db
 def delete_user(user_id):
     existing = g.db.execute(text("SELECT user_id FROM users WHERE user_id = :uid"), {"uid": user_id}).fetchone()
@@ -224,11 +230,128 @@ def delete_user(user_id):
     return jsonify({"message": "User deleted"})
 
 
+# ── Per-page web-admin permission grants (P6.1) ──────────────────────────────
+
+@admin_bp.route("/users/<int:user_id>/permissions", methods=["GET"])
+@require_auth
+@require_admin_or_page_permission("users")
+@with_db
+def get_user_permissions(user_id):
+    """Return the list of page_keys explicitly granted to a USER.
+    ADMIN role users return the full ALL_PAGE_KEYS catalog so the UI
+    can mark every checkbox without a separate role check."""
+    user = g.db.execute(
+        text("SELECT user_id, role FROM users WHERE user_id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user.role == "ADMIN":
+        # avid-overhaul-mk1 P7: ADMIN bypasses both page and override
+        # checks, so the modal should render every checkbox (including
+        # the override card) as checked. The PUT path no-ops for ADMIN
+        # so this is purely display.
+        return jsonify({
+            "user_id": user_id,
+            "role": "ADMIN",
+            "page_keys": list(ALL_PAGE_KEYS) + list(ALL_OVERRIDE_KEYS),
+            "is_full_access": True,
+        })
+
+    rows = g.db.execute(
+        text(
+            "SELECT page_key FROM user_page_permissions "
+            "WHERE user_id = :uid ORDER BY page_key"
+        ),
+        {"uid": user_id},
+    ).fetchall()
+    return jsonify({
+        "user_id": user_id,
+        "role": user.role,
+        "page_keys": [r.page_key for r in rows],
+        "is_full_access": False,
+    })
+
+
+@admin_bp.route("/users/<int:user_id>/permissions", methods=["PUT"])
+@require_auth
+@require_admin_or_page_permission("users")
+@validate_body(UpdateUserPagePermissionsRequest)
+@with_db
+def replace_user_permissions(user_id, validated):
+    """Replace a user's full per-page grant set in one transaction.
+
+    Unknown page_keys land as 400 so a typo cannot quietly persist a
+    grant the sidebar will never honor. The replace-all semantics mean
+    the caller does not have to diff and DELETE the old set; whatever
+    page_keys arrive in the body become the new authoritative set.
+
+    Granting permissions to an ADMIN is a no-op: ADMINs bypass the
+    table entirely so the rows do nothing useful. The handler still
+    accepts the request without writing rows so the frontend's
+    "Save permissions" button does not have to special-case roles.
+    """
+    user = g.db.execute(
+        text("SELECT user_id, role FROM users WHERE user_id = :uid"),
+        {"uid": user_id},
+    ).fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    requested = list(dict.fromkeys(validated.page_keys))  # de-dup, preserve order
+    # avid-overhaul-mk1 P7: override grants ride on the same junction
+    # table so the multi-select can write them in one PUT. The full
+    # acceptable set is ALL_PAGE_KEYS ∪ ALL_OVERRIDE_KEYS.
+    valid_keys = set(ALL_PAGE_KEYS) | set(ALL_OVERRIDE_KEYS)
+    unknown = [k for k in requested if k not in valid_keys]
+    if unknown:
+        return jsonify({
+            "error": "Unknown page_key(s)",
+            "unknown": unknown,
+        }), 400
+
+    if user.role == "ADMIN":
+        # ADMINs always have full access; rows are inert. Skip the
+        # write so we do not pollute the table with redundant data.
+        return jsonify({
+            "user_id": user_id,
+            "role": "ADMIN",
+            "page_keys": list(ALL_PAGE_KEYS) + list(ALL_OVERRIDE_KEYS),
+            "is_full_access": True,
+        })
+
+    granted_by = g.current_user["user_id"]
+    g.db.execute(
+        text("DELETE FROM user_page_permissions WHERE user_id = :uid"),
+        {"uid": user_id},
+    )
+    if requested:
+        # Pass a list of dicts so SQLAlchemy issues an executemany.
+        # Avoids the :keys::text[] form which collides with SQLAlchemy's
+        # named-parameter parser (the `::` cast is read as the start of
+        # another parameter).
+        g.db.execute(
+            text(
+                "INSERT INTO user_page_permissions (user_id, page_key, granted_by) "
+                "VALUES (:uid, :pk, :gb)"
+            ),
+            [{"uid": user_id, "pk": pk, "gb": granted_by} for pk in requested],
+        )
+    g.db.commit()
+    return jsonify({
+        "user_id": user_id,
+        "role": user.role,
+        "page_keys": requested,
+        "is_full_access": False,
+    })
+
+
 # ── Audit Log ─────────────────────────────────────────────────────────────────
 
 @admin_bp.route("/audit-log", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("audit-log")
 @with_db
 def list_audit_log():
     page = request.args.get("page", 1, type=int)
@@ -239,6 +362,12 @@ def list_audit_log():
     user_id = request.args.get("user_id")
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
+    # avid-overhaul-mk1 P11.5: per-item history filter. Matches both
+    # rows where entity_type='ITEM' AND entity_id=item_id (direct item
+    # events) and rows whose details JSONB carries the item_id (e.g.
+    # PICK / RECEIVE rows scoped to an SO or PO that touched this
+    # item). The OR keeps a single page returning the full lifecycle.
+    item_id_arg = request.args.get("item_id", type=int)
 
     if action_type:
         where_clauses.append("al.action_type = :action_type")
@@ -252,6 +381,13 @@ def list_audit_log():
     if end_date:
         where_clauses.append("al.created_at <= :end_date")
         params["end_date"] = end_date
+    if item_id_arg:
+        where_clauses.append(
+            "((al.entity_type = 'ITEM' AND al.entity_id = :item_id_filter) "
+            " OR (al.details ? 'item_id' "
+            "     AND (al.details->>'item_id')::int = :item_id_filter))"
+        )
+        params["item_id_filter"] = item_id_arg
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     total = g.db.execute(text(f"SELECT COUNT(*) FROM audit_log al {where_sql}"), params).scalar()
@@ -362,7 +498,7 @@ def list_audit_log():
 
 @admin_bp.route("/dashboard", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+# /dashboard is reachable by any authenticated user so the sidebar can show badges; the response shape is non-sensitive (just counts).
 @with_db
 def dashboard():
     warehouse_id = request.args.get("warehouse_id", type=int)
@@ -498,7 +634,7 @@ def dashboard():
 
 @admin_bp.route("/settings", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("settings")
 @with_db
 def get_settings():
     rows = g.db.execute(text("SELECT id, key, value, updated_at FROM app_settings ORDER BY key")).fetchall()
@@ -513,7 +649,7 @@ def get_settings():
 
 @admin_bp.route("/settings/<setting_key>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("settings")
 @with_db
 def get_setting(setting_key):
     row = g.db.execute(
@@ -527,7 +663,7 @@ def get_setting(setting_key):
 
 @admin_bp.route("/settings", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("settings")
 @validate_body(UpdateSettingsRequest)
 @with_db
 def update_settings(validated):
@@ -563,7 +699,7 @@ def update_settings(validated):
 
 @admin_bp.route("/cycle-counts", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("cycle-counts")
 @with_db
 def list_cycle_counts():
     rows = g.db.execute(
@@ -624,7 +760,7 @@ def list_cycle_counts():
 
 @admin_bp.route("/adjustments/pending", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("adjustments")
 @with_db
 def list_pending_adjustments():
     """Return pending inventory adjustments grouped by cycle count."""
@@ -668,7 +804,7 @@ def list_pending_adjustments():
 
 @admin_bp.route("/adjustments/review", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("adjustments")
 @validate_body(ReviewAdjustmentsRequest)
 @with_db
 def review_adjustments(validated):
@@ -856,7 +992,7 @@ def review_adjustments(validated):
 
 @admin_bp.route("/adjustments/direct", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("adjustments")
 @validate_body(DirectAdjustmentRequest)
 @with_db
 def direct_adjustment(validated):
@@ -991,7 +1127,7 @@ def direct_adjustment(validated):
 
 @admin_bp.route("/adjustments/list", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("adjustments")
 @with_db
 def list_adjustments():
     """Return recent inventory adjustments with item and bin details."""

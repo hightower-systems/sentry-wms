@@ -167,7 +167,7 @@ export default function Tokens() {
     // empty list in the respective checkbox component.
     const [catalogRes, warehousesRes] = await Promise.all([
       api.get('/admin/scope-catalog'),
-      api.get('/admin/warehouses'),
+      api.get('/admin/warehouses', { silentPermissionDenied: true }),
     ]);
     if (catalogRes?.ok) {
       const data = await catalogRes.json();

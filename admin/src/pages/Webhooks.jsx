@@ -882,7 +882,7 @@ export default function Webhooks() {
     const [connRes, catalogRes, whRes] = await Promise.all([
       api.get('/admin/connector-registry'),
       api.get('/admin/scope-catalog'),
-      api.get('/admin/warehouses'),
+      api.get('/admin/warehouses', { silentPermissionDenied: true }),
     ]);
     if (connRes?.ok) {
       const data = await connRes.json();
@@ -999,7 +999,7 @@ export default function Webhooks() {
     if (scopeCatalog.event_types.length === 0 || warehouses.length === 0) {
       const [catalogRes, whRes] = await Promise.all([
         api.get('/admin/scope-catalog'),
-        api.get('/admin/warehouses'),
+        api.get('/admin/warehouses', { silentPermissionDenied: true }),
       ]);
       if (catalogRes?.ok) {
         const data = await catalogRes.json();

@@ -24,7 +24,7 @@ export default function Items() {
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
 
-  useEffect(() => { loadItems(); }, [page, search, filter]);
+  useEffect(() => { loadItems(); }, [page, search, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadItems() {
     const params = new URLSearchParams({ page, per_page: 50 });

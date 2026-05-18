@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from pydantic import ValidationError
 
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import admin_bp
 from datetime import timezone
@@ -32,7 +32,7 @@ from utils.validation import validate_body
 
 @admin_bp.route("/items", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def list_items():
     page = request.args.get("page", 1, type=int)
@@ -51,7 +51,17 @@ def list_items():
         where_clauses.append("i.is_active = :active")
         params["active"] = active.lower() == "true"
     if search:
-        where_clauses.append("(i.sku ILIKE :search OR i.item_name ILIKE :search OR i.upc ILIKE :search)")
+        # barcode_aliases is a JSONB array of alternate scannable
+        # barcodes (vendor packs, distributor labels, secondary UPCs).
+        # Operators who scan one of these expect the matching item to
+        # surface even though the primary UPC differs; without the
+        # alias match they have to look up the item manually.
+        where_clauses.append(
+            "(i.sku ILIKE :search OR i.item_name ILIKE :search "
+            "OR i.upc ILIKE :search OR EXISTS (SELECT 1 FROM "
+            "jsonb_array_elements_text(COALESCE(i.barcode_aliases, '[]'::jsonb)) "
+            "AS alias(code) WHERE alias.code ILIKE :search))"
+        )
         params["search"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
@@ -90,11 +100,19 @@ def list_items():
 
 @admin_bp.route("/items/<int:item_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def get_item(item_id):
     item = g.db.execute(
-        text("SELECT item_id, sku, item_name, description, upc, barcode_aliases, category, weight_lbs, length_in, width_in, height_in, default_bin_id, reorder_point, reorder_qty, is_lot_tracked, is_serial_tracked, is_active, created_at, updated_at FROM items WHERE item_id = :iid"),
+        text("""
+            SELECT i.item_id, i.sku, i.item_name, i.description, i.upc, i.barcode_aliases,
+                   i.category, i.weight_lbs, i.length_in, i.width_in, i.height_in,
+                   i.default_bin_id, i.reorder_point, i.reorder_qty,
+                   i.is_lot_tracked, i.is_serial_tracked, i.is_active,
+                   i.created_at, i.updated_at
+              FROM items i
+             WHERE i.item_id = :iid
+        """),
         {"iid": item_id},
     ).fetchone()
     if not item:
@@ -147,7 +165,7 @@ def get_item(item_id):
 
 @admin_bp.route("/items", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @validate_body(CreateItemRequest)
 @with_db
 def create_item(validated):
@@ -189,7 +207,7 @@ def create_item(validated):
 
 @admin_bp.route("/items/<int:item_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @validate_body(UpdateItemRequest)
 @with_db
 def update_item(item_id, validated):
@@ -228,7 +246,7 @@ def update_item(item_id, validated):
 
 @admin_bp.route("/items/<int:item_id>/archive", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def archive_item(item_id):
     existing = g.db.execute(text("SELECT item_id, is_active FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
@@ -243,7 +261,7 @@ def archive_item(item_id):
 
 @admin_bp.route("/items/<int:item_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("items")
 @with_db
 def delete_item(item_id):
     existing = g.db.execute(text("SELECT item_id FROM items WHERE item_id = :iid"), {"iid": item_id}).fetchone()
@@ -286,7 +304,7 @@ def delete_item(item_id):
 
 @admin_bp.route("/inventory", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("inventory")
 @with_db
 def list_inventory():
     page = request.args.get("page", 1, type=int)
@@ -295,6 +313,7 @@ def list_inventory():
     where_clauses, params = [], {}
     warehouse_id = request.args.get("warehouse_id", type=int)
     item_id = request.args.get("item_id", type=int)
+    bin_id = request.args.get("bin_id", type=int)
     search = (request.args.get("q") or "").strip()
     if warehouse_id:
         where_clauses.append("inv.warehouse_id = :wid")
@@ -302,14 +321,30 @@ def list_inventory():
     if item_id:
         where_clauses.append("inv.item_id = :iid")
         params["iid"] = item_id
+    if bin_id:
+        # The Inventory page surfaces a bin-scoped filter dropdown; the
+        # backend has to honor it so operators can drill into a single
+        # bin without scrolling through the full warehouse list.
+        where_clauses.append("inv.bin_id = :binid")
+        params["binid"] = bin_id
     if search:
-        # Join items so the SKU/name search can reach them. The main
-        # SELECT below also joins items and bins for display.
-        where_clauses.append("(i.sku ILIKE :search OR i.item_name ILIKE :search)")
+        # SKU, item name, UPC, and bin code all read like primary
+        # identifiers to a warehouse operator. Searching by any one
+        # of them should return the matching inventory row rather
+        # than forcing the operator to know which field the value
+        # lives in. The main SELECT below already joins items and
+        # bins for display.
+        where_clauses.append(
+            "(i.sku ILIKE :search OR i.item_name ILIKE :search "
+            "OR i.upc ILIKE :search OR b.bin_code ILIKE :search)"
+        )
         params["search"] = f"%{search}%"
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    count_join = "JOIN items i ON i.item_id = inv.item_id" if search else ""
+    count_join = (
+        "JOIN items i ON i.item_id = inv.item_id JOIN bins b ON b.bin_id = inv.bin_id"
+        if search else ""
+    )
     total = g.db.execute(
         text(f"SELECT COUNT(*) FROM inventory inv {count_join} {where_sql}"), params
     ).scalar()
@@ -395,7 +430,7 @@ def _validate_row(entity_type, rec):
 
 @admin_bp.route("/import/<entity_type>", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("imports")
 @with_db
 def csv_import(entity_type):
     if entity_type not in _IMPORT_ROW_SCHEMAS:
@@ -770,7 +805,7 @@ def _import_inventory_adjustment(db, row: InventoryAdjustmentImportRow):
 
 @admin_bp.route("/preferred-bins", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @with_db
 def list_preferred_bins():
     item_id = request.args.get("item_id", type=int)
@@ -828,7 +863,7 @@ def list_preferred_bins():
 
 @admin_bp.route("/preferred-bins", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @validate_body(CreatePreferredBinRequest)
 @with_db
 def create_preferred_bin(validated):
@@ -852,7 +887,7 @@ def create_preferred_bin(validated):
 
 @admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @validate_body(UpdatePreferredBinRequest)
 @with_db
 def update_preferred_bin(preferred_bin_id, validated):
@@ -868,7 +903,7 @@ def update_preferred_bin(preferred_bin_id, validated):
 
 @admin_bp.route("/preferred-bins/<int:preferred_bin_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("preferred-bins")
 @with_db
 def delete_preferred_bin(preferred_bin_id):
     g.db.execute(

@@ -12,16 +12,14 @@ import Receiving from './pages/Receiving.jsx';
 import PurchaseOrders from './pages/PurchaseOrders.jsx';
 import SalesOrders from './pages/SalesOrders.jsx';
 import PutAway from './pages/PutAway.jsx';
-import Picking from './pages/Picking.jsx';
 import PickingTickets from './pages/PickingTickets.jsx';
 import PickingTicketPrint from './pages/PickingTicketPrint.jsx';
 import PickingTicketPrintAll from './pages/PickingTicketPrintAll.jsx';
 import Fraud from './pages/Fraud.jsx';
-import Packing from './pages/Packing.jsx';
-import Shipping from './pages/Shipping.jsx';
 import Bins from './pages/Bins.jsx';
 import Zones from './pages/Zones.jsx';
 import Items from './pages/Items.jsx';
+import Vendors from './pages/Vendors.jsx';
 import Warehouses from './pages/Warehouses.jsx';
 import Users from './pages/Users.jsx';
 import Tokens from './pages/Tokens.jsx';
@@ -37,6 +35,7 @@ import Adjustments from './pages/Adjustments.jsx';
 import InterWarehouseTransfers from './pages/InterWarehouseTransfers.jsx';
 import TransferOrders from './pages/TransferOrders.jsx';
 import POSActivity from './pages/POSActivity.jsx';
+import Data from './pages/Data.jsx';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -71,6 +70,20 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      {/* Individual ticket also renders standalone so the operator can
+          open it from any list / search surface in a new tab without
+          the admin sidebar competing for screen width or breaking the
+          per-page print CSS. */}
+      <Route
+        path="/picking-tickets/:soId/print"
+        element={
+          <ProtectedRoute>
+            <ErrorBoundary fallbackMessage="Could not render picking ticket.">
+              <PickingTicketPrint />
+            </ErrorBoundary>
+          </ProtectedRoute>
+        }
+      />
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/change-password" element={<ErrorBoundary fallbackMessage="Could not load change-password form."><ChangePassword /></ErrorBoundary>} />
         <Route path="/" element={<ErrorBoundary fallbackMessage="Could not load dashboard."><Dashboard /></ErrorBoundary>} />
@@ -82,17 +95,30 @@ export default function App() {
         <Route path="/putaway" element={<ErrorBoundary fallbackMessage="Could not load put-away."><PutAway /></ErrorBoundary>} />
         <Route path="/sales-orders" element={<ErrorBoundary fallbackMessage="Could not load sales orders."><SalesOrders /></ErrorBoundary>} />
         <Route path="/pos-activity" element={<ErrorBoundary fallbackMessage="Could not load POS activity."><POSActivity /></ErrorBoundary>} />
-        <Route path="/picking" element={<ErrorBoundary fallbackMessage="Could not load picking."><Picking /></ErrorBoundary>} />
         <Route path="/fraud" element={<ErrorBoundary fallbackMessage="Could not load fraud queue."><Fraud /></ErrorBoundary>} />
         <Route path="/picking-tickets" element={<ErrorBoundary fallbackMessage="Could not load picking tickets."><PickingTickets /></ErrorBoundary>} />
-        <Route path="/picking-tickets/:soId/print" element={<ErrorBoundary fallbackMessage="Could not render picking ticket."><PickingTicketPrint /></ErrorBoundary>} />
-        <Route path="/packing" element={<ErrorBoundary fallbackMessage="Could not load packing."><Packing /></ErrorBoundary>} />
-        <Route path="/shipping" element={<ErrorBoundary fallbackMessage="Could not load shipping."><Shipping /></ErrorBoundary>} />
-        <Route path="/bins" element={<ErrorBoundary fallbackMessage="Could not load bins."><Bins /></ErrorBoundary>} />
-        <Route path="/zones" element={<ErrorBoundary fallbackMessage="Could not load zones."><Zones /></ErrorBoundary>} />
+        {/* avid-overhaul-mk1 P10: /picking, /packing, /shipping admin
+            pages retired. The workflows live on the Chainway C6000
+            mobile scanners; the admin-side mirrors duplicated state
+            without adding control surface. Sales Orders + Picking
+            Tickets cover the supervisor view; dashboard counts still
+            surface throughput. */}
         <Route path="/items" element={<ErrorBoundary fallbackMessage="Could not load items."><Items /></ErrorBoundary>} />
-        <Route path="/warehouses" element={<ErrorBoundary fallbackMessage="Could not load warehouses."><Warehouses /></ErrorBoundary>} />
-        <Route path="/preferred-bins" element={<ErrorBoundary fallbackMessage="Could not load preferred bins."><PreferredBins /></ErrorBoundary>} />
+        <Route path="/vendors" element={<ErrorBoundary fallbackMessage="Could not load vendors."><Vendors /></ErrorBoundary>} />
+        {/* avid-overhaul-mk1 P8: warehouse-layout pages consolidated
+            under a single /data parent with a tab strip. The four old
+            top-level paths redirect so existing bookmarks still
+            land in the right tab. */}
+        <Route path="/data" element={<ErrorBoundary fallbackMessage="Could not load warehouse data."><Data /></ErrorBoundary>}>
+          <Route path="warehouses" element={<Warehouses />} />
+          <Route path="bins" element={<Bins />} />
+          <Route path="zones" element={<Zones />} />
+          <Route path="preferred-bins" element={<PreferredBins />} />
+        </Route>
+        <Route path="/warehouses" element={<Navigate to="/data/warehouses" replace />} />
+        <Route path="/bins" element={<Navigate to="/data/bins" replace />} />
+        <Route path="/zones" element={<Navigate to="/data/zones" replace />} />
+        <Route path="/preferred-bins" element={<Navigate to="/data/preferred-bins" replace />} />
         <Route path="/users" element={<ErrorBoundary fallbackMessage="Could not load users."><Users /></ErrorBoundary>} />
         <Route path="/api-tokens" element={<ErrorBoundary fallbackMessage="Could not load API tokens."><Tokens /></ErrorBoundary>} />
         <Route path="/inbound" element={<ErrorBoundary fallbackMessage="Could not load Inbound activity."><InboundActivity /></ErrorBoundary>} />

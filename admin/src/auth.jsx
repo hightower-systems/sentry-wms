@@ -12,14 +12,17 @@ export function AuthProvider({ children }) {
     // V-045: session lives in an HttpOnly cookie; there is no token in
     // localStorage to read. Ask the API who we are. If the cookie is
     // missing or expired, /auth/me returns 401 and we stay unauthenticated.
+    //
+    // avid-overhaul-mk1 P6.1: USER role is now a first-class web-admin
+    // identity (gated per page via user_page_permissions). The previous
+    // role === 'ADMIN' guard would silently drop a valid USER session
+    // and force them back to the login screen.
     let cancelled = false;
     api.get('/auth/me').then(async (res) => {
       if (cancelled) return;
       if (res && res.ok) {
         const data = await res.json();
-        if (data.role === 'ADMIN') {
-          setUser(data);
-        }
+        setUser(data);
       }
       setLoading(false);
     }).catch(() => {
@@ -49,11 +52,10 @@ export function AuthProvider({ children }) {
       throw new Error(friendlyError(data, 'Login failed. Please try again.'));
     }
     const data = await res.json();
-    if (data.user.role !== 'ADMIN') {
-      // Not an admin -- ask the server to clear the cookies we just got.
-      await api.post('/auth/logout', {});
-      throw new Error('Not authorized');
-    }
+    // avid-overhaul-mk1 P6.1: USERs are allowed into the admin shell.
+    // Per-page permissions decide what they can actually do; the
+    // sidebar hides ungranted pages and the api gate returns 403 for
+    // direct URL hits. Any user with valid credentials proceeds.
     setUser(data.user);
     return data.user;
   }

@@ -29,3 +29,17 @@ class UpdatePurchaseOrderRequest(BaseModel):
     vendor_name: Optional[str] = Field(None, max_length=256)
     expected_date: Optional[str] = Field(None, max_length=32)
     notes: Optional[str] = Field(None, max_length=1000)
+    # status: optional dropdown change. Allowed values validated in
+    # the route so the schema does not have to know the lifecycle
+    # rules (e.g. ARCHIVED only reachable from CLOSED).
+    status: Optional[str] = Field(None, max_length=20)
+
+
+class AddPOLineRequest(BaseModel):
+    item_id: int = Field(..., gt=0)
+    quantity_ordered: int = Field(..., gt=0, le=1000000)
+    unit_cost: Optional[Decimal] = Field(None, ge=0)
+
+
+class UpdatePOLineRequest(BaseModel):
+    quantity_ordered: int = Field(..., gt=0, le=1000000)

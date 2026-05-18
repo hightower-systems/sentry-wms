@@ -26,7 +26,14 @@ export default function PickingTicketPrintAll() {
       const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const listResponses = await Promise.all(
         statuses.map((s) => {
-          const qs = new URLSearchParams({ status: s, per_page: '50' });
+          const qs = new URLSearchParams({
+            status: s,
+            per_page: '50',
+            // Pull primary_bin_pick_sequence so we can sort the print
+            // stack in warehouse-walk order. The picker fills the cart
+            // in this order; the shipper unpacks in the same order.
+            include_primary_bin: 'true',
+          });
           if (warehouseId) qs.set('warehouse_id', warehouseId);
           return api.get(`/admin/sales-orders?${qs.toString()}`);
         }),
@@ -44,6 +51,26 @@ export default function PickingTicketPrintAll() {
         setLoading(false);
         return;
       }
+      // Sort by primary_bin_pick_sequence ascending so the printer
+      // stack matches the picker's physical walk through the
+      // warehouse and the shipper unpacks in the same order. SOs
+      // without a primary bin (no preferred_bins for their items)
+      // sink to the bottom of the stack with a secondary
+      // ship_by_date tiebreak so they remain ordered among
+      // themselves.
+      orders.sort((a, b) => {
+        const aps = a.primary_bin_pick_sequence;
+        const bps = b.primary_bin_pick_sequence;
+        if (aps != null && bps != null) return aps - bps;
+        if (aps != null) return -1;
+        if (bps != null) return 1;
+        const ad = a.ship_by_date;
+        const bd = b.ship_by_date;
+        if (!ad && !bd) return 0;
+        if (!ad) return 1;
+        if (!bd) return -1;
+        return new Date(ad) - new Date(bd);
+      });
       const detailResponses = await Promise.all(
         orders.map((o) => api.get(`/admin/sales-orders/${o.so_id}/picking-ticket`)),
       );
@@ -60,6 +87,16 @@ export default function PickingTicketPrintAll() {
       if (out.length === 0) setError('No tickets could be loaded.');
       setTickets(out);
       setLoading(false);
+      // mig 057: only mark SOs whose ticket data actually made it into
+      // the render array. Orders that failed earlier (404, network
+      // error, malformed payload) stay unprinted so they reappear in
+      // the queue and the operator can retry rather than silently
+      // losing them.
+      if (out.length > 0) {
+        api.post('/admin/sales-orders/mark-printed', {
+          so_ids: out.map((t) => t.so.so_id),
+        }).catch(() => {});
+      }
     }
     load();
     return () => { cancelled = true; };

@@ -90,7 +90,7 @@ a {
 
 .app-layout {
   display: grid;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: 56px 1fr;
   grid-template-columns: 192px 1fr;
   height: 100vh;
   overflow: hidden;
@@ -115,16 +115,16 @@ a {
 .topbar-logo {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500;
-  font-size: 14px;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 17px;
   color: #fdf4e3;
   letter-spacing: 0.5px;
   white-space: nowrap;
 }
 
 .topbar-breadcrumb {
-  font-size: 13px;
+  font-size: 15px;
   color: #ffffff;
   margin-left: 4px;
 }
@@ -135,12 +135,13 @@ a {
 
 .topbar-wh-picker {
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 6px 12px;
   border-radius: 4px;
   transition: background 0.15s;
   user-select: none;
   display: inline-flex;
   align-items: center;
+  font-size: 15px;
 }
 
 .topbar-wh-picker:hover {
@@ -205,13 +206,13 @@ a {
   border: 0.5px solid rgba(255,255,255,0.1);
   border-radius: 6px;
   background: #352f2a;
-  color: #fdf4e3;
+  color: #ffffff;
   outline: none;
   transition: border-color 0.15s;
 }
 
 .topbar-search input::placeholder {
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,255,255,0.55);
 }
 
 .topbar-search input:focus {
@@ -280,14 +281,6 @@ a {
   padding: 8px 6px;
 }
 
-.sidebar-wordmark {
-  font-size: 13px;
-  font-weight: 500;
-  color: #fdf4e3;
-  letter-spacing: 1px;
-  padding: 8px 8px 10px;
-}
-
 .sidebar-card {
   background: #352f2a;
   border-radius: 8px;
@@ -298,20 +291,21 @@ a {
 .sidebar-group-label {
   width: 100%;
   background: rgba(142,39,22,0.4);
-  font-size: 9px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1px;
   color: #fdf4e3;
-  padding: 4px 10px;
+  padding: 6px 10px;
 }
 
 .sidebar-link {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 10px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 14px;
+  font-weight: 600;
   color: #ffffff;
   border-left: 3px solid transparent;
   cursor: pointer;
@@ -368,6 +362,98 @@ a {
 .page-header-actions {
   display: flex;
   gap: 8px;
+}
+
+/* ── Put-Away bin tiles (P9.5) ───────────────── */
+
+.putaway-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.putaway-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 10px;
+  border-radius: 10px;
+  border: 2px solid var(--border-dark);
+  background: var(--white);
+  font-family: var(--sans);
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s, border-color 0.15s;
+  min-height: 72px;
+}
+
+.putaway-tile:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.putaway-tile.has-items {
+  border-color: var(--accent);
+}
+
+.putaway-tile.empty {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.putaway-tile-label {
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  word-break: break-word;
+}
+
+.putaway-tile-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.putaway-tile.has-items .putaway-tile-count {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Tabs (Data page, P8) ────────────────────── */
+
+.data-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-dark);
+}
+
+.data-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+
+.data-tab:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+.data-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 /* ── Buttons ──────────────────────────────────── */
@@ -585,6 +671,14 @@ a {
   max-width: 90vw;
   max-height: 85vh;
   overflow-y: auto;
+}
+
+/* Wide variant for data-rich detail modals (SO, PO, etc.) so the
+   per-component address fields and line-item tables get the canvas
+   width they need without forcing a horizontal scroll. */
+.modal.modal-wide {
+  width: 1280px;
+  max-width: 95vw;
 }
 
 .modal-header {
@@ -855,9 +949,57 @@ a {
   margin-bottom: 20px;
 }
 
+/* Two label/value pairs per row. Used in wide modals where the
+   header summary can spread across the canvas instead of stacking
+   vertically. Each "cell" is still a label + value pair, so existing
+   markup that emits <span class="detail-label"> + <span> rows lines
+   up cleanly across both columns. */
+.detail-grid.detail-grid-2col {
+  grid-template-columns: 140px 1fr 140px 1fr;
+}
+
 .detail-label {
   color: var(--text-secondary);
   font-weight: 500;
+}
+
+/* Line-item table styling shared by SO + PO detail modals. Keeps
+   the inline-styled table from the original markup but applies the
+   same surface-treated header + zebra rows that DataTable uses, so
+   the popup feels consistent with the rest of the admin shell. */
+.lines-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.lines-table thead {
+  background: var(--surface);
+}
+
+.lines-table th {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.lines-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lines-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.lines-table tbody tr:nth-child(even) {
+  background: #FDFCF9;
 }
 
 /* ── Settings ─────────────────────────────────── */

@@ -71,6 +71,10 @@ def require_auth(f):
         # Verify the user is still active and refresh role/warehouse_ids from DB.
         # This ensures that deactivated accounts and role/warehouse changes take
         # effect immediately rather than waiting for the JWT to expire.
+        # avid-overhaul-mk1 P6.1: same session also fetches the user's
+        # per-page web-admin grants (USER role only). Stashed on payload
+        # so the @require_admin_or_page_permission decorator stays a
+        # pure list lookup; ADMIN bypasses with allowed_pages=None.
         import models.database as _db
         db = _db.SessionLocal()
         try:
@@ -82,6 +86,16 @@ def require_auth(f):
                 ),
                 {"uid": payload["user_id"]},
             ).fetchone()
+            allowed_pages = None
+            if row and row.is_active and row.role != "ADMIN":
+                page_rows = db.execute(
+                    text(
+                        "SELECT page_key FROM user_page_permissions "
+                        "WHERE user_id = :uid"
+                    ),
+                    {"uid": payload["user_id"]},
+                ).fetchall()
+                allowed_pages = [r.page_key for r in page_rows]
         finally:
             db.close()
 
@@ -98,6 +112,7 @@ def require_auth(f):
         # checks always reflect the current state.
         payload["role"] = row.role
         payload["warehouse_ids"] = list(row.warehouse_ids) if row.warehouse_ids else []
+        payload["allowed_pages"] = allowed_pages  # None for ADMIN, list for USER
 
         g.current_user = payload
 
@@ -213,6 +228,62 @@ def require_role(*roles):
             if g.current_user["role"] not in roles:
                 return jsonify({"error": "Forbidden"}), 403
             return f(*args, **kwargs)
+
+        return decorated
+
+    return decorator
+
+
+def has_override(override_key: str) -> bool:
+    """avid-overhaul-mk1 P7: feature-flag grant lookup.
+
+    Returns True iff the user explicitly holds override_key in their
+    allowed_pages list. Unlike @require_admin_or_page_permission, an
+    ADMIN role does NOT auto-pass: the PO CLOSED/ARCHIVED gate that
+    existed pre-P7 is a deliberate safety net (an admin re-opens via
+    the status dropdown before resuming line work, preserving a clean
+    audit trail). Overrides are the new lower-bar path for non-admins
+    who need to bypass that gate; ADMIN keeps the original behavior.
+
+    Read-only: does not 403 on its own. Callers branch on the
+    boolean to either widen the allowed-status set or surface a
+    targeted 403 with their own message (preserves the existing
+    handler-controlled error responses).
+    """
+    user = g.current_user
+    allowed = user.get("allowed_pages")
+    if allowed is None:
+        return False
+    return override_key in allowed
+
+
+def require_admin_or_page_permission(page_key):
+    """avid-overhaul-mk1 P6.1: web-admin permission gate.
+
+    ADMIN bypasses the check (g.current_user["allowed_pages"] is None).
+    Any other role must carry the page_key in their allowed_pages
+    list (populated at auth time from user_page_permissions),
+    otherwise the request is rejected with 403 + {error:
+    "Permission denied", page_key: "..."} so the frontend can
+    surface a clean "Permissions Error" popup.
+
+    Drop-in replacement for @require_role("ADMIN") - applied in the
+    same decorator slot (after @require_auth, before @validate_body
+    / @with_db).
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            user = g.current_user
+            allowed = user.get("allowed_pages")
+            # ADMIN: allowed is None (sentinel) -> pass.
+            # USER:  allowed is a list; page_key must be in it.
+            if allowed is None or page_key in allowed:
+                return f(*args, **kwargs)
+            return jsonify({
+                "error": "Permission denied",
+                "page_key": page_key,
+            }), 403
 
         return decorated
 

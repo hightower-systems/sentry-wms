@@ -17,6 +17,92 @@ const ALL_FUNCTIONS = [
   { key: 'transfer', label: 'Transfer' },
 ];
 
+// Web-admin page grants (avid-overhaul-mk1 P6.1). Mirrors the sidebar
+// groups so the create / edit modal feels familiar; keys match
+// api/constants.py ALL_PAGE_KEYS exactly. ADMIN users bypass the
+// permission table server-side, so checking these for an ADMIN is
+// purely cosmetic - the PUT endpoint no-ops for ADMIN targets.
+const PAGE_GROUPS = [
+  {
+    label: 'Floor',
+    pages: [
+      { key: 'inventory', label: 'Inventory' },
+      { key: 'cycle-counts', label: 'Cycle Counts' },
+      { key: 'count-approvals', label: 'Count Approvals' },
+    ],
+  },
+  {
+    label: 'Inbound',
+    pages: [
+      { key: 'purchase-orders', label: 'Purchase Orders' },
+      { key: 'receiving', label: 'Receiving' },
+      { key: 'putaway', label: 'Put-away' },
+    ],
+  },
+  {
+    label: 'Outbound',
+    pages: [
+      { key: 'sales-orders', label: 'Sales Orders' },
+      { key: 'pos-activity', label: 'POS Activity' },
+      { key: 'picking-tickets', label: 'Picking Tickets' },
+      { key: 'fraud', label: 'Fraud' },
+      // avid-overhaul-mk1 P10: picking/packing/shipping retired in
+      // favour of the mobile flow; corresponding page_keys are gone
+      // from ALL_PAGE_KEYS so a stale grant cannot persist past the
+      // next permissions save.
+    ],
+  },
+  {
+    label: 'Warehouse',
+    pages: [
+      { key: 'items', label: 'Items' },
+      { key: 'vendors', label: 'Vendors' },
+      { key: 'adjustments', label: 'Inventory Adjustments' },
+      { key: 'inter-warehouse-transfers', label: 'Inventory Transfers' },
+      { key: 'transfer-orders', label: 'Transfer Orders' },
+      { key: 'warehouses', label: 'Warehouses' },
+      { key: 'bins', label: 'Bins' },
+      { key: 'zones', label: 'Zones' },
+      { key: 'preferred-bins', label: 'Preferred Bins' },
+    ],
+  },
+  {
+    label: 'System',
+    pages: [
+      { key: 'users', label: 'Users' },
+      { key: 'api-tokens', label: 'API Tokens' },
+      { key: 'inbound', label: 'Inbound Activity' },
+      { key: 'consumer-groups', label: 'Consumer Groups' },
+      { key: 'webhooks', label: 'Webhooks' },
+      { key: 'audit-log', label: 'Audit Log' },
+      { key: 'imports', label: 'Imports' },
+      { key: 'integrations', label: 'Integrations' },
+      { key: 'settings', label: 'Settings' },
+    ],
+  },
+  // avid-overhaul-mk1 P7: feature-flag grants. Not pages in the
+  // sidebar; granting one lifts the OPEN-only edit gate on the
+  // matching admin surface (PO header/line edits past CLOSED+ARCHIVED;
+  // SO header/line edits past OPEN). Same storage as page grants so
+  // the multi-select reuses the existing pagePermissions array.
+  {
+    label: 'Overrides',
+    isOverride: true,
+    pages: [
+      {
+        key: 'po-full-edit',
+        label: 'Full PO edit (past CLOSED/ARCHIVED)',
+      },
+      {
+        key: 'so-full-edit',
+        label: 'Full SO edit (past OPEN, incl. source_system + line CRUD)',
+      },
+    ],
+  },
+];
+
+const ALL_PAGE_KEYS = PAGE_GROUPS.flatMap((g) => g.pages.map((p) => p.key));
+
 export default function Users() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
@@ -25,6 +111,10 @@ export default function Users() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
+  // mig 059 P6.1: per-page web-admin grants. Edited inline alongside
+  // the rest of the user form and saved via a follow-up PUT once the
+  // user record itself lands.
+  const [pagePermissions, setPagePermissions] = useState([]);
 
   useEffect(() => {
     loadUsers();
@@ -40,7 +130,7 @@ export default function Users() {
   }
 
   async function loadWarehouses() {
-    const res = await api.get('/admin/warehouses');
+    const res = await api.get('/admin/warehouses', { silentPermissionDenied: true });
     if (res?.ok) {
       const data = await res.json();
       setWarehouses(data.warehouses || []);
@@ -50,11 +140,12 @@ export default function Users() {
   function openCreate() {
     setEditId(null);
     setForm({ role: 'USER', warehouse_ids: [], allowed_functions: [], is_active: true });
+    setPagePermissions([]);
     setError('');
     setShowModal(true);
   }
 
-  function openEdit(user) {
+  async function openEdit(user) {
     setEditId(user.user_id);
     setForm({
       ...user,
@@ -64,6 +155,45 @@ export default function Users() {
     });
     setError('');
     setShowModal(true);
+    // Fetch the user's existing per-page grants so the modal can
+    // populate the checkboxes. ADMINs return is_full_access=true
+    // with the entire catalog, which we surface as "all checked".
+    const res = await api.get(`/admin/users/${user.user_id}/permissions`);
+    if (res?.ok) {
+      const data = await res.json();
+      setPagePermissions(data.page_keys || []);
+    } else {
+      setPagePermissions([]);
+    }
+  }
+
+  function togglePagePermission(pageKey) {
+    setPagePermissions((prev) => (
+      prev.includes(pageKey)
+        ? prev.filter((k) => k !== pageKey)
+        : [...prev, pageKey]
+    ));
+  }
+
+  function selectAllPagesInGroup(group) {
+    setPagePermissions((prev) => {
+      const next = new Set(prev);
+      group.pages.forEach((p) => next.add(p.key));
+      return Array.from(next);
+    });
+  }
+
+  function clearPagesInGroup(group) {
+    const groupKeys = new Set(group.pages.map((p) => p.key));
+    setPagePermissions((prev) => prev.filter((k) => !groupKeys.has(k)));
+  }
+
+  function selectAllPages() {
+    setPagePermissions([...ALL_PAGE_KEYS]);
+  }
+
+  function clearAllPages() {
+    setPagePermissions([]);
   }
 
   async function save() {
@@ -86,13 +216,32 @@ export default function Users() {
     const res = editId
       ? await api.put(`/admin/users/${editId}`, body)
       : await api.post('/admin/users', body);
-    if (res?.ok) {
-      setShowModal(false);
-      loadUsers();
-    } else {
+    if (!res?.ok) {
       const data = await res?.json();
       setError(data?.error || 'Failed to save');
+      return;
     }
+    // Persist per-page grants in a follow-up PUT. The endpoint is a
+    // no-op for ADMIN targets (server bypasses the table), so calling
+    // it unconditionally is safe. Resolve the user_id from the
+    // create response when we just minted a new row.
+    const userPayload = await res.json().catch(() => null);
+    const savedUserId = editId || userPayload?.user_id;
+    if (savedUserId) {
+      const permRes = await api.put(
+        `/admin/users/${savedUserId}/permissions`,
+        { page_keys: pagePermissions },
+      );
+      if (!permRes?.ok) {
+        const permData = await permRes?.json();
+        setError(
+          permData?.error || 'User saved, but failed to save page permissions',
+        );
+        return;
+      }
+    }
+    setShowModal(false);
+    loadUsers();
   }
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
@@ -132,6 +281,28 @@ export default function Users() {
     }
   }
 
+  function selectAllWarehouses() {
+    setForm({
+      ...form,
+      warehouse_ids: warehouses.map((wh) => wh.warehouse_id),
+    });
+  }
+
+  function clearWarehouses() {
+    setForm({ ...form, warehouse_ids: [] });
+  }
+
+  function selectAllFunctions() {
+    setForm({
+      ...form,
+      allowed_functions: ALL_FUNCTIONS.map((fn) => fn.key),
+    });
+  }
+
+  function clearFunctions() {
+    setForm({ ...form, allowed_functions: [] });
+  }
+
   function warehouseCodes(warehouseIds) {
     if (!warehouseIds || warehouseIds.length === 0) return '-';
     return warehouseIds
@@ -166,6 +337,7 @@ export default function Users() {
 
       {showModal && (
         <Modal title={editId ? 'Edit User' : 'New User'} onClose={() => setShowModal(false)}
+          size="wide"
           footer={
             <>
               <button className="btn" onClick={() => setShowModal(false)}>Cancel</button>
@@ -195,7 +367,28 @@ export default function Users() {
             </select>
           </div>
           <div className="form-group">
-            <label>Warehouses</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label>Warehouses</label>
+              {warehouses.length > 0 && (
+                <span style={{ fontSize: 12 }}>
+                  <button
+                    type="button"
+                    onClick={selectAllWarehouses}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                  >
+                    Select all
+                  </button>
+                  <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>/</span>
+                  <button
+                    type="button"
+                    onClick={clearWarehouses}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                  >
+                    Clear
+                  </button>
+                </span>
+              )}
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0' }}>
               {warehouses.map((wh) => (
                 <label key={wh.warehouse_id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -212,7 +405,26 @@ export default function Users() {
             </div>
           </div>
           <div className="form-group">
-            <label>Mobile Module Access</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label>Mobile Module Access</label>
+              <span style={{ fontSize: 12 }}>
+                <button
+                  type="button"
+                  onClick={selectAllFunctions}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                >
+                  Select all
+                </button>
+                <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>/</span>
+                <button
+                  type="button"
+                  onClick={clearFunctions}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                >
+                  Clear
+                </button>
+              </span>
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '8px 0' }}>
               {ALL_FUNCTIONS.map((fn) => (
                 <label key={fn.key} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', minWidth: 100 }}>
@@ -225,6 +437,92 @@ export default function Users() {
                 </label>
               ))}
             </div>
+          </div>
+
+          <div className="form-group">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <label>Web Admin Page Access</label>
+              <span style={{ fontSize: 12 }}>
+                <button
+                  type="button"
+                  onClick={selectAllPages}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                >
+                  Select all
+                </button>
+                <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>/</span>
+                <button
+                  type="button"
+                  onClick={clearAllPages}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 12 }}
+                >
+                  Clear
+                </button>
+              </span>
+            </div>
+            {form.role === 'ADMIN' ? (
+              <p style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '8px 0' }}>
+                ADMIN role bypasses page permissions - full access to every web admin page.
+              </p>
+            ) : (
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gap: 12, padding: '8px 0',
+              }}>
+                {PAGE_GROUPS.map((group) => {
+                  const groupKeys = new Set(group.pages.map((p) => p.key));
+                  const grantedCount = pagePermissions.filter((k) => groupKeys.has(k)).length;
+                  // The Overrides card carries an accent border so it
+                  // reads as a grant of authority, not a page-access
+                  // toggle. Granting an override is a different mental
+                  // model from picking which pages a USER can open.
+                  const cardStyle = group.isOverride
+                    ? { padding: 10, borderLeft: '3px solid var(--copper)' }
+                    : { padding: 10 };
+                  return (
+                    <div key={group.label} className="card" style={cardStyle}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <strong style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: group.isOverride ? 'var(--copper)' : undefined }}>
+                          {group.label}
+                        </strong>
+                        <span style={{ fontSize: 11 }}>
+                          <button
+                            type="button"
+                            onClick={() => selectAllPagesInGroup(group)}
+                            style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 11 }}
+                          >
+                            All
+                          </button>
+                          <span style={{ color: 'var(--text-tertiary)', margin: '0 4px' }}>/</span>
+                          <button
+                            type="button"
+                            onClick={() => clearPagesInGroup(group)}
+                            style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 11 }}
+                          >
+                            None
+                          </button>
+                        </span>
+                      </div>
+                      {group.pages.map((p) => (
+                        <label key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', cursor: 'pointer', fontSize: 13 }}>
+                          <input
+                            type="checkbox"
+                            checked={pagePermissions.includes(p.key)}
+                            onChange={() => togglePagePermission(p.key)}
+                          />
+                          {p.label}
+                        </label>
+                      ))}
+                      {grantedCount > 0 && grantedCount < group.pages.length && (
+                        <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                          {grantedCount} / {group.pages.length}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </Modal>
       )}

@@ -7,7 +7,7 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import ACTION_TRANSFER
-from middleware.auth_middleware import require_auth, require_role
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
 from routes.admin import VALID_BIN_TYPES, VALID_ZONE_TYPES, admin_bp
 from schemas.bins import CreateBinRequest, UpdateBinRequest
@@ -22,7 +22,7 @@ from utils.validation import validate_body
 
 @admin_bp.route("/warehouses", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("warehouses")
 @with_db
 def list_warehouses():
     page = request.args.get("page", 1, type=int)
@@ -47,7 +47,7 @@ def list_warehouses():
 
 @admin_bp.route("/warehouses/<int:warehouse_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("warehouses")
 @with_db
 def get_warehouse(warehouse_id):
     wh = g.db.execute(
@@ -72,7 +72,7 @@ def get_warehouse(warehouse_id):
 
 @admin_bp.route("/warehouses", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("warehouses")
 @validate_body(CreateWarehouseRequest)
 @with_db
 def create_warehouse(validated):
@@ -96,7 +96,7 @@ def create_warehouse(validated):
 
 @admin_bp.route("/warehouses/<int:warehouse_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("warehouses")
 @validate_body(UpdateWarehouseRequest)
 @with_db
 def update_warehouse(warehouse_id, validated):
@@ -131,7 +131,7 @@ def update_warehouse(warehouse_id, validated):
 
 @admin_bp.route("/warehouses/<int:warehouse_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("warehouses")
 @with_db
 def delete_warehouse(warehouse_id):
     wh = g.db.execute(text("SELECT warehouse_id FROM warehouses WHERE warehouse_id = :wid"), {"wid": warehouse_id}).fetchone()
@@ -172,7 +172,7 @@ def delete_warehouse(warehouse_id):
 
 @admin_bp.route("/zones", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("zones")
 @with_db
 def list_zones():
     page = request.args.get("page", 1, type=int)
@@ -205,7 +205,7 @@ def list_zones():
 
 @admin_bp.route("/zones", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("zones")
 @validate_body(CreateZoneRequest)
 @with_db
 def create_zone(validated):
@@ -230,7 +230,7 @@ def create_zone(validated):
 
 @admin_bp.route("/zones/<int:zone_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("zones")
 @validate_body(UpdateZoneRequest)
 @with_db
 def update_zone(zone_id, validated):
@@ -263,7 +263,7 @@ def update_zone(zone_id, validated):
 
 @admin_bp.route("/zones/<int:zone_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("zones")
 @with_db
 def delete_zone(zone_id):
     existing = g.db.execute(
@@ -292,7 +292,7 @@ def delete_zone(zone_id):
 
 @admin_bp.route("/bins", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("bins")
 @with_db
 def list_bins():
     page = request.args.get("page", 1, type=int)
@@ -352,7 +352,7 @@ def list_bins():
 
 @admin_bp.route("/bins/<int:bin_id>", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("bins")
 @with_db
 def get_bin(bin_id):
     b = g.db.execute(
@@ -388,7 +388,7 @@ def get_bin(bin_id):
 
 @admin_bp.route("/bins", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("bins")
 @validate_body(CreateBinRequest)
 @with_db
 def create_bin(validated):
@@ -428,7 +428,7 @@ def create_bin(validated):
 
 @admin_bp.route("/bins/<int:bin_id>", methods=["PUT"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("bins")
 @validate_body(UpdateBinRequest)
 @with_db
 def update_bin(bin_id, validated):
@@ -470,7 +470,7 @@ def update_bin(bin_id, validated):
 
 @admin_bp.route("/bins/<int:bin_id>", methods=["DELETE"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("bins")
 @with_db
 def delete_bin(bin_id):
     existing = g.db.execute(text("SELECT bin_id, bin_code FROM bins WHERE bin_id = :bid"), {"bid": bin_id}).fetchone()
@@ -507,7 +507,7 @@ def delete_bin(bin_id):
 
 @admin_bp.route("/inter-warehouse-transfer", methods=["POST"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @validate_body(InterWarehouseTransferRequest)
 @with_db
 def create_inter_warehouse_transfer(validated):
@@ -623,7 +623,7 @@ def create_inter_warehouse_transfer(validated):
 
 @admin_bp.route("/inter-warehouse-transfers", methods=["GET"])
 @require_auth
-@require_role("ADMIN")
+@require_admin_or_page_permission("transfer-orders")
 @with_db
 def list_inter_warehouse_transfers():
     """Return recent inter-warehouse transfers with item, bin, and warehouse details."""

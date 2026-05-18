@@ -128,7 +128,7 @@ CREATE TABLE purchase_orders (
     po_barcode VARCHAR(100),               -- scannable PO barcode
     vendor_name VARCHAR(200),
     vendor_id VARCHAR(50),
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PARTIAL', 'RECEIVED', 'CLOSED', 'ARCHIVED'
     expected_date DATE,
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     notes TEXT,
@@ -236,6 +236,14 @@ CREATE TABLE sales_orders (
     -- v1.7.0 Pipe B: pointer back to the most-recent applied inbound row.
     -- Unindexed, no FK; see db/migrations/039_inbound_sales_orders.sql.
     latest_inbound_id BIGINT,
+    -- avid-overhaul-mk1 P7 (mig 060): denormalised source_system tag so
+    -- the admin SO edit surface can repoint an order whose ERP-supplied
+    -- system tag was wrong, without rewriting inbound history. NULL on
+    -- admin-created and POS-created SOs that never went through inbound.
+    -- FK to inbound_source_systems_allowlist is added later in this
+    -- file via ALTER TABLE so the inline CREATE order does not require
+    -- the allowlist table to be declared above sales_orders.
+    source_system VARCHAR(64),
     -- v1.10.0 Pipe C: POS endpoint surface columns. Web orders carry
     -- order_source='web' / order_type='sale' (defaults). POS-source
     -- orders carry external_txn_ref + idempotency_key + cached_response_body
@@ -253,12 +261,22 @@ CREATE TABLE sales_orders (
                             CHECK (order_type IN ('sale','refund')),
     parent_so_id            INT REFERENCES sales_orders(so_id),
     refunded_at             TIMESTAMPTZ,
-    refund_so_id            INT REFERENCES sales_orders(so_id)
+    refund_so_id            INT REFERENCES sales_orders(so_id),
     -- mig 054 (fraud-review) adds `memo TEXT` via ALTER TABLE on
     -- existing deploys. The column is already declared above (line
     -- 225, v1.9.0 introduction) so the schema.sql initial-load is
     -- a no-op for the fraud-review migration's memo addition.
+    --
+    -- avid-overhaul-mk1 mig 057: timestamp set when a picking ticket
+    -- has been confirmed-rendered for this SO. POST /sales-orders/
+    -- mark-printed writes it once the client-side ticket render
+    -- succeeds. NULL means "still in the picking queue".
+    printed_at              TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS ix_sales_orders_unprinted
+    ON sales_orders (status, ship_by_date)
+    WHERE printed_at IS NULL;
 
 CREATE TABLE sales_order_lines (
     so_line_id SERIAL PRIMARY KEY,
@@ -530,7 +548,13 @@ BEGIN
                COALESCE(NEW.warehouse_id::text, '') || '|' ||
                COALESCE(NEW.details::text, '') || '|' ||
                COALESCE(NEW.created_at::text, NOW()::text);
-    NEW.row_hash := digest(NEW.prev_hash || payload::bytea, 'sha256');
+    -- avid-overhaul-mk1 (mig 062): convert_to instead of ::bytea so
+    -- backslash escapes inside the serialised JSON payload (e.g. \n
+    -- emitted by JSONB::text for a memo with line breaks) do not
+    -- trip Postgres' bytea escape parser. UTF-8 byte-wise encoding
+    -- of ASCII content is identical to the old cast, so existing
+    -- row_hash values still verify against the new function.
+    NEW.row_hash := digest(NEW.prev_hash || convert_to(payload, 'UTF8'), 'sha256');
     UPDATE audit_log_chain_head
        SET row_hash = NEW.row_hash, updated_at = NOW()
      WHERE singleton = TRUE;
@@ -574,7 +598,10 @@ BEGIN
                    COALESCE(r.warehouse_id::text, '') || '|' ||
                    COALESCE(r.details::text, '') || '|' ||
                    COALESCE(r.created_at::text, '');
-        computed := digest(r.prev_hash || payload::bytea, 'sha256');
+        -- avid-overhaul-mk1 (mig 062): keep this in lock-step with
+        -- audit_log_chain_hash above; using ::bytea here would
+        -- reject every row written after the trigger fix.
+        computed := digest(r.prev_hash || convert_to(payload, 'UTF8'), 'sha256');
         IF computed IS DISTINCT FROM r.row_hash THEN
             RETURN r.log_id;
         END IF;
@@ -661,6 +688,10 @@ CREATE INDEX ix_purchase_orders_warehouse ON purchase_orders(warehouse_id);
 CREATE INDEX ix_purchase_order_lines_po ON purchase_order_lines(po_id);
 CREATE INDEX ix_sales_orders_warehouse ON sales_orders(warehouse_id);
 CREATE INDEX ix_sales_order_lines_so ON sales_order_lines(so_id);
+-- avid-overhaul-mk1 P7 (mig 060): partial index because POS-created
+-- and admin-created SOs leave source_system NULL.
+CREATE INDEX IF NOT EXISTS ix_sales_orders_source_system
+    ON sales_orders (source_system) WHERE source_system IS NOT NULL;
 -- v1.10.0 Pipe C: POS replay + refund lookup paths. Partial indexes
 -- because the columns are NULL for the historical web-order majority.
 CREATE INDEX idx_so_idempotency
@@ -801,6 +832,16 @@ CREATE TABLE inbound_source_systems_allowlist (
     notes          TEXT,
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- avid-overhaul-mk1 P7 (mig 060): FK from sales_orders.source_system
+-- to the allowlist. Declared here, after both tables exist, because
+-- sales_orders is defined at line 180 -- ahead of the allowlist -- so
+-- inlining the REFERENCES clause on the column would fail to load
+-- from a clean schema.
+ALTER TABLE sales_orders
+    ADD CONSTRAINT sales_orders_source_system_fkey
+    FOREIGN KEY (source_system)
+    REFERENCES inbound_source_systems_allowlist(source_system);
 
 -- v1.7.0 forensic audit (V-157 pattern, mirrors wms_tokens_audit).
 CREATE TABLE inbound_source_systems_allowlist_audit (
@@ -1929,3 +1970,18 @@ CREATE TABLE dockd_idempotency (
 );
 
 CREATE INDEX dockd_idempotency_prune ON dockd_idempotency(created_at);
+
+-- avid-overhaul-mk1 mig 059: per-page permission grants for web-admin
+-- USERs. ADMIN bypasses this table; USER must have an explicit row
+-- per page_key to reach the matching admin endpoint. Existing
+-- deploys pick this up via db/migrations/059_user_page_permissions.sql.
+CREATE TABLE IF NOT EXISTS user_page_permissions (
+    user_id     INT          NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    page_key    VARCHAR(64)  NOT NULL,
+    granted_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    granted_by  INT          REFERENCES users(user_id) ON DELETE SET NULL,
+    PRIMARY KEY (user_id, page_key)
+);
+
+CREATE INDEX IF NOT EXISTS ix_user_page_permissions_user
+    ON user_page_permissions(user_id);
