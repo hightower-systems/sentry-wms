@@ -14,6 +14,12 @@ export default function PickingTicketPrintAll() {
   const [params] = useSearchParams();
   const status = params.get('status') || 'OPEN';
   const warehouseId = params.get('warehouse_id') || '';
+  // Optional comma-separated SO order from the list page. When
+  // present, we reorder fetched SOs to match this sequence so the
+  // print stack reflects the operator's chosen column sort. Absent
+  // (e.g. someone deep-links this URL) we fall back to the legacy
+  // primary_bin_pick_sequence sort.
+  const requestedOrderParam = params.get('so_ids') || '';
   const [tickets, setTickets] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -51,26 +57,42 @@ export default function PickingTicketPrintAll() {
         setLoading(false);
         return;
       }
-      // Sort by primary_bin_pick_sequence ascending so the printer
-      // stack matches the picker's physical walk through the
-      // warehouse and the shipper unpacks in the same order. SOs
-      // without a primary bin (no preferred_bins for their items)
-      // sink to the bottom of the stack with a secondary
-      // ship_by_date tiebreak so they remain ordered among
-      // themselves.
-      orders.sort((a, b) => {
-        const aps = a.primary_bin_pick_sequence;
-        const bps = b.primary_bin_pick_sequence;
-        if (aps != null && bps != null) return aps - bps;
-        if (aps != null) return -1;
-        if (bps != null) return 1;
-        const ad = a.ship_by_date;
-        const bd = b.ship_by_date;
-        if (!ad && !bd) return 0;
-        if (!ad) return 1;
-        if (!bd) return -1;
-        return new Date(ad) - new Date(bd);
-      });
+      const requestedIds = requestedOrderParam
+        ? requestedOrderParam.split(',').map((s) => parseInt(s, 10)).filter(Number.isFinite)
+        : [];
+      if (requestedIds.length > 0) {
+        // Honor the list page's sort. Build a rank map so SOs the
+        // operator did not see (status changed between tabs, late
+        // arrivals after they hit Print All) sink to the bottom but
+        // still print rather than getting silently dropped.
+        const rank = new Map(requestedIds.map((id, i) => [id, i]));
+        orders.sort((a, b) => {
+          const ra = rank.has(a.so_id) ? rank.get(a.so_id) : Number.MAX_SAFE_INTEGER;
+          const rb = rank.has(b.so_id) ? rank.get(b.so_id) : Number.MAX_SAFE_INTEGER;
+          return ra - rb;
+        });
+      } else {
+        // Legacy fallback for deep-linked print URLs without an
+        // explicit order. Sort by primary_bin_pick_sequence ascending
+        // so the printer stack matches the picker's physical walk
+        // through the warehouse. SOs without a primary bin (no
+        // preferred_bins for their items) sink to the bottom with a
+        // ship_by_date tiebreak so they remain ordered among
+        // themselves.
+        orders.sort((a, b) => {
+          const aps = a.primary_bin_pick_sequence;
+          const bps = b.primary_bin_pick_sequence;
+          if (aps != null && bps != null) return aps - bps;
+          if (aps != null) return -1;
+          if (bps != null) return 1;
+          const ad = a.ship_by_date;
+          const bd = b.ship_by_date;
+          if (!ad && !bd) return 0;
+          if (!ad) return 1;
+          if (!bd) return -1;
+          return new Date(ad) - new Date(bd);
+        });
+      }
       const detailResponses = await Promise.all(
         orders.map((o) => api.get(`/admin/sales-orders/${o.so_id}/picking-ticket`)),
       );
@@ -100,7 +122,7 @@ export default function PickingTicketPrintAll() {
     }
     load();
     return () => { cancelled = true; };
-  }, [status, warehouseId]);
+  }, [status, warehouseId, requestedOrderParam]);
 
   // Update the tab title once we know the count, so the user can
   // tell the queue tabs apart.

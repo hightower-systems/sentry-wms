@@ -115,6 +115,15 @@ export default function PickingTickets() {
   function printAll() {
     const qs = new URLSearchParams({ status });
     if (warehouseId) qs.set('warehouse_id', String(warehouseId));
+    // Hand the print tab the exact SO order the operator is looking
+    // at so the print stack matches the on-screen sort. PrintAll
+    // reorders its fetched orders against this sequence rather than
+    // deriving a sort independently. Single source of truth for the
+    // ordering lives here.
+    const orderedIds = sortedOrders.map((o) => o.so_id);
+    if (orderedIds.length > 0) {
+      qs.set('so_ids', orderedIds.join(','));
+    }
     // Open in a new tab so the print queue renders standalone (no
     // admin Layout chrome) and the user can leave it open while
     // continuing to work in the original tab.
