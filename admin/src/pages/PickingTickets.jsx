@@ -55,7 +55,7 @@ export default function PickingTickets() {
           const qs = new URLSearchParams({
             status: s,
             warehouse_id: String(warehouseId),
-            per_page: '50',
+            per_page: '100',
             // Picking-tickets queue wants the lowest-pick_sequence
             // bin per SO so the picker can walk the warehouse in
             // physical order. The flag opts into the per-row

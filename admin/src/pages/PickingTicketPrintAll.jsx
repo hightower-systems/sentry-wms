@@ -28,7 +28,7 @@ export default function PickingTicketPrintAll() {
         statuses.map((s) => {
           const qs = new URLSearchParams({
             status: s,
-            per_page: '50',
+            per_page: '100',
             // Pull primary_bin_pick_sequence so we can sort the print
             // stack in warehouse-walk order. The picker fills the cart
             // in this order; the shipper unpacks in the same order.
