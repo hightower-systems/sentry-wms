@@ -6,6 +6,26 @@ import './pickingTicket.css';
 
 const PICKABLE_STATUSES = ['OPEN', 'ALLOCATED', 'PICKING', 'PICKED'];
 
+// POST /admin/sales-orders/mark-printed with one retry. Replaces the
+// previous fire-and-forget POST whose `.catch(() => {})` swallowed
+// every failure, so a transient network blip left printed_at NULL in
+// the DB while the operator walked away with the paper. Returns true
+// only when the server confirmed the write.
+async function markPrintedWithRetry(soIds) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await api.post('/admin/sales-orders/mark-printed', { so_ids: soIds });
+      if (res?.ok) return true;
+    } catch (_) {
+      // fall through to retry
+    }
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+  return false;
+}
+
 // Standalone print-queue view. Opened in a new tab from the picking
 // tickets page; renders every ticket in the current status filter
 // stacked one per page so the user can hit Ctrl/Cmd+P natively. No
@@ -23,12 +43,15 @@ export default function PickingTicketPrintAll() {
   const [tickets, setTickets] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [markPrintedFailed, setMarkPrintedFailed] = useState(false);
+  const [retryingMark, setRetryingMark] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError('');
+      setMarkPrintedFailed(false);
       const statuses = status === 'ALL' ? PICKABLE_STATUSES : [status];
       const listResponses = await Promise.all(
         statuses.map((s) => {
@@ -113,16 +136,25 @@ export default function PickingTicketPrintAll() {
       // the render array. Orders that failed earlier (404, network
       // error, malformed payload) stay unprinted so they reappear in
       // the queue and the operator can retry rather than silently
-      // losing them.
+      // losing them. Persistent mark-printed failures surface via the
+      // toast below so the operator knows to verify the list rather
+      // than assume the DB matches the screen.
       if (out.length > 0) {
-        api.post('/admin/sales-orders/mark-printed', {
-          so_ids: out.map((t) => t.so.so_id),
-        }).catch(() => {});
+        const ok = await markPrintedWithRetry(out.map((t) => t.so.so_id));
+        if (!cancelled && !ok) setMarkPrintedFailed(true);
       }
     }
     load();
     return () => { cancelled = true; };
   }, [status, warehouseId, requestedOrderParam]);
+
+  async function retryMarkPrinted() {
+    if (tickets.length === 0) return;
+    setRetryingMark(true);
+    const ok = await markPrintedWithRetry(tickets.map((t) => t.so.so_id));
+    setRetryingMark(false);
+    if (ok) setMarkPrintedFailed(false);
+  }
 
   // Update the tab title once we know the count, so the user can
   // tell the queue tabs apart.
@@ -164,6 +196,20 @@ export default function PickingTicketPrintAll() {
 
   return (
     <div className="pt-root">
+      {markPrintedFailed && (
+        <div className="pt-toast pt-no-print" role="alert">
+          <span>
+            Some tickets may not have been marked as printed. Refresh
+            the list to verify, or retry.
+          </span>
+          <button type="button" onClick={retryMarkPrinted} disabled={retryingMark}>
+            {retryingMark ? 'Retrying…' : 'Retry'}
+          </button>
+          <button type="button" onClick={() => setMarkPrintedFailed(false)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {tickets.map(({ so, lines }) => (
         <TicketDocument key={so.so_id} so={so} lines={lines} />
       ))}

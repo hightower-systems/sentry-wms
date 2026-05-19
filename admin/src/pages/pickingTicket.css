@@ -135,6 +135,36 @@
    with the toolbar. */
 .pt-page + .pt-page { margin-top: 24px; }
 
+/* Surfaced when the mark-printed POST fails after a retry. Combined
+   with .pt-no-print so the toast never appears on paper. */
+.pt-toast {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  color: #664d03;
+  padding: 10px 14px;
+  font-size: 10pt;
+  z-index: 100;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  max-width: 8.5in;
+}
+.pt-toast button {
+  font-family: inherit;
+  font-size: 9pt;
+  padding: 4px 10px;
+  border: 1px solid #997404;
+  background: white;
+  cursor: pointer;
+}
+.pt-toast button:hover:not(:disabled) { background: #fffaf0; }
+.pt-toast button:disabled { opacity: 0.6; cursor: default; }
+
 @media print {
   @page { size: letter; margin: 0.5in; }
   .pt-root { background: white; padding: 0; }
