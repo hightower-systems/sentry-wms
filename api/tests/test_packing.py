@@ -10,8 +10,8 @@ def _query_val(sql, params=None):
     return row[0] if row else None
 
 
-def _advance_so_to_picking(client, auth_headers, so_identifiers=None):
-    """Run through picking flow to get SOs to PICKING status."""
+def _advance_so_to_picked(client, auth_headers, so_identifiers=None):
+    """Run through the picking flow to flip SOs to PICKED."""
     idents = so_identifiers or ["SO-2026-001"]
     create_resp = client.post(
         "/api/picking/create-batch",
@@ -47,7 +47,7 @@ def _advance_so_to_picking(client, auth_headers, so_identifiers=None):
 
 class TestLoadOrder:
     def test_load_order_for_packing(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
 
         resp = client.get("/api/packing/order/SO-2026-001", headers=auth_headers)
         assert resp.status_code == 200
@@ -69,7 +69,7 @@ class TestLoadOrder:
 
 class TestVerifyItem:
     def test_verify_item_success(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
 
         # SO-2026-001 line 1: item 1 (TST-001), UPC 100000000001
         resp = client.post(
@@ -83,7 +83,7 @@ class TestVerifyItem:
         assert "order_progress" in data
 
     def test_verify_wrong_barcode(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
 
         resp = client.post(
             "/api/packing/verify",
@@ -93,7 +93,7 @@ class TestVerifyItem:
         assert resp.status_code == 400
 
     def test_verify_over_pack(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
 
         # SO-2026-001 line 1 has quantity_picked = 2. Try to pack 100
         resp = client.post(
@@ -105,7 +105,7 @@ class TestVerifyItem:
         assert "remaining" in resp.get_json()["error"].lower()
 
     def test_verify_item_not_on_order(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
 
         # Item 3 (TST-003, UPC 100000000003) is not on SO-2026-001
         resp = client.post(
@@ -130,7 +130,7 @@ class TestCompletePacking:
                 )
 
     def test_complete_packing_success(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
         self._verify_all_items(client, auth_headers, 1)
 
         resp = client.post(
@@ -143,7 +143,7 @@ class TestCompletePacking:
         assert data["status"] == "PACKED"
 
     def test_complete_packing_audit_details_carry_expected_and_packed(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
         self._verify_all_items(client, auth_headers, 1)
 
         client.post(
@@ -164,7 +164,7 @@ class TestCompletePacking:
         assert details["so_number"] == "SO-2026-001"
 
     def test_complete_packing_items_not_verified(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
         # Don't verify any items
 
         resp = client.post(
@@ -176,7 +176,7 @@ class TestCompletePacking:
         assert "not yet verified" in resp.get_json()["error"].lower()
 
     def test_calculated_weight_correct(self, client, auth_headers):
-        _advance_so_to_picking(client, auth_headers, ["SO-2026-001"])
+        _advance_so_to_picked(client, auth_headers, ["SO-2026-001"])
 
         resp = client.get("/api/packing/order/SO-2026-001", headers=auth_headers)
         data = resp.get_json()

@@ -327,7 +327,7 @@ def list_inventory():
                        FROM sales_order_lines sol
                        JOIN sales_orders so ON so.so_id = sol.so_id
                        WHERE sol.item_id = inv.item_id
-                         AND so.status IN ('OPEN', 'PICKING', 'PICKED', 'PACKED')
+                         AND so.status IN ('OPEN', 'PICKED', 'PACKED')
                          AND sol.quantity_ordered > sol.quantity_shipped
                    ), 0) AS committed_to_orders,
                    inv.lot_number, inv.last_counted_at

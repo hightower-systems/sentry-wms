@@ -386,17 +386,18 @@ class TestSalesOrders:
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
         assert status == "CANCELLED"
 
-    def test_cancel_picking_releases_inventory(self, client, auth_headers):
-        # Create batch sets SO-2026-001 to PICKING
+    def test_cancel_allocated_so_releases_inventory(self, client, auth_headers):
+        # An OPEN SO that sits inside an active pick batch still needs
+        # its allocation released on cancel. PICKING was retired in
+        # mig 060 but the allocation lifecycle is unchanged.
         client.post("/api/picking/create-batch", json={"so_identifiers": ["SO-2026-001"], "warehouse_id": 1}, headers=auth_headers)
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
-        assert status == "PICKING"
+        assert status == "OPEN"
 
-        # Cancel should release allocation
+        # Cancel should release allocation.
         resp = client.post("/api/admin/sales-orders/1/cancel", headers=auth_headers)
         assert resp.status_code == 200
 
-        # Inventory allocated should be back to 0 for item 1 bin 3
         allocated = _query_val("SELECT quantity_allocated FROM inventory WHERE item_id = 1 AND bin_id = 3")
         assert allocated == 0
 

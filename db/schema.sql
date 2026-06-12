@@ -185,7 +185,7 @@ CREATE TABLE sales_orders (
     customer_id VARCHAR(50),
     customer_phone VARCHAR(50),
     customer_address TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKING', 'PICKED', 'PACKING', 'PACKED', 'SHIPPED', 'CANCELLED'
+    status VARCHAR(20) NOT NULL DEFAULT 'OPEN',  -- 'OPEN', 'PICKED', 'PACKED', 'SHIPPED', 'CANCELLED'. PICKING/PACKING retired in mig 060; "in picking" is derived from pick_batches.
     priority INT DEFAULT 0,                -- higher = pick first
     warehouse_id INT NOT NULL REFERENCES warehouses(warehouse_id),
     ship_method VARCHAR(50),
@@ -266,7 +266,7 @@ CREATE TABLE sales_order_lines (
     quantity_packed INT NOT NULL DEFAULT 0,
     quantity_shipped INT NOT NULL DEFAULT 0,
     line_number INT NOT NULL,
-    status VARCHAR(20) DEFAULT 'PENDING'   -- 'PENDING', 'ALLOCATED', 'PICKED', 'PACKED', 'SHIPPED'
+    status VARCHAR(20) DEFAULT 'PENDING'   -- 'PENDING', 'PICKED', 'PACKED', 'SHIPPED'. ALLOCATED retired in mig 060 (never written by app code).
 );
 
 -- ============================================================

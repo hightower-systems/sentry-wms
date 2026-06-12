@@ -9,7 +9,8 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import (
-    PO_OPEN, PO_PARTIAL, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED,
+    PO_OPEN, PO_PARTIAL, SO_OPEN, SO_PICKED, SO_PACKED,
+    BATCH_OPEN, BATCH_IN_PROGRESS,
     ADJ_PENDING, ADJ_APPROVED, ADJ_REJECTED,
     BIN_STAGING, ACTION_ADJUST,
 )
@@ -382,8 +383,24 @@ def dashboard():
     ).scalar()
 
     open_sos = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_open {wh_filter}"), {**wh_params, "so_open": SO_OPEN}).scalar()
-    ready_to_pick = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status IN (:so_open) {wh_filter}"), {**wh_params, "so_open": SO_OPEN}).scalar()
-    in_picking = g.db.execute(text(f"SELECT COUNT(*) FROM sales_orders WHERE status = :so_picking {wh_filter}"), {**wh_params, "so_picking": SO_PICKING}).scalar()
+
+    # PICKING was retired as an SO status in mig 060; "in picking" is now
+    # derived from any OPEN SO with a row in pick_batch_orders against a
+    # non-terminal batch. "Ready to pick" is open_sos minus that count so
+    # the two tiles stay disjoint.
+    in_picking = g.db.execute(
+        text(f"""
+            SELECT COUNT(DISTINCT pbo.so_id)
+              FROM pick_batch_orders pbo
+              JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
+              JOIN sales_orders so ON so.so_id = pbo.so_id
+             WHERE pb.status IN (:batch_open, :batch_in_progress)
+               AND so.status = :so_open
+               {wh_filter.replace('warehouse_id', 'so.warehouse_id')}
+        """),
+        {**wh_params, "so_open": SO_OPEN, "batch_open": BATCH_OPEN, "batch_in_progress": BATCH_IN_PROGRESS},
+    ).scalar()
+    ready_to_pick = max(0, open_sos - in_picking)
     # Toggle-aware pack/ship counts
     packing_row = g.db.execute(
         text("SELECT value FROM app_settings WHERE key = 'require_packing_before_shipping'")

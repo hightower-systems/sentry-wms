@@ -50,10 +50,21 @@ class TestCreateBatch:
         )
         assert row[0] > 0, "Inventory should be allocated after batch creation"
 
-    def test_create_batch_updates_so_status(self, client, auth_headers):
+    def test_create_batch_keeps_so_open_and_links_batch(self, client, auth_headers):
         _create_batch(client, auth_headers)
+        # PICKING was retired in mig 060; the SO stays OPEN and "in
+        # picking" is derived from a pick_batch_orders row against an
+        # active batch.
         status = _query_val("SELECT status FROM sales_orders WHERE so_id = 1")
-        assert status == "PICKING"
+        assert status == "OPEN"
+        in_batch = _query_val(
+            """
+            SELECT COUNT(*) FROM pick_batch_orders pbo
+              JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
+             WHERE pbo.so_id = 1 AND pb.status IN ('OPEN', 'IN_PROGRESS')
+            """
+        )
+        assert in_batch == 1
 
     def test_create_batch_assigns_totes(self, client, auth_headers):
         resp = _create_batch(client, auth_headers)
@@ -70,12 +81,15 @@ class TestCreateBatch:
         )
         assert resp.status_code == 400
 
-    def test_create_batch_already_picking_so(self, client, auth_headers):
-        # First batch sets SOs to PICKING
+    def test_create_batch_already_in_batch_rejected(self, client, auth_headers):
+        # First batch puts the SOs inside an active pick batch.
         _create_batch(client, auth_headers)
-        # Second attempt should fail because SOs are now PICKING, not OPEN
+        # Second attempt should fail because the active-batch guard now
+        # detects them via pick_batch_orders (PICKING status retired in
+        # mig 060).
         resp = _create_batch(client, auth_headers)
         assert resp.status_code == 400
+        assert "already in active pick batch" in resp.get_json()["error"]
 
 
 class TestGetBatch:
