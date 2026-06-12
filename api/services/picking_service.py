@@ -14,7 +14,7 @@ from services.events_service import emit_event, get_user_external_id
 
 from constants import (
     BATCH_OPEN, BATCH_IN_PROGRESS, BATCH_COMPLETED,
-    SO_OPEN, SO_PICKING, SO_PICKED,
+    SO_OPEN, SO_PICKED,
     TASK_PENDING, TASK_PICKED, TASK_SHORT, TASK_SKIPPED,
     ACTION_PICK,
     BIN_PICKABLE, BIN_PICKABLE_STAGING,
@@ -42,6 +42,27 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
             raise ValueError(f"Sales order '{ident}' not found")
         if so.status != SO_OPEN:
             raise ValueError(f"Sales order '{ident}' status is {so.status}, must be OPEN")
+
+        # PICKING was retired as a distinct status; an OPEN SO can still be
+        # sitting inside an active batch, so guard the second batch attempt
+        # against the pick_batches aggregate rather than the SO row.
+        active = db.execute(
+            text(
+                """
+                SELECT pb.batch_id FROM pick_batch_orders pbo
+                JOIN pick_batches pb ON pb.batch_id = pbo.batch_id
+                WHERE pbo.so_id = :so_id
+                  AND pb.status IN (:batch_open, :batch_in_progress)
+                LIMIT 1
+                """
+            ),
+            {"so_id": so.so_id, "batch_open": BATCH_OPEN, "batch_in_progress": BATCH_IN_PROGRESS},
+        ).fetchone()
+        if active:
+            raise ValueError(
+                f"Sales order '{ident}' is already in active pick batch {active.batch_id}"
+            )
+
         sales_orders.append(so)
 
     # 2. Generate batch number
@@ -173,14 +194,12 @@ def create_pick_batch(db, so_identifiers, warehouse_id, username):
                 total_items += take
                 remaining -= take
 
-    # 6. Update each SO status to PICKING
-    for order in orders_info:
-        db.execute(
-            text("UPDATE sales_orders SET status = :status WHERE so_id = :so_id"),
-            {"so_id": order["so_id"], "status": SO_PICKING},
-        )
+    # SOs remain in OPEN status while the batch is active. "Currently
+    # being picked" is derived from pick_batch_orders + pick_batches.status
+    # rather than an SO-level status, which avoids two-source drift between
+    # the SO row and the batch aggregate.
 
-    # 7. Update batch totals
+    # 6. Update batch totals
     db.execute(
         text(
             "UPDATE pick_batches SET total_orders = :orders, total_items = :items WHERE batch_id = :bid"
@@ -684,7 +703,7 @@ def complete_batch(db, batch_id, username):
         {"bid": batch_id, "batch_status": BATCH_COMPLETED},
     )
 
-    # 3. Update each SO to PICKING
+    # 3. Flip each SO to PICKED.
     # v1.5.0 #119: FOR UPDATE OF so locks each sales_orders row for the
     # rest of this transaction so two concurrent complete_batch calls
     # that share an SO serialise on the SO aggregate. The lock scope
@@ -1104,14 +1123,10 @@ def wave_create(db, so_ids, warehouse_id, username):
             total_units += take
             remaining -= take
 
-    # 6. Update SO statuses to PICKING
-    for so in sales_orders:
-        db.execute(
-            text("UPDATE sales_orders SET status = :status WHERE so_id = :so_id"),
-            {"so_id": so.so_id, "status": SO_PICKING},
-        )
+    # SOs stay OPEN while the wave is active; activity is tracked via the
+    # batch aggregate (see create_pick_batch for the same rationale).
 
-    # 7. Update batch totals
+    # 6. Update batch totals
     total_picks = db.execute(
         text("SELECT COUNT(*) FROM pick_tasks WHERE batch_id = :bid"),
         {"bid": batch_id},

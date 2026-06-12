@@ -7,8 +7,10 @@ point; this file focuses on the service-level invariants:
 
 - Idempotent on already-CANCELLED.
 - SHIPPED rejection raises CancelNotAllowed.
-- ALLOCATED / PICKING unwind: inventory.quantity_allocated released,
-  pending pick_tasks deleted, pick_batch_orders dropped.
+- OPEN-with-allocation unwind: inventory.quantity_allocated released,
+  pending pick_tasks deleted, pick_batch_orders dropped. (PICKING was
+  retired in mig 060; the "in batch" signal is now allocation state
+  on the OPEN SO rather than a distinct status.)
 - PICKED / PACKED unwind: inventory.quantity_on_hand on the default
   receiving bin increments by quantity_picked per line; sales_order_lines
   reset quantity_picked / quantity_packed = 0 and status = 'PENDING';
@@ -180,16 +182,19 @@ class TestOpenStatus:
         assert result["audit_log_id"] is not None
 
 
-class TestPickingStatus:
-    def test_picking_releases_allocation_and_drops_pick_tasks(self, _db_transaction):
+class TestOpenWithAllocation:
+    def test_open_with_allocation_releases_and_drops_pick_tasks(self, _db_transaction):
+        # Post mig 060 the PICKING status no longer exists. An OPEN SO
+        # with quantity_allocated > 0 (sitting inside an active batch)
+        # is the new "release allocation on cancel" path.
         from services.sales_order_service import cancel_sales_order
         db = _db_transaction
         _ensure_user("op")
         item_id = _insert_item()
-        so_id = _insert_so(status="PICKING")
+        so_id = _insert_so(status="OPEN")
         _set_inv(item_id, bin_id=3, qty_on_hand=10, qty_allocated=2)
         sol_id = _insert_so_line(so_id, item_id, qty_allocated=2,
-                                  status="ALLOCATED")
+                                  status="PENDING")
         _insert_pick_task(so_id, sol_id, item_id, bin_id=3, qty=2,
                           status="PENDING")
 
@@ -379,7 +384,12 @@ class TestAuditLogShape:
         from services.sales_order_service import cancel_sales_order
         db = _db_transaction
         _ensure_user("op")
-        so_id = _insert_so(status="PICKING")
+        so_id = _insert_so(status="PICKED")
+        row_count = db.execute(
+            sa_text("SELECT COUNT(*) FROM sales_orders WHERE so_id = :s"),
+            {"s": so_id},
+        ).scalar()
+        assert row_count == 1
         cancel_sales_order(
             db, so_id=so_id, source="admin", username="op",
         )
@@ -395,7 +405,7 @@ class TestAuditLogShape:
         details = row.details if isinstance(row.details, dict) else None
         # details is JSONB; psycopg2 returns dict
         assert details is not None
-        assert details["pre_status"] == "PICKING"
+        assert details["pre_status"] == "PICKED"
         assert details["source"] == "admin"
 
     def test_chain_intact_after_cancel(self, _db_transaction):

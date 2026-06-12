@@ -7,7 +7,7 @@ from flask import g, jsonify, request
 from sqlalchemy import text
 
 from constants import (
-    PO_OPEN, PO_CLOSED, SO_OPEN, SO_PICKING, SO_PICKED, SO_PACKED, SO_CANCELLED,
+    PO_OPEN, PO_CLOSED, SO_OPEN, SO_PICKED, SO_PACKED, SO_CANCELLED,
     TASK_PENDING, ADJ_PENDING,
     ACTION_PICK,
     ACTION_SO_ADDRESS_EDITED,

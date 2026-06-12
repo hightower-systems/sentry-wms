@@ -509,7 +509,7 @@ def test_wave_pick_to_pack_flow(client, auth_headers):
     assert summary["total_orders"] == 3
     assert summary["total_shorts"] == 0
 
-    # Verify each SO is now PICKING status and can be packed
+    # Verify each SO is now in PICKED state and can be loaded by packing.
     for so_id, barcode in [(so1, "SO-FLOW-1"), (so2, "SO-FLOW-2"), (so3, "SO-FLOW-3")]:
         pack_resp = client.get(f"/api/packing/order/{barcode}", headers=auth_headers)
         assert pack_resp.status_code == 200

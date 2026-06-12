@@ -24,18 +24,12 @@ from constants import (
     SO_OPEN,
     SO_PACKED,
     SO_PICKED,
-    SO_PICKING,
     SO_SHIPPED,
     TASK_PENDING,
 )
 from services.audit_service import write_audit_log
 from services.inventory_service import add_inventory
 
-
-# "ALLOCATED" appears as a SO state in the existing codebase but has no
-# named constant in api/constants.py. Mirroring the literal here so the
-# helper does not introduce its own unnamed magic value.
-_SO_ALLOCATED = "ALLOCATED"
 
 # Allowed source values for the audit_log.details.source field. Both
 # admin and inbound flows must pass one of these so an audit reader can
@@ -83,9 +77,12 @@ def cancel_sales_order(
     Locks the sales_orders row with FOR UPDATE so a concurrent ship /
     pick cannot transition past us mid-cancel. Per-status unwind:
 
-    - OPEN: status flip only.
-    - ALLOCATED / PICKING: release inventory.quantity_allocated, delete
-      pending pick_tasks + pick_batch_orders.
+    - OPEN: if the SO has been allocated to an active pick batch
+      (sales_order_lines.quantity_allocated > 0), release the
+      inventory.quantity_allocated, delete pending pick_tasks +
+      pick_batch_orders; otherwise status flip only. PICKING was
+      retired in mig 060, so allocation state replaces it as the
+      "is this inside a batch?" signal.
     - PICKED / PACKED: increment inventory.quantity_on_hand at the
       default receiving bin by each line's quantity_picked, reset
       sales_order_lines.quantity_picked / quantity_packed = 0 and
@@ -141,11 +138,14 @@ def cancel_sales_order(
     pre_status = so.status
     warehouse_id = so.warehouse_id
 
-    if pre_status in (_SO_ALLOCATED, SO_PICKING):
+    if pre_status == SO_OPEN:
+        # OPEN with no allocation: _unwind_allocated's SELECT returns
+        # nothing and the DELETEs are no-ops. OPEN inside an active
+        # batch (pre-mig 060 this would have been PICKING): release
+        # allocation, drop pending tasks and pick_batch_orders.
         _unwind_allocated(db, so_id)
     elif pre_status in (SO_PICKED, SO_PACKED):
         _unwind_picked_or_packed(db, so_id, warehouse_id)
-    # SO_OPEN: no inventory unwind; only the status flip below.
 
     db.execute(
         text(
@@ -179,9 +179,9 @@ def _unwind_allocated(db, so_id: int) -> None:
     """Pre-pick state unwind: release inventory.quantity_allocated for
     each line's pending pick_tasks, zero out
     sales_order_lines.quantity_allocated, then delete pending
-    pick_tasks + pick_batch_orders. Mirrors the pre-existing
-    admin_orders cancel path so behavior is unchanged for the OPEN /
-    ALLOCATED / PICKING transitions."""
+    pick_tasks + pick_batch_orders. Safe to call on an OPEN SO with
+    no allocation: the SELECT returns nothing and the DELETEs are
+    no-ops."""
     lines = db.execute(
         text(
             "SELECT so_line_id, item_id, quantity_allocated "

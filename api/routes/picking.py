@@ -7,7 +7,6 @@ from sqlalchemy import text
 
 from constants import (
     BATCH_OPEN, BATCH_IN_PROGRESS, BATCH_CANCELLED,
-    SO_OPEN, SO_PICKING,
     TASK_PENDING, TASK_PICKED, TASK_SHORT, TASK_SKIPPED,
 )
 from middleware.auth_middleware import require_auth, check_warehouse_access
@@ -312,16 +311,8 @@ def cancel_batch(validated):
             {"qty": task.quantity_to_pick, "iid": task.item_id, "bid": task.bin_id},
         )
 
-    # Reset SO statuses back to OPEN for orders that haven't been picked
-    g.db.execute(
-        text("""
-            UPDATE sales_orders SET status = :so_status
-            WHERE so_id IN (
-                SELECT DISTINCT so_id FROM pick_tasks WHERE batch_id = :bid
-            ) AND status IN (:s_picking, :s_open)
-        """),
-        {"bid": batch_id, "so_status": SO_OPEN, "s_picking": SO_PICKING, "s_open": SO_OPEN},
-    )
+    # SOs in a cancelled batch stay OPEN (PICKING was retired in mig 060);
+    # no status reset is required.
 
     # Mark batch and all pending tasks as cancelled
     g.db.execute(
