@@ -2,6 +2,24 @@
 
 All notable changes to Sentry WMS will be documented in this file.
 
+## [v1.11.0] - 2026-06-12
+
+"Status simplification" release. The sales_orders lifecycle drops three statuses that production showed were dead weight: PACKING was never set by application code, ALLOCATED was a comment-only value, and PICKING merely mirrored "this SO sits inside an active pick batch," state already carried by `pick_batch_orders` + `pick_batches`. The lifecycle is now **OPEN -> PICKED -> PACKED -> SHIPPED**, with CANCELLED as the off-ramp. Picking concurrency is unchanged: row locks and the pick_batches aggregate still serialize batch creation and completion.
+
+**Mobile.** Zero mobile/ diffs on this release; no new APK build for v1.11.0.
+
+### Breaking changes
+
+- **PICKING, PACKING, ALLOCATED retired from the SO lifecycle** (#351): `sales_orders.status` never returns PICKING or PACKING; `sales_order_lines.status` never returns ALLOCATED. Status filters using retired values match nothing (no error). External automation keying on the retired statuses must move to the derived signal: an SO is "in picking" when it has a `pick_batch_orders` row whose batch is OPEN or IN_PROGRESS. Migration 060 **runs a backfill**: live orders in retired statuses fold to OPEN, ALLOCATED lines fold to PENDING (no-op on databases that never held them). If folded orders belonged to open pick batches, cancel or complete those batches before re-enabling pick traffic; `create_pick_batch` now refuses an OPEN SO that already sits in an active batch.
+
+### Changed
+
+- `cancel_sales_order` folds the former PICKING branch into OPEN: an OPEN SO with allocated quantity is the release-allocation-on-cancel path. Dashboard `in_picking` is derived via the batch join; `ready_to_pick` is open SOs minus in-picking, so the tiles stay disjoint.
+
+### Migrations
+
+- **060** (#351) -- retire statuses, executed backfill, column comments updated.
+
 ## [v1.10.4] - 2026-06-12
 
 Patch release. Three API-reliability fixes from production: cash tenders no longer fail POS checkout validation, pooled DB connections are validated before use so the first request after an idle period stops 500ing, and the SO detail endpoint returns the customer phone and address it already accepted on PUT.
