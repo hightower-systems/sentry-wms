@@ -1,0 +1,1128 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source warehouse management system for e-commerce">
+      
+      
+      
+        <link rel="canonical" href="https://hightower-systems.github.io/sentry-wms/transfer-orders/">
+      
+      
+        <link rel="prev" href="../erp-integration/">
+      
+      
+        <link rel="next" href="../test-lab/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Transfer Orders - Sentry WMS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Instrument+Sans:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Instrument Sans";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#transfer-orders" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Sentry WMS" class="md-header__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Sentry WMS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Transfer Orders
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Sentry WMS" class="md-nav__button md-logo" aria-label="Sentry WMS" data-md-component="logo">
+      
+  <img src="../assets/logo.png" alt="logo">
+
+    </a>
+    Sentry WMS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hightower-systems/sentry-wms" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    hightower-systems/sentry-wms
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Panel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../erp-integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ERP Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transfer Orders
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transfer Orders
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle at a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-to-via-csv-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating a TO via CSV import
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#picking-a-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Picking a TO
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#submitting-picks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Submitting picks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-approval" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin approval
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-rejection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin rejection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cancel-delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancel + delete
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#short-close-a-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short-close a line
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-modes-operator-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure modes -- operator action
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-trail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit trail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test-lab/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Lab
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle at a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-a-to-via-csv-import" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating a TO via CSV import
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#picking-a-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Picking a TO
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#submitting-picks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Submitting picks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-approval" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin approval
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-rejection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin rejection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cancel-delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancel + delete
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#short-close-a-line" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short-close a line
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-modes-operator-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure modes -- operator action
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-trail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit trail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="transfer-orders">Transfer Orders</h1>
+<p>Operator playbook for warehouse-to-warehouse transfers (v1.8.0). A transfer order (TO) moves a set of items from one warehouse to another with admin-approval gating between the picker and the inventory move.</p>
+<h2 id="lifecycle-at-a-glance">Lifecycle at a glance</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                    CSV import
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                        |
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                        v
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                     OPEN ---------&gt; CANCELLED  (admin pre-pick)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                        |                     |
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                        | first pick          |
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                        v                     |
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>              PARTIALLY_PICKED ---------&gt; CANCELLED  (admin pre-approval)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                        |
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                        | all lines fully picked or short-closed
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                        v
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>              AWAITING_APPROVAL ---+
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>                        |         |
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>                        | admin   |
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>                        | approves|
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>                        | each    |
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>                        | batch   |
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>                        v         |
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>                    APPROVED -----+ (back to PARTIALLY_PICKED while
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>                        |           multi-batch picks continue)
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>                        | all approvals processed
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>                        v
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>                     CLOSED
+</code></pre></div>
+<p>Inventory moves only at admin <strong>approve</strong>. A <strong>reject</strong> leaves source stock at the source warehouse so the picker can re-pick or the operator can short-close the line.</p>
+<h2 id="roles">Roles</h2>
+<ul>
+<li><strong>Admin</strong> -- creates TOs (CSV import), starts picking (creates the pick batch + tasks), approves / rejects picker submissions, cancels / deletes TOs, short-closes lines.</li>
+<li><strong>Picker</strong> -- works the pick tasks the admin starts; submits batches of picks for admin approval. Picker uses the existing mobile picking flow; the picker UI shows "TO {to_number}" instead of "X orders" when the active batch is a TO pick.</li>
+</ul>
+<h2 id="creating-a-to-via-csv-import">Creating a TO via CSV import</h2>
+<p><code>Admin Panel -&gt; Warehouse -&gt; Transfer Orders -&gt; Import CSV</code>.</p>
+<p>CSV shape (two columns; header row required):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>sku,quantity
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>SKU-A,5
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>SKU-B,12
+</code></pre></div>
+<p>The Import modal asks for <strong>source warehouse</strong>, <strong>destination warehouse</strong>, and <strong>optional notes</strong> at the request level (not per row, by design -- one TO ships from one source to one destination). Source must differ from destination (422 enforced).</p>
+<p>The handler:</p>
+<ol>
+<li>Validates each row via <code>TransferOrderImportRow</code> (formula-prefix protection on every text field).</li>
+<li>Resolves SKUs to <code>items.item_id</code>. Unknown SKU returns 422 with the row index.</li>
+<li>Walks inventory rows for <code>(item, source_warehouse)</code> in <code>inventory_id ASC</code> (matches the picking + cancel lock ordering).</li>
+<li>Computes <code>committed_qty = min(requested, available)</code> per row and distributes the commit across bins.</li>
+<li>Creates the <code>transfer_orders</code> header + <code>transfer_order_lines</code> rows. Lines with <code>committed_qty = 0</code> land <code>SHORT_CLOSED</code> so they don't block closure.</li>
+<li>Returns a <strong>shortages payload</strong> for any line where <code>committed_qty &lt; requested_qty</code>.</li>
+</ol>
+<p>The Shortage Modal that opens on response gives three actions:</p>
+<ul>
+<li><strong>Download Shortage CSV</strong> -- export the (sku, requested, available, committed, shortfall) table for ops follow-up.</li>
+<li><strong>Cancel TO</strong> -- DELETE the just-created TO (releases the partial reservation).</li>
+<li><strong>Create with Available</strong> -- dismiss the modal; the TO is already created with the partial commitments.</li>
+</ul>
+<h2 id="picking-a-to">Picking a TO</h2>
+<p>Admin opens the TO detail and clicks <strong>Start Picking</strong>. The handler:</p>
+<ul>
+<li>Walks lines with <code>picked_qty &lt; committed_qty</code>.</li>
+<li>For each line, finds inventory rows at the source warehouse and creates one <code>pick_tasks</code> row per <code>(line, bin)</code> with <code>to_id</code> + <code>to_line_id</code> set (no <code>so_id</code>).</li>
+<li>Anchors the tasks under a fresh <code>pick_batch</code> row.</li>
+</ul>
+<p>The picker then opens the mobile app, sees the active batch (with the "ACTIVE TRANSFER" label and the TO number on the v1.8 APK; "ACTIVE BATCH" + "0 orders" on the v1.5.1 APK), and works the tasks via the existing PickWalk + scan flow. Each confirmed pick:</p>
+<ul>
+<li>Updates <code>transfer_order_lines.picked_qty</code> via a WHERE-clause guard (<code>picked_qty + delta &lt;= committed_qty AND status IN (PENDING, PARTIALLY_PICKED)</code>); over-pick attempts return 409 from the server.</li>
+<li>Does <strong>NOT</strong> decrement source <code>quantity_on_hand</code> (TO inventory moves only at approval; the <code>quantity_allocated</code> reservation persists).</li>
+<li>Writes an <code>ACTION_TO_LINE_PICKED</code> audit row.</li>
+</ul>
+<p>When all lines reach PICKED or SHORT_CLOSED, the header advances to AWAITING_APPROVAL.</p>
+<h2 id="submitting-picks">Submitting picks</h2>
+<p>Picker opens the TO and clicks <strong>Submit</strong> (mobile or admin UI). The handler:</p>
+<ul>
+<li>Finds lines where <code>picked_qty &gt; approved_qty</code> (new picks since the last submit).</li>
+<li>Snapshots <code>(to_line_id, item_id, picked_in_snapshot)</code> into a fresh <code>transfer_order_approvals</code> row with status <code>PENDING</code>.</li>
+<li>Returns 422 <code>nothing_picked</code> when no lines qualify.</li>
+</ul>
+<p>A TO can have multiple approval rows when picking spans several batches; each batch is approved or rejected independently.</p>
+<h2 id="admin-approval">Admin approval</h2>
+<p>Admin opens the TO detail and clicks <strong>Approve</strong> on a pending submission row.</p>
+<ul>
+<li><strong>Self-approval gate</strong>: by default <code>app_settings.transfer_order_block_self_approval = true</code>, so the picker who submitted cannot approve their own batch. Admin gets 403 <code>self_approval_blocked</code>. Set the setting to <code>false</code> if a single-admin warehouse needs the same person to submit + approve.</li>
+<li>For each line in the snapshot:</li>
+<li><code>transfer_order_lines.approved_qty += picked_in_snapshot</code></li>
+<li>Source: <code>inventory.quantity_allocated -= snapshot_qty</code>, <code>quantity_on_hand -= snapshot_qty</code> distributed across bins in <code>inventory_id ASC</code>.</li>
+<li>Destination: <code>inventory.quantity_on_hand += snapshot_qty</code> at the destination warehouse's first <strong>Staging</strong> bin (INSERTs an inventory row when missing).</li>
+<li>The approval row flips to APPROVED with <code>approved_at</code> + <code>approved_by</code>.</li>
+<li>Closure check: when all lines are APPROVED with <code>approved_qty == picked_qty</code> (or SHORT_CLOSED) and no PENDING approvals remain, the header flips to CLOSED.</li>
+<li>An <code>inventorytransfer.completed/1</code> event lands in the <code>integration_events</code> outbox so external consumers can react.</li>
+</ul>
+<p><strong>Required setup at the destination warehouse</strong>: at least one bin with <code>bin_type='Staging'</code>. Approve returns 409 <code>no_destination_staging_bin</code> otherwise.</p>
+<h2 id="admin-rejection">Admin rejection</h2>
+<p>Admin clicks <strong>Reject</strong> with an optional reason (max 1000 chars). The approval row flips to REJECTED with <code>rejected_at</code> + <code>rejection_reason</code>. <strong>No inventory movement</strong>, <strong>no event emission</strong>. The picker can re-pick the affected lines (the source stock is still there) or the operator can short-close the line if the picks should not return.</p>
+<h2 id="cancel-delete">Cancel + delete</h2>
+<ul>
+<li><strong>Cancel</strong> -- valid pre-approval (statuses OPEN, PARTIALLY_PICKED). Releases the remaining <code>committed - approved</code> reservation on each line. Returns 409 <code>to_already_partially_approved</code> when a non-PENDING approval row exists (the multi-batch audit trail must not be nuked).</li>
+<li><strong>Delete</strong> -- only valid for OPEN TOs with no picks and no approvals. Use Cancel for everything else.</li>
+</ul>
+<h2 id="short-close-a-line">Short-close a line</h2>
+<p><code>Admin Panel -&gt; TO detail -&gt; Short-Close</code> on the line row. Transitions the line to SHORT_CLOSED and releases <code>committed_qty - approved_qty</code> back to source <code>inventory.quantity_allocated</code>. Used when the picker can't fulfil the remaining commitment and the operator wants to lock the line out without cancelling the whole TO.</p>
+<h2 id="failure-modes-operator-action">Failure modes -- operator action</h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Response</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CSV row references unknown SKU</td>
+<td>422 <code>unknown_sku</code> with row index</td>
+<td>Add the SKU to items via inbound POST or admin UI, retry import</td>
+</tr>
+<tr>
+<td>CSV row quantity &lt;= 0</td>
+<td>422 <code>validation_error</code> with row index</td>
+<td>Fix the quantity, retry</td>
+</tr>
+<tr>
+<td>Source warehouse equals destination</td>
+<td>422 <code>source_and_destination_must_differ</code></td>
+<td>Pick distinct warehouses</td>
+</tr>
+<tr>
+<td>Inventory has 0 available for an SKU</td>
+<td>TO created, line lands SHORT_CLOSED in shortage modal</td>
+<td>Wait for replenishment or short-close at import</td>
+</tr>
+<tr>
+<td>Two pickers pick the same line totalling &gt; committed_qty</td>
+<td>Second pick 409 over-pick</td>
+<td>Second picker re-syncs and picks remaining</td>
+</tr>
+<tr>
+<td>Admin tries to approve own submission with gate ON</td>
+<td>403 <code>self_approval_blocked</code></td>
+<td>Different admin approves, or operator flips <code>app_settings.transfer_order_block_self_approval=false</code></td>
+</tr>
+<tr>
+<td>Destination warehouse has no Staging bin</td>
+<td>Approve 409 <code>no_destination_staging_bin</code></td>
+<td>Add a Staging bin at the destination, retry</td>
+</tr>
+<tr>
+<td>Admin tries to delete a TO with picks or approvals</td>
+<td>409 <code>to_not_deletable</code></td>
+<td>Use Cancel instead</td>
+</tr>
+<tr>
+<td>Admin tries to cancel a TO with non-pending approvals</td>
+<td>409 <code>to_already_partially_approved</code></td>
+<td>Process the remaining approvals or short-close the lines</td>
+</tr>
+<tr>
+<td>Picker submits with no new picks</td>
+<td>422 <code>nothing_picked</code></td>
+<td>Pick more lines before submitting</td>
+</tr>
+</tbody>
+</table>
+<h2 id="audit-trail">Audit trail</h2>
+<p>Every state-changing action writes one <code>audit_log</code> row through the V-025 hash chain:</p>
+<ul>
+<li><code>TO_CREATED</code> (entity_type=<code>TO</code>) on import.</li>
+<li><code>TO_LINE_PICKED</code> (entity_type=<code>TO_LINE</code>) on each picker confirm.</li>
+<li><code>TO_SUBMITTED</code> (entity_type=<code>TO</code>) on each picker submission, with <code>to_approval_id</code> in details.</li>
+<li><code>TO_APPROVED</code> / <code>TO_REJECTED</code> (entity_type=<code>TO_APPROVAL</code>) on each admin action.</li>
+<li><code>TO_LINE_SHORT_CLOSED</code> (entity_type=<code>TO_LINE</code>) on short-close.</li>
+<li><code>TO_CANCELLED</code> (entity_type=<code>TO</code>) on cancel.</li>
+<li><code>TO_DELETED</code> (entity_type=<code>TO</code>) on delete.</li>
+<li><code>TO_CLOSED</code> (entity_type=<code>TO</code>) when the header reaches CLOSED.</li>
+</ul>
+<p>Investigators can reconstruct the full TO lifecycle from the audit chain without scanning the row diff.</p>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../erp-integration/">ERP Integration</a> -- how source ERPs push canonical-shaped resource updates to Sentry (the inbound side of transfers).</li>
+<li><a href="../api-reference/">API Reference</a> -- the REST surface for TO + approval routes.</li>
+<li><a href="../audit-log/">Audit log</a> -- chain integrity + tamper-evidence guarantees.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

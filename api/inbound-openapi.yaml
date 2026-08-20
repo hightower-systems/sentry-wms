@@ -1,0 +1,623 @@
+components:
+  schemas:
+    InboundBody:
+      additionalProperties: false
+      properties:
+        external_id:
+          maxLength: 128
+          minLength: 1
+          title: External Id
+          type: string
+        external_version:
+          maxLength: 64
+          minLength: 1
+          title: External Version
+          type: string
+        mapping_overrides:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          default: null
+          title: Mapping Overrides
+        source_payload:
+          additionalProperties: true
+          title: Source Payload
+          type: object
+      required:
+      - external_id
+      - external_version
+      - source_payload
+      title: InboundBody
+      type: object
+  securitySchemes:
+    WmsToken:
+      description: Inbound token issued via the admin Tokens page. Must carry source_system
+        + non-empty inbound_resources for this surface.
+      in: header
+      name: X-WMS-Token
+      type: apiKey
+info:
+  description: 'Inbound write surface for external systems and internal tools. v1.7
+    ships the canonical model as DRAFT; X-Sentry-Canonical-Model: DRAFT-v1 header
+    on every response. Schema may break at v2.0 once NetSuite validation drives the
+    canonical lock.'
+  title: SentryWMS v1.7.0 Inbound (Pipe B)
+  version: 1.7.0
+openapi: 3.1.0
+paths:
+  /api/v1/inbound/customers:
+    post:
+      description: 'Idempotent on (source_system, external_id, external_version).
+        The source_system is bound to the X-WMS-Token; admins set it at issuance and
+        the decorator enforces it on every call. v1.7 ships the canonical model as
+        DRAFT; X-Sentry-Canonical-Model: DRAFT-v1 header on every response.'
+      operationId: post_inbound_customers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundBody'
+        required: true
+      responses:
+        '200': &id002
+          description: Idempotent re-POST of the exact same (source_system, external_id,
+            external_version) triple. Body identical to the original 201 response.
+            No second write, no audit row, no event emission.
+          headers:
+            X-Sentry-Canonical-Model: &id001
+              description: Always set to DRAFT-v1 in v1.7.0. Indicates the canonical
+                model may break at v2.0 once NetSuite validation drives schema lock.
+              schema:
+                enum:
+                - DRAFT-v1
+                type: string
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  canonical_id:
+                    format: uuid
+                    type: string
+                  canonical_type:
+                    enum:
+                    - customer
+                    type: string
+                  inbound_id:
+                    type: integer
+                  received_at:
+                    format: date-time
+                    type: string
+                  warning:
+                    description: DRAFT-v1 stability notice; canonical model may break
+                      at v2.0.
+                    type: string
+                required:
+                - inbound_id
+                - canonical_id
+                - canonical_type
+                - received_at
+                - warning
+                type: object
+          description: First-write of (source_system, external_id, external_version).
+            Canonical row created, cross_system_mappings row inserted on first-receipt,
+            audit_log entry written.
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '403': &id003
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    type: string
+                  error_kind:
+                    type: string
+                  message:
+                    type: string
+                type: object
+          description: 'Scope violation. error_kind one of: cross_direction_scope_violation
+            (token tried to cross the inbound / outbound boundary), inbound_resource_scope_violation
+            (token''s inbound_resources does not list the target), mapping_override_capability_required
+            (body carried mapping_overrides but token lacks the capability flag).'
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '409':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - &id004
+                  properties:
+                    current_received_at:
+                      format: date-time
+                      type: string
+                    current_version:
+                      type: string
+                    error_kind:
+                      enum:
+                      - stale_version
+                      type: string
+                    message:
+                      type: string
+                  required:
+                  - error_kind
+                  - current_version
+                  type: object
+                - properties:
+                    error_kind:
+                      enum:
+                      - lock_held
+                      type: string
+                    message:
+                      type: string
+                  type: object
+                - properties:
+                    error_kind:
+                      enum:
+                      - cross_system_lookup_miss
+                      type: string
+                    message:
+                      type: string
+                    missing:
+                      properties:
+                        source_id:
+                          type: string
+                        source_system:
+                          type: string
+                        source_type:
+                          type: string
+                      required:
+                      - source_system
+                      - source_type
+                      - source_id
+                      type: object
+                  type: object
+          description: 'Three error_kinds: stale_version, lock_held (with Retry-After:
+            1 header), cross_system_lookup_miss.'
+          headers:
+            Retry-After: &id005
+              description: Seconds to wait before retrying a 409 lock_held response.
+                Pinned to 1 in v1.7.0.
+              schema:
+                type: integer
+            X-Sentry-Canonical-Model: *id001
+        '413': &id006
+          description: 'body_too_large: Content-Length exceeds SENTRY_INBOUND_MAX_BODY_KB
+            (16-4096 KB; default 256).'
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '422': &id007
+          description: validation_error (Pydantic strict body fail) or canonical_constraint_violation
+            (NOT NULL column not covered by the source's mapping doc field set).
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '503': &id008
+          description: 'mapping_document_not_loaded: the boot cross-check between
+            inbound_source_systems_allowlist and db/mappings/ was bypassed. Restart
+            with the matching YAML in place.'
+          headers:
+            X-Sentry-Canonical-Model: *id001
+      security:
+      - WmsToken: []
+      summary: Upsert one external customer into the canonical model
+      tags:
+      - inbound
+  /api/v1/inbound/items:
+    post:
+      description: 'Idempotent on (source_system, external_id, external_version).
+        The source_system is bound to the X-WMS-Token; admins set it at issuance and
+        the decorator enforces it on every call. v1.7 ships the canonical model as
+        DRAFT; X-Sentry-Canonical-Model: DRAFT-v1 header on every response.'
+      operationId: post_inbound_items
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundBody'
+        required: true
+      responses:
+        '200': *id002
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  canonical_id:
+                    format: uuid
+                    type: string
+                  canonical_type:
+                    enum:
+                    - item
+                    type: string
+                  inbound_id:
+                    type: integer
+                  received_at:
+                    format: date-time
+                    type: string
+                  warning:
+                    description: DRAFT-v1 stability notice; canonical model may break
+                      at v2.0.
+                    type: string
+                required:
+                - inbound_id
+                - canonical_id
+                - canonical_type
+                - received_at
+                - warning
+                type: object
+          description: First-write of (source_system, external_id, external_version).
+            Canonical row created, cross_system_mappings row inserted on first-receipt,
+            audit_log entry written.
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '403': *id003
+        '409':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - *id004
+                - properties:
+                    error_kind:
+                      enum:
+                      - lock_held
+                      type: string
+                    message:
+                      type: string
+                  type: object
+                - properties:
+                    error_kind:
+                      enum:
+                      - cross_system_lookup_miss
+                      type: string
+                    message:
+                      type: string
+                    missing:
+                      properties:
+                        source_id:
+                          type: string
+                        source_system:
+                          type: string
+                        source_type:
+                          type: string
+                      required:
+                      - source_system
+                      - source_type
+                      - source_id
+                      type: object
+                  type: object
+          description: 'Three error_kinds: stale_version, lock_held (with Retry-After:
+            1 header), cross_system_lookup_miss.'
+          headers:
+            Retry-After: *id005
+            X-Sentry-Canonical-Model: *id001
+        '413': *id006
+        '422': *id007
+        '503': *id008
+      security:
+      - WmsToken: []
+      summary: Upsert one external item into the canonical model
+      tags:
+      - inbound
+  /api/v1/inbound/mapping-schema:
+    get:
+      description: Documentation aid; unauthenticated. Returns the JSON Schema (Draft
+        2020-12) consumers / tooling use to validate db/mappings/<source_system>.yaml
+        offline. Generated from services.mapping_loader.MappingDocument; see docs/api/mapping-document-schema.json
+        for the committed copy.
+      operationId: get_inbound_mapping_schema
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+          description: JSON Schema document.
+          headers:
+            X-Sentry-Canonical-Model: *id001
+      security: []
+      summary: Fetch the JSON Schema for the mapping-document format
+      tags:
+      - inbound
+  /api/v1/inbound/purchase_orders:
+    post:
+      description: 'Idempotent on (source_system, external_id, external_version).
+        The source_system is bound to the X-WMS-Token; admins set it at issuance and
+        the decorator enforces it on every call. v1.7 ships the canonical model as
+        DRAFT; X-Sentry-Canonical-Model: DRAFT-v1 header on every response.'
+      operationId: post_inbound_purchase_orders
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundBody'
+        required: true
+      responses:
+        '200': *id002
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  canonical_id:
+                    format: uuid
+                    type: string
+                  canonical_type:
+                    enum:
+                    - purchase_order
+                    type: string
+                  inbound_id:
+                    type: integer
+                  received_at:
+                    format: date-time
+                    type: string
+                  warning:
+                    description: DRAFT-v1 stability notice; canonical model may break
+                      at v2.0.
+                    type: string
+                required:
+                - inbound_id
+                - canonical_id
+                - canonical_type
+                - received_at
+                - warning
+                type: object
+          description: First-write of (source_system, external_id, external_version).
+            Canonical row created, cross_system_mappings row inserted on first-receipt,
+            audit_log entry written.
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '403': *id003
+        '409':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - *id004
+                - properties:
+                    error_kind:
+                      enum:
+                      - lock_held
+                      type: string
+                    message:
+                      type: string
+                  type: object
+                - properties:
+                    error_kind:
+                      enum:
+                      - cross_system_lookup_miss
+                      type: string
+                    message:
+                      type: string
+                    missing:
+                      properties:
+                        source_id:
+                          type: string
+                        source_system:
+                          type: string
+                        source_type:
+                          type: string
+                      required:
+                      - source_system
+                      - source_type
+                      - source_id
+                      type: object
+                  type: object
+          description: 'Three error_kinds: stale_version, lock_held (with Retry-After:
+            1 header), cross_system_lookup_miss.'
+          headers:
+            Retry-After: *id005
+            X-Sentry-Canonical-Model: *id001
+        '413': *id006
+        '422': *id007
+        '503': *id008
+      security:
+      - WmsToken: []
+      summary: Upsert one external purchase_order into the canonical model
+      tags:
+      - inbound
+  /api/v1/inbound/sales_orders:
+    post:
+      description: 'Idempotent on (source_system, external_id, external_version).
+        The source_system is bound to the X-WMS-Token; admins set it at issuance and
+        the decorator enforces it on every call. v1.7 ships the canonical model as
+        DRAFT; X-Sentry-Canonical-Model: DRAFT-v1 header on every response.'
+      operationId: post_inbound_sales_orders
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundBody'
+        required: true
+      responses:
+        '200': *id002
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  canonical_id:
+                    format: uuid
+                    type: string
+                  canonical_type:
+                    enum:
+                    - sales_order
+                    type: string
+                  inbound_id:
+                    type: integer
+                  received_at:
+                    format: date-time
+                    type: string
+                  warning:
+                    description: DRAFT-v1 stability notice; canonical model may break
+                      at v2.0.
+                    type: string
+                required:
+                - inbound_id
+                - canonical_id
+                - canonical_type
+                - received_at
+                - warning
+                type: object
+          description: First-write of (source_system, external_id, external_version).
+            Canonical row created, cross_system_mappings row inserted on first-receipt,
+            audit_log entry written.
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '403': *id003
+        '409':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - *id004
+                - properties:
+                    error_kind:
+                      enum:
+                      - lock_held
+                      type: string
+                    message:
+                      type: string
+                  type: object
+                - properties:
+                    error_kind:
+                      enum:
+                      - cross_system_lookup_miss
+                      type: string
+                    message:
+                      type: string
+                    missing:
+                      properties:
+                        source_id:
+                          type: string
+                        source_system:
+                          type: string
+                        source_type:
+                          type: string
+                      required:
+                      - source_system
+                      - source_type
+                      - source_id
+                      type: object
+                  type: object
+          description: 'Three error_kinds: stale_version, lock_held (with Retry-After:
+            1 header), cross_system_lookup_miss.'
+          headers:
+            Retry-After: *id005
+            X-Sentry-Canonical-Model: *id001
+        '413': *id006
+        '422': *id007
+        '503': *id008
+      security:
+      - WmsToken: []
+      summary: Upsert one external sales_order into the canonical model
+      tags:
+      - inbound
+  /api/v1/inbound/vendors:
+    post:
+      description: 'Idempotent on (source_system, external_id, external_version).
+        The source_system is bound to the X-WMS-Token; admins set it at issuance and
+        the decorator enforces it on every call. v1.7 ships the canonical model as
+        DRAFT; X-Sentry-Canonical-Model: DRAFT-v1 header on every response.'
+      operationId: post_inbound_vendors
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundBody'
+        required: true
+      responses:
+        '200': *id002
+        '201':
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  canonical_id:
+                    format: uuid
+                    type: string
+                  canonical_type:
+                    enum:
+                    - vendor
+                    type: string
+                  inbound_id:
+                    type: integer
+                  received_at:
+                    format: date-time
+                    type: string
+                  warning:
+                    description: DRAFT-v1 stability notice; canonical model may break
+                      at v2.0.
+                    type: string
+                required:
+                - inbound_id
+                - canonical_id
+                - canonical_type
+                - received_at
+                - warning
+                type: object
+          description: First-write of (source_system, external_id, external_version).
+            Canonical row created, cross_system_mappings row inserted on first-receipt,
+            audit_log entry written.
+          headers:
+            X-Sentry-Canonical-Model: *id001
+        '403': *id003
+        '409':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - *id004
+                - properties:
+                    error_kind:
+                      enum:
+                      - lock_held
+                      type: string
+                    message:
+                      type: string
+                  type: object
+                - properties:
+                    error_kind:
+                      enum:
+                      - cross_system_lookup_miss
+                      type: string
+                    message:
+                      type: string
+                    missing:
+                      properties:
+                        source_id:
+                          type: string
+                        source_system:
+                          type: string
+                        source_type:
+                          type: string
+                      required:
+                      - source_system
+                      - source_type
+                      - source_id
+                      type: object
+                  type: object
+          description: 'Three error_kinds: stale_version, lock_held (with Retry-After:
+            1 header), cross_system_lookup_miss.'
+          headers:
+            Retry-After: *id005
+            X-Sentry-Canonical-Model: *id001
+        '413': *id006
+        '422': *id007
+        '503': *id008
+      security:
+      - WmsToken: []
+      summary: Upsert one external vendor into the canonical model
+      tags:
+      - inbound
+tags:
+- description: v1.7.0 Pipe B
+  name: inbound
+
