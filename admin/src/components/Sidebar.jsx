@@ -14,7 +14,7 @@ const NAV = [
   {
     label: 'Floor',
     items: [
-      { to: '/', label: 'Dashboard', pageKey: 'dashboard' },
+      { to: '/', label: 'Dashboard' },
       { to: '/inventory', label: 'Inventory', pageKey: 'inventory' },
       { to: '/cycle-counts', label: 'Counts', pageKey: 'cycle-counts' },
       { to: '/count-approvals', label: 'Approvals', pageKey: 'count-approvals' },
@@ -82,6 +82,7 @@ const NAV = [
     ],
   },
 ];
+export { NAV };
 
 export default function Sidebar() {
   const location = useLocation();
@@ -135,12 +136,30 @@ export default function Sidebar() {
     });
   }, [location.pathname, warehouseId]);
 
-  const navGroups = posActivityEnabled
+  const allowedPages = Array.isArray(user?.allowed_pages) ? user.allowed_pages : [];
+  const isAdmin = user?.role === 'ADMIN';
+
+  const permitted = isAdmin
     ? NAV
     : NAV.map((group) => ({
         ...group,
+        items: group.items.filter((item) => {
+          if (!item.pageKey && !item.pageKeys) return true;
+          if (item.pageKey && allowedPages.includes(item.pageKey)) return true;
+          if (Array.isArray(item.pageKeys) && item.pageKeys.some((k) => allowedPages.includes(k))) {
+            return true;
+          }
+          return false;
+        }),
+      })).filter((group) => group.items.length > 0);
+
+  const navGroups = (posActivityEnabled
+    ? permitted
+    : permitted.map((group) => ({
+        ...group,
         items: group.items.filter((item) => item.to !== '/pos-activity'),
-      }));
+      }))
+  ).filter((group) => group.items.length > 0);
 
   // Per-section collapse, persisted so a hidden section stays hidden across
   // reloads. The header carries a caret; clicking it toggles its items.
