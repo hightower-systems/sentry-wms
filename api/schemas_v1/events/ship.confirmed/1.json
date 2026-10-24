@@ -16,6 +16,7 @@
   "additionalProperties": false,
   "properties": {
     "sales_order_external_id": { "type": "string", "format": "uuid" },
+    "fulfillment_external_id": { "type": "string", "format": "uuid" },
     "tracking_numbers": {
       "type": "array",
       "minItems": 0,
@@ -47,7 +48,11 @@
               "additionalProperties": false,
               "properties": {
                 "item_external_id": { "type": "string", "format": "uuid" },
-                "quantity_packed": { "type": "integer", "minimum": 0 }
+                "quantity_packed": { "type": "integer", "minimum": 0 },
+                "so_line_id": { "type": "integer", "minimum": 1 },
+                "bin_id": { "type": "integer", "minimum": 1 },
+                "lot_number": { "type": ["string", "null"] },
+                "serial_number": { "type": ["string", "null"] }
               }
             }
           }

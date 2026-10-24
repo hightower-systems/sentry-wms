@@ -946,7 +946,7 @@ def _write_inbound_lines(db, document, resource_key, canonical_id,
     header_row = db.execute(
         text(
             f"SELECT {header_pk_col} FROM {canonical_table} "
-            f" WHERE external_id = :cid"
+            f" WHERE external_id = :cid FOR UPDATE"
         ),
         {"cid": str(canonical_id)},
     ).fetchone()
@@ -956,6 +956,23 @@ def _write_inbound_lines(db, document, resource_key, canonical_id,
             f"canonical_id={canonical_id}"
         )
     header_pk = getattr(header_row, header_pk_col)
+
+    # A partial-fulfillment BO can exist before any pick/ship counter changes.
+    # Keep its source line allocation immutable under the same header lock used
+    # by partial fulfillment; replacing only the root would duplicate BO work.
+    if resource_key == "sales_orders":
+        backorder = db.execute(
+            text(
+                "SELECT 1 FROM sales_orders "
+                " WHERE parent_so_id = :hpk AND order_type = 'backorder' LIMIT 1"
+            ),
+            {"hpk": header_pk},
+        ).fetchone()
+        if backorder is not None:
+            raise _LinesInFlight(
+                "sales_orders: existing backorder source line associations "
+                "cannot be replaced; send a header-only source update."
+            )
 
     # Downstream-activity gate.
     line_table = spec["line_table"]

@@ -1,6 +1,7 @@
 """Pydantic schemas for /api/v1/events (v1.5.0 #122 + #123)."""
 
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,6 +22,7 @@ class PollQuery(BaseModel):
     consumer_group: Optional[str] = Field(None, max_length=64)
     types: Optional[str] = Field(None, max_length=2048)
     warehouse_id: Optional[int] = Field(None, gt=0)
+    source_txn_id: Optional[UUID] = None
     limit: int = Field(500, ge=1, le=2000)
 
     @model_validator(mode="after")

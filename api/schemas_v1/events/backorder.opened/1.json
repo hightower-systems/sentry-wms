@@ -33,7 +33,10 @@
           "item_external_id":     { "type": "string", "format": "uuid" },
           "sku":                  { "type": "string" },
           "item_name":            { "type": ["string", "null"] },
-          "qty":                  { "type": "integer", "minimum": 1 }
+          "qty":                  { "type": "integer", "minimum": 1 },
+          "backorder_so_line_id": { "type": "integer", "minimum": 1 },
+          "parent_so_line_id":    { "type": "integer", "minimum": 1 },
+          "parent_line_number":  { "type": "integer", "minimum": 1 }
         }
       }
     },

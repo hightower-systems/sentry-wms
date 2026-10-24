@@ -16,7 +16,9 @@ from constants import (
     ALL_OVERRIDE_KEYS,
     ALL_PAGE_KEYS,
 )
-from middleware.auth_middleware import require_admin_or_page_permission, require_auth
+from middleware.auth_middleware import (
+    require_admin_or_page_permission, require_auth, check_warehouse_access, warehouse_scope_clause,
+)
 from middleware.db import with_db
 from routes.admin import VALID_ROLES, admin_bp
 from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustmentsRequest
@@ -28,6 +30,10 @@ from schemas.users import (
 )
 from services.audit_service import write_audit_log
 from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
+from services.adjustment_tracking_service import (
+    canonical_allocations, prepare_adjustment_allocations,
+    apply_adjustment_allocations, adjustment_review_proof,
+)
 from services.auth_service import validate_password
 from services.inventory_service import (
     add_inventory,
@@ -870,6 +876,7 @@ def review_adjustments(validated):
     # matcher once rather than once per decision.
     _released_pairs = set()
     _deferred_notifications = []
+    _review_serials = set()
 
     for decision in data["decisions"]:
         adj_id = decision.get("adjustment_id")
@@ -891,7 +898,25 @@ def review_adjustments(validated):
             {"aid": adj_id},
         ).fetchone()
 
-        if not row or row.status != ADJ_PENDING:
+        if not row:
+            return jsonify({"error": "Adjustment not found"}), 404
+        allowed, denial = check_warehouse_access(row.warehouse_id)
+        if not allowed:
+            return denial
+        if row.status != ADJ_PENDING:
+            if row.status == ADJ_REJECTED and action == "reject":
+                continue
+            if row.status != ADJ_APPROVED or action != "approve":
+                return jsonify({"error": "Adjustment was reviewed with a different decision"}), 409
+            try:
+                recorded, _ = adjustment_review_proof(g.db, row)
+                requested = decision.get("allocations")
+                if requested is None:
+                    requested = [{"bin_id": row.bin_id, "quantity": abs(row.quantity_change)}]
+                if canonical_allocations(requested) != recorded:
+                    raise ValueError("The approved variance allocations differ from this review")
+            except (ValueError, KeyError, TypeError):
+                return jsonify({"error": "The approved variance allocations could not be verified"}), 409
             continue
 
         # Separation of duties check for cycle count adjustments
@@ -905,23 +930,15 @@ def review_adjustments(validated):
                 return jsonify({"error": "Cannot approve your own cycle count"}), 403
 
         if action == "approve":
-            # Apply the inventory adjustment
-            existing = g.db.execute(
-                text("SELECT inventory_id, quantity_on_hand FROM inventory WHERE item_id = :iid AND bin_id = :bid"),
-                {"iid": row.item_id, "bid": row.bin_id},
-            ).fetchone()
-
-            if existing:
-                new_qty = max(0, existing.quantity_on_hand + row.quantity_change)
-                g.db.execute(
-                    text("UPDATE inventory SET quantity_on_hand = :qty, updated_at = NOW() WHERE inventory_id = :inv_id"),
-                    {"qty": new_qty, "inv_id": existing.inventory_id},
-                )
-            elif row.quantity_change > 0:
-                g.db.execute(
-                    text("INSERT INTO inventory (item_id, bin_id, warehouse_id, quantity_on_hand) VALUES (:iid, :bid, :wid, :qty)"),
-                    {"iid": row.item_id, "bid": row.bin_id, "wid": row.warehouse_id, "qty": row.quantity_change},
-                )
+            try:
+                allocations = prepare_adjustment_allocations(g.db, row, decision.get("allocations"))
+                serials = {entry["serial_number"] for entry in allocations if entry["serial_number"]}
+                if _review_serials.intersection(serials):
+                    raise ValueError("A serial cannot appear in two review decisions")
+                _review_serials.update(serials)
+                apply_adjustment_allocations(g.db, row, allocations)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 409
 
             # this path lands stock with raw SQL rather than
             # add_inventory(), which is why a hook inside that helper would
@@ -939,6 +956,12 @@ def review_adjustments(validated):
             g.db.execute(
                 text("UPDATE inventory_adjustments SET status = :status WHERE adjustment_id = :aid"),
                 {"aid": adj_id, "status": ADJ_APPROVED},
+            )
+            write_audit_log(
+                g.db, action_type=ACTION_ADJUST, entity_type="ADJUSTMENT", entity_id=adj_id,
+                user_id=g.current_user["username"], warehouse_id=row.warehouse_id,
+                details={"cycle_count_id": row.cycle_count_id, "quantity_change": row.quantity_change,
+                         "allocations": allocations, "review_source_txn_id": str(g.source_txn_id)},
             )
 
             if is_self_approval:
@@ -1014,6 +1037,7 @@ def review_adjustments(validated):
                         "counted_quantity": cc.counted_quantity,
                         "system_quantity": cc.expected_quantity,
                         "quantity_delta": row.quantity_change,
+                        "allocations": allocations,
                         "counted_by_user_external_id": get_user_external_id(g.db, cc.counted_by),
                         "counted_at": cc.counted_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
                     },
@@ -1036,6 +1060,7 @@ def review_adjustments(validated):
                         "item_external_id": item_source_external_id,
                         "bin_external_id": str(bin_ext.external_id),
                         "quantity_delta": row.quantity_change,
+                        "allocations": allocations,
                         "reason_code": "CYCLE_COUNT",
                         "applied_by_user_external_id": get_user_external_id(g.db, g.current_user["username"]),
                         "applied_at": applied_at,
@@ -1061,6 +1086,7 @@ def review_adjustments(validated):
                         "item_external_id": item_source_external_id,
                         "bin_external_id": str(bin_ext.external_id),
                         "quantity_delta": row.quantity_change,
+                        "allocations": allocations,
                         "reason_code": row.reason_code,
                         # The APPROVER is the actor who effectuated the
                         # change; row.adjusted_by is the submitter
@@ -1264,7 +1290,8 @@ def list_adjustments():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 50, type=int), 1000)
 
-    where_clauses, params = [], {}
+    scope_clause, scope_params = warehouse_scope_clause("ia.warehouse_id")
+    where_clauses, params = ["TRUE " + scope_clause], dict(scope_params)
     if warehouse_id:
         where_clauses.append("ia.warehouse_id = :wid")
         params["wid"] = warehouse_id
@@ -1289,11 +1316,21 @@ def list_adjustments():
     # convention is a follow-up.
     rows = g.db.execute(
         text(f"""
-            SELECT ia.adjustment_id, ia.item_id, ia.bin_id, ia.warehouse_id,
+            SELECT ia.adjustment_id, ia.external_id, ia.item_id, ia.bin_id, ia.warehouse_id,
                    ia.quantity_change, ia.reason_code, ia.reason_detail,
                    ia.status, ia.adjusted_by, ia.adjusted_at, ia.cycle_count_id,
-                   i.sku, i.item_name, b.bin_code,
-                   COALESCE(u.username, ia.adjusted_by) AS username
+                   i.sku, i.item_name, b.bin_code, b.external_id AS bin_external_id,
+                   COALESCE(u.username, ia.adjusted_by) AS username,
+                   CASE WHEN proof.proof_count = 1 AND ia.status = 'APPROVED'
+                              AND proof.payload->>'adjustment_external_id' = ia.external_id::text
+                              AND proof.payload->'quantity_delta' = to_jsonb(ia.quantity_change)
+                              AND jsonb_typeof(proof.payload->'allocations') = 'array'
+                        THEN proof.payload->'allocations' END AS tracking_allocations,
+                   CASE WHEN proof.proof_count = 1 AND ia.status = 'APPROVED'
+                              AND proof.payload->>'adjustment_external_id' = ia.external_id::text
+                              AND proof.payload->'quantity_delta' = to_jsonb(ia.quantity_change)
+                              AND jsonb_typeof(proof.payload->'allocations') = 'array'
+                        THEN proof.source_txn_id END AS review_source_txn_id
             FROM inventory_adjustments ia
             JOIN items i ON i.item_id = ia.item_id
             JOIN bins b ON b.bin_id = ia.bin_id
@@ -1309,6 +1346,16 @@ def list_adjustments():
             -- never fail; username rows simply miss the join and the
             -- COALESCE below returns them unchanged.
             LEFT JOIN users u ON u.user_id::text = ia.adjusted_by
+            LEFT JOIN LATERAL (
+                SELECT event.payload, event.source_txn_id, COUNT(*) OVER () AS proof_count
+                FROM integration_events event
+                WHERE event.aggregate_type = 'inventory_adjustment'
+                  AND event.aggregate_id = ia.adjustment_id
+                  AND event.aggregate_external_id = ia.external_id
+                  AND event.warehouse_id = ia.warehouse_id
+                  AND event.event_type = 'inventoryadjusted.completed' AND event.event_version = 1
+                ORDER BY event.event_id LIMIT 1
+            ) proof ON TRUE
             {where_sql}
             ORDER BY ia.adjusted_at DESC
             LIMIT :limit OFFSET :offset
@@ -1320,11 +1367,13 @@ def list_adjustments():
         "adjustments": [
             {
                 "adjustment_id": r.adjustment_id,
+                "external_id": str(r.external_id),
                 "item_id": r.item_id,
                 "sku": r.sku,
                 "item_name": r.item_name,
                 "bin_id": r.bin_id,
                 "bin_code": r.bin_code,
+                "bin_external_id": str(r.bin_external_id),
                 "warehouse_id": r.warehouse_id,
                 "quantity_change": r.quantity_change,
                 "reason_code": r.reason_code,
@@ -1334,6 +1383,8 @@ def list_adjustments():
                 "username": r.username,
                 "adjusted_at": r.adjusted_at.isoformat() if r.adjusted_at else None,
                 "cycle_count_id": r.cycle_count_id,
+                "tracking_allocations": r.tracking_allocations,
+                "review_source_txn_id": str(r.review_source_txn_id) if r.review_source_txn_id else None,
             }
             for r in rows
         ],

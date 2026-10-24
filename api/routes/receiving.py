@@ -23,6 +23,8 @@ from services.inventory_service import (
     release_satisfiable_backorders,
     RELEASE_SOURCE_RECEIPT,
 )
+from services.serial_history import latest_native_serial_position, lock_native_serials
+from services.shipping_allocations import normalise_serials
 from services.webhook_dispatcher.backorder_notifier import (
     dispatch_backorder_notification,
 )
@@ -180,13 +182,26 @@ def receive_items(validated):
     # so the row stays self-contained and identical to the old behavior.
     _pending_audit_rows: list = []
 
+    try:
+        request_serials = [serial for entry in items for serial in normalise_serials(entry.serial_number)]
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 422
+    if len(request_serials) != len(set(request_serials)):
+        return jsonify({"error": "A serial number cannot occur twice in this receipt"}), 422
+    lock_native_serials(g.db, request_serials)
+
     for item_entry in items:
         item_id = item_entry.item_id
         quantity = item_entry.quantity
         bin_id = item_entry.bin_id
         lot_number = item_entry.lot_number
-        serial_number = item_entry.serial_number
+        serials = normalise_serials(item_entry.serial_number)
+        serial_number = "\n".join(serials) or None
         notes = item_entry.notes
+        for serial in serials:
+            position = latest_native_serial_position(g.db, item_id, serial)
+            if position is not None and position["warehouse_id"] is not None:
+                return jsonify({"error": "A received serial number is already present in stock"}), 409
 
         # Validate bin exists and belongs to PO warehouse. Memoized per
         # request (_validated_bin_warehouse): a repeated bin_id -- the turbo
@@ -210,21 +225,39 @@ def receive_items(validated):
         # the remaining-quantity check. The second waits until the
         # first commits (seeing updated quantity_received) or rolls
         # back (seeing the original).
-        po_line = g.db.execute(
+        line_params = {"po_id": po_id, "item_id": item_id}
+        line_clause = ""
+        if item_entry.po_line_id is not None:
+            line_clause = " AND po_line_id = :po_line_id"
+            line_params["po_line_id"] = item_entry.po_line_id
+        po_lines = g.db.execute(
             text(
-                """
+                f"""
                 SELECT po_line_id, line_number, quantity_ordered, quantity_received
                 FROM purchase_order_lines
-                WHERE po_id = :po_id AND item_id = :item_id
-                LIMIT 1
+                WHERE po_id = :po_id AND item_id = :item_id {line_clause}
+                LIMIT 2
                 FOR UPDATE
                 """
             ),
-            {"po_id": po_id, "item_id": item_id},
-        ).fetchone()
+            line_params,
+        ).fetchall()
 
-        if not po_line:
+        if not po_lines:
             return jsonify({"error": f"Item {item_id} is not on PO {po_id}"}), 400
+        if len(po_lines) != 1:
+            return jsonify({
+                "error": "This item occurs on multiple PO lines; supply po_line_id.",
+                "error_kind": "ambiguous_po_line",
+            }), 409
+        po_line = po_lines[0]
+        if (item_entry.expected_quantity_received is not None
+                and po_line.quantity_received != item_entry.expected_quantity_received):
+            return jsonify({
+                "error": "The PO line received quantity changed; reload before receiving.",
+                "error_kind": "po_line_changed",
+                "quantity_received": po_line.quantity_received,
+            }), 409
 
         # Check for over-receipt
         remaining = po_line.quantity_ordered - po_line.quantity_received

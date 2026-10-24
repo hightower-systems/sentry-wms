@@ -15,16 +15,77 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "adjustment_external_id": { "type": "string", "format": "uuid" },
-    "item_external_id": { "type": "string", "format": "uuid" },
-    "bin_external_id": { "type": "string", "format": "uuid" },
-    "quantity_delta": { "type": "integer" },
-    "reason_code": { "type": "string" },
+    "adjustment_external_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "item_external_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "bin_external_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "quantity_delta": {
+      "type": "integer"
+    },
+    "reason_code": {
+      "type": "string"
+    },
     "applied_by_user_external_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "uuid",
       "description": "Actor who effectuated the change. Null on the Pipe B inbound inventory-sync path, which is system-driven and carries no Sentry user identity. At admin review_adjustments this is the approver; at direct_adjustment / cycle-count approval / CSV import it is the caller."
     },
-    "applied_at": { "type": "string", "format": "date-time" }
+    "applied_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "allocations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bin_id",
+          "quantity",
+          "lot_number",
+          "serial_number"
+        ],
+        "properties": {
+          "bin_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "lot_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "serial_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 100
+          }
+        }
+      }
+    }
   }
 }

@@ -219,6 +219,10 @@ def receive_rma(
     source_txn_id,
     notes: str | None = None,
     idempotency_key: str | None = None,
+    so_line_id: int | None = None,
+    expected_quantity_received: int | None = None,
+    lot_number: str | None = None,
+    serial_number: str | None = None,
 ) -> dict:
     """Receive goods back against a return SO (the <orig>-RMA): one item into
     one bin, mirroring PO receive. Records an item_receipts row, restocks
@@ -236,35 +240,51 @@ def receive_rma(
     from services.audit_service import write_audit_log
     from services.events_service import emit_event, resolve_source_external_id
     from services.inventory_service import add_inventory
+    from services.shipping_allocations import normalise_serials, validate_return_tracking
 
     rma = db.execute(
         text(
             "SELECT so_number, external_id, parent_so_id "
-            "FROM sales_orders WHERE so_id = :sid AND order_type = :ot"
+            "FROM sales_orders WHERE so_id = :sid AND order_type = :ot FOR UPDATE"
         ),
         {"sid": rma_so_id, "ot": ORDER_TYPE_RETURN},
     ).fetchone()
     if rma is None:
         raise ValueError(f"RMA {rma_so_id} not found or not a return SO")
-    line = db.execute(
+    matching_lines = db.execute(
         text(
-            "SELECT so_line_id, quantity_ordered, quantity_received "
-            "FROM sales_order_lines WHERE so_id = :sid AND item_id = :iid"
+            "SELECT line.so_line_id, line.quantity_ordered, line.quantity_received, line.original_so_line_id, "
+            " item.is_lot_tracked, item.is_serial_tracked "
+            "FROM sales_order_lines line JOIN items item ON item.item_id = line.item_id "
+            "WHERE line.so_id = :sid AND line.item_id = :iid "
+            "AND (:line_id IS NULL OR line.so_line_id = :line_id) FOR UPDATE OF line"
         ),
-        {"sid": rma_so_id, "iid": item_id},
-    ).fetchone()
-    if line is None:
-        raise ValueError(f"item {item_id} is not on RMA {rma_so_id}")
+        {"sid": rma_so_id, "iid": item_id, "line_id": so_line_id},
+    ).fetchall()
+    if len(matching_lines) != 1:
+        raise ValueError("Choose the exact unique return order line")
+    line = matching_lines[0]
+    lot_number = (lot_number or "").strip() or None
+    serials = normalise_serials(serial_number)
+    serial_number = "\n".join(serials) or None
+    if bool(line.is_lot_tracked) != bool(lot_number):
+        raise ValueError("Provide the actual batch identity for this return item")
+    if (line.is_serial_tracked and len(serials) != quantity) or (not line.is_serial_tracked and serials):
+        raise ValueError("Provide one actual serial number per serialized return unit")
 
     # Idempotency: a stable idempotency_key (reused as the receipt's external_id,
     # which is UNIQUE on item_receipts) lets a double-tap / retry no-op instead
     # of double-restocking. Return the prior result without re-writing anything.
     if idempotency_key:
         prior = db.execute(
-            text("SELECT receipt_id FROM item_receipts WHERE external_id = :ext"),
+            text("SELECT receipt_id, so_id, so_line_id, item_id, quantity_received, warehouse_id, bin_id, lot_number, serial_number FROM item_receipts WHERE external_id = :ext"),
             {"ext": idempotency_key},
         ).fetchone()
         if prior:
+            if (prior.so_id != rma_so_id or prior.so_line_id != line.so_line_id or prior.item_id != item_id
+                or prior.quantity_received != quantity or prior.warehouse_id != warehouse_id or prior.bin_id != bin_id
+                or prior.lot_number != lot_number or prior.serial_number != serial_number):
+                raise ValueError("The return confirmation identity was already used for different goods")
             status_row = db.execute(
                 text("SELECT status FROM sales_orders WHERE so_id = :sid"),
                 {"sid": rma_so_id},
@@ -278,6 +298,8 @@ def receive_rma(
     # Over-receipt guard: a return line can only take back what it ordered.
     # Without this, a fat-fingered quantity restocks more inventory than ever
     # shipped and pushes quantity_received past quantity_ordered.
+    if expected_quantity_received is not None and line.quantity_received != expected_quantity_received:
+        raise ValueError("The return line has changed; reload its received quantity")
     remaining = int(line.quantity_ordered) - int(line.quantity_received)
     if quantity > remaining:
         raise ValueError(
@@ -299,15 +321,18 @@ def receive_rma(
             f"bin {bin_id} belongs to warehouse {binrow.warehouse_id}, not {warehouse_id}"
         )
 
+    if line.is_lot_tracked or line.is_serial_tracked:
+        validate_return_tracking(db, rma.parent_so_id, line.original_so_line_id, item_id, quantity, lot_number, serials)
+
     receipt = db.execute(
         text(
             """
             INSERT INTO item_receipts (
                 so_id, so_line_id, item_id, quantity_received,
-                bin_id, warehouse_id, received_by, notes, external_id
+                bin_id, warehouse_id, received_by, notes, external_id, lot_number, serial_number
             ) VALUES (
                 :so_id, :so_line_id, :item_id, :qty,
-                :bin_id, :wh_id, :rcv, :notes, :ext
+                :bin_id, :wh_id, :rcv, :notes, :ext, :lot_number, :serial_number
             )
             RETURNING receipt_id, external_id, received_at
             """
@@ -317,10 +342,12 @@ def receive_rma(
             "qty": quantity, "bin_id": bin_id, "wh_id": warehouse_id,
             "rcv": received_by, "notes": notes,
             "ext": idempotency_key or str(uuid.uuid4()),
+            "lot_number": lot_number,
+            "serial_number": serial_number,
         },
     ).fetchone()
 
-    add_inventory(db, item_id, bin_id, warehouse_id, quantity, None)
+    add_inventory(db, item_id, bin_id, warehouse_id, quantity, lot_number)
 
     # quantity_received is denormalized (not re-derived from item_receipts at
     # read time). Return receipts are deliberately append-only: there is no void
@@ -407,7 +434,8 @@ def receive_rma(
             "warehouse_code": wh.warehouse_code,
             "bin_code": bn.bin_code,
             "lines": [
-                {"item_external_id": item_external_id, "quantity_received": quantity}
+                {"item_external_id": item_external_id, "quantity_received": quantity,
+                 "so_line_id": line.so_line_id, "lot_number": lot_number, "serial_number": serial_number}
             ],
             "received_by_user_external_id": received_by_external_id,
             "received_at": receipt.received_at.astimezone(timezone.utc)
@@ -418,22 +446,30 @@ def receive_rma(
     return {"receipt_id": receipt.receipt_id, "status": new_status}
 
 
-def _get_default_receiving_bin(db) -> int:
-    """Read the default_receiving_bin app_setting. Raises RuntimeError
-    if the setting is missing; the seed always provisions it. A
-    misconfigured deployment surfaces as a 500 by design rather than
-    silently dropping inventory restoration."""
-    row = db.execute(
+def _get_default_receiving_bin(db, warehouse_id: int, current_status: str) -> int:
+    """Lock and verify the configured restoration location before changing stock."""
+    receiving_bin = db.execute(
         text(
-            "SELECT value FROM app_settings WHERE key = 'default_receiving_bin'"
-        )
+            "SELECT receiving_bin.bin_id "
+            "FROM app_settings settings "
+            "JOIN bins receiving_bin ON receiving_bin.bin_id::text = settings.value "
+            "JOIN warehouses warehouse ON warehouse.warehouse_id = receiving_bin.warehouse_id "
+            "WHERE settings.key = 'default_receiving_bin' "
+            "AND receiving_bin.warehouse_id = :warehouse_id "
+            "AND receiving_bin.is_active IS TRUE "
+            "AND receiving_bin.bin_type = 'Staging' "
+            "AND warehouse.is_active IS TRUE "
+            "FOR SHARE OF settings, receiving_bin, warehouse"
+        ),
+        {"warehouse_id": warehouse_id},
     ).fetchone()
-    if not row or not row.value:
-        raise RuntimeError(
-            "default_receiving_bin app_setting is missing; cannot unwind "
-            "PICKED/PACKED cancellation"
+    if receiving_bin is None:
+        raise CancelNotAllowed(
+            "Configure an active staging receiving location in this order's warehouse "
+            "before cancelling picked goods.",
+            current_status=current_status,
         )
-    return int(row.value)
+    return receiving_bin.bin_id
 
 
 class ReturnVoidNotAllowed(Exception):
@@ -642,7 +678,7 @@ def cancel_sales_order(
         # allocation, drop pending tasks and pick_batch_orders.
         _unwind_allocated(db, so_id)
     elif pre_status in (SO_PICKED, SO_PACKED):
-        _unwind_picked_or_packed(db, so_id, warehouse_id)
+        _unwind_picked_or_packed(db, so_id, warehouse_id, pre_status)
     # WAITING_STOCK (mig 067) is BO-only and inventory-free; no
     # per-status unwind beyond the status flip below.
 
@@ -821,7 +857,9 @@ def _unwind_allocated(db, so_id: int) -> None:
     )
 
 
-def _unwind_picked_or_packed(db, so_id: int, warehouse_id: int) -> None:
+def _unwind_picked_or_packed(
+    db, so_id: int, warehouse_id: int, current_status: str
+) -> None:
     """Post-pick state unwind. Items have already left their source
     bins (decremented at pick-confirm time). Restore them to the
     default receiving bin so an operator can physically move them back
@@ -834,7 +872,7 @@ def _unwind_picked_or_packed(db, so_id: int, warehouse_id: int) -> None:
     re-allocate cleanly. pick_batch_orders is dropped so the SO does
     not show in batch listings.
     """
-    receiving_bin_id = _get_default_receiving_bin(db)
+    receiving_bin_id = _get_default_receiving_bin(db, warehouse_id, current_status)
 
     lines = db.execute(
         text(

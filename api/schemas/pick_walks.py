@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class CreateBatchRequest(BaseModel):
     so_identifiers: List[str] = Field(..., min_length=1)
     warehouse_id: int = Field(..., gt=0)
+    resume_existing: bool = Field(False)
     # SOs the picker explicitly chose to drop after a prior 409
     # insufficient_coverage response. Empty/omitted on the first call.
     exclude_so_ids: Optional[List[int]] = Field(default=None)
@@ -27,6 +28,7 @@ class WaveValidateRequest(BaseModel):
 class WaveCreateRequest(BaseModel):
     so_ids: List[int] = Field(..., min_length=1)
     warehouse_id: int = Field(..., gt=0)
+    resume_existing: bool = Field(False)
     exclude_so_ids: Optional[List[int]] = Field(default=None)
 
 
