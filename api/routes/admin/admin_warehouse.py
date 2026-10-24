@@ -336,7 +336,7 @@ def list_bins():
     params["offset"] = (page - 1) * per_page
     rows = g.db.execute(
         text(f"""
-            SELECT b.bin_id, b.zone_id, COALESCE(z.zone_name, '') AS zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
+            SELECT b.bin_id, b.external_id, b.zone_id, COALESCE(z.zone_name, '') AS zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
                    b.aisle, b.row_num, b.level_num, b.position_num, b.pick_sequence, b.putaway_sequence, b.is_active
             FROM bins b
             LEFT JOIN zones z ON z.zone_id = b.zone_id
@@ -348,7 +348,7 @@ def list_bins():
 
     return jsonify({
         "bins": [
-            {"bin_id": r.bin_id, "zone_id": r.zone_id, "zone_name": r.zone_name, "warehouse_id": r.warehouse_id,
+            {"bin_id": r.bin_id, "external_id": str(r.external_id), "zone_id": r.zone_id, "zone_name": r.zone_name, "warehouse_id": r.warehouse_id,
              "bin_code": r.bin_code, "bin_barcode": r.bin_barcode, "bin_type": r.bin_type,
              "aisle": r.aisle, "row_num": r.row_num, "level_num": r.level_num, "position_num": r.position_num,
              "pick_sequence": r.pick_sequence, "putaway_sequence": r.putaway_sequence, "is_active": r.is_active}
@@ -365,7 +365,7 @@ def list_bins():
 def get_bin(bin_id):
     b = g.db.execute(
         text("""
-            SELECT b.bin_id, b.zone_id, z.zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
+            SELECT b.bin_id, b.external_id, b.zone_id, z.zone_name, b.warehouse_id, b.bin_code, b.bin_barcode, b.bin_type,
                    b.aisle, b.row_num, b.level_num, b.position_num, b.pick_sequence, b.putaway_sequence, b.is_active
             FROM bins b JOIN zones z ON z.zone_id = b.zone_id
             WHERE b.bin_id = :bid
@@ -386,7 +386,7 @@ def get_bin(bin_id):
     ).fetchall()
 
     return jsonify({
-        "bin": {"bin_id": b.bin_id, "zone_id": b.zone_id, "zone_name": b.zone_name, "warehouse_id": b.warehouse_id,
+        "bin": {"bin_id": b.bin_id, "external_id": str(b.external_id), "zone_id": b.zone_id, "zone_name": b.zone_name, "warehouse_id": b.warehouse_id,
                 "bin_code": b.bin_code, "bin_barcode": b.bin_barcode, "bin_type": b.bin_type,
                 "aisle": b.aisle, "row_num": b.row_num, "level_num": b.level_num, "position_num": b.position_num,
                 "pick_sequence": b.pick_sequence, "putaway_sequence": b.putaway_sequence, "is_active": b.is_active},

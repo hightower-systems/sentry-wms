@@ -32,10 +32,12 @@ from constants import (
     ACTION_TO_REJECTED,
     ACTION_TO_SUBMITTED,
 )
-from middleware.auth_middleware import require_admin_or_page_permission, require_auth
+from middleware.auth_middleware import require_admin_or_page_permission, require_auth, check_warehouse_access
 from middleware.db import with_db
 from routes.admin import admin_bp
 from schemas.csv_import import TransferOrderImportRow
+from schemas.transfer_approval import TransferApprovalRequest
+from services.transfer_allocations import transfer_pick_sources, prepare_transfer_allocations, apply_transfer_allocations
 from services.audit_service import write_audit_log
 from services.events_service import emit_event, resolve_source_external_id
 from services.transfer_order_service import (
@@ -128,6 +130,8 @@ def _serialise_to_approval(row) -> dict:
         "rejection_reason": row.rejection_reason,
         "status": row.status,
         "external_id": str(row.external_id),
+        "lines_snapshot": row.lines_snapshot,
+        "review_source_txn_id": row.review_source_txn_id,
     }
 
 
@@ -230,7 +234,12 @@ def get_transfer_order(to_id):
             """
             SELECT to_approval_id, to_id, submitted_by, submitted_at,
                    approved_by, approved_at, rejected_at, rejection_reason,
-                   status, external_id
+                   status, external_id, lines_snapshot,
+                   (SELECT CASE WHEN COUNT(DISTINCT event.source_txn_id) = 1 THEN MAX(event.source_txn_id::text) ELSE NULL END
+                    FROM integration_events event WHERE event.aggregate_type = 'inventory_transfer'
+                      AND event.aggregate_id = transfer_order_approvals.to_approval_id
+                      AND event.aggregate_external_id = transfer_order_approvals.external_id
+                      AND event.event_type = 'inventorytransfer.completed') AS review_source_txn_id
               FROM transfer_order_approvals
              WHERE to_id = :tid
              ORDER BY submitted_at DESC
@@ -239,8 +248,25 @@ def get_transfer_order(to_id):
         {"tid": to_id},
     ).fetchall()
 
+    pick_allocations = transfer_pick_sources(g.db, to_id, header.source_warehouse_id)
+    source_inventory = g.db.execute(text("""
+        SELECT inventory.inventory_id, inventory.item_id, inventory.bin_id AS source_bin_id,
+               bin.bin_code, inventory.lot_number, inventory.quantity_on_hand, inventory.quantity_allocated
+        FROM inventory JOIN bins bin ON bin.bin_id = inventory.bin_id
+        WHERE inventory.warehouse_id = :warehouse_id AND bin.warehouse_id = :warehouse_id AND bin.is_active
+          AND inventory.item_id IN (SELECT item_id FROM transfer_order_lines WHERE to_id = :to_id)
+        ORDER BY inventory.inventory_id LIMIT 10001
+    """), {"warehouse_id": header.source_warehouse_id, "to_id": to_id}).fetchall()
+    destinations = g.db.execute(text("SELECT bin_id, bin_code, bin_type FROM bins WHERE warehouse_id = :warehouse_id AND is_active ORDER BY bin_id LIMIT 10001"), {"warehouse_id": header.destination_warehouse_id}).fetchall()
+    if len(source_inventory) > 10000 or len(destinations) > 10000:
+        return jsonify({"error": "Transfer allocation detail exceeds the supported limit"}), 409
     return jsonify({
         "transfer_order": _serialise_to_header(header),
+        "pick_allocations": pick_allocations,
+        "source_inventory": [{"inventory_id": row.inventory_id, "item_id": row.item_id,
+            "source_bin_id": row.source_bin_id, "bin_code": row.bin_code, "lot_number": row.lot_number,
+            "quantity_on_hand": row.quantity_on_hand, "quantity_allocated": row.quantity_allocated} for row in source_inventory],
+        "destination_bins": [{"bin_id": row.bin_id, "bin_code": row.bin_code, "bin_type": row.bin_type} for row in destinations],
         "lines": [_serialise_to_line(r) for r in lines],
         "approvals": [_serialise_to_approval(r) for r in approvals],
     })
@@ -818,6 +844,20 @@ def start_to_picking(to_id):
             "current_status": header.status,
         }), 409
 
+    # The header lock serializes starts. Reuse its active batch so a repeated
+    # request cannot create another set of pending tasks over the same picks.
+    active = g.db.execute(text(
+        "SELECT DISTINCT pb.batch_id, pb.batch_number FROM pick_batches pb "
+        "JOIN pick_tasks pt ON pt.batch_id = pb.batch_id "
+        "WHERE pt.to_id = :tid AND pb.status IN ('OPEN', 'IN_PROGRESS')"
+    ), {"tid": to_id}).fetchall()
+    if active:
+        if len(active) != 1:
+            return jsonify({"error": "multiple_active_pick_batches"}), 409
+        return jsonify({"batch_id": active[0].batch_id,
+                        "batch_number": active[0].batch_number,
+                        "replayed": True}), 200
+
     # Lines that still need picking (committed > picked) and are not
     # SHORT_CLOSED. Walk in line_number ASC for predictable picker UX.
     lines = g.db.execute(
@@ -1033,116 +1073,6 @@ def _self_approval_blocked(db) -> bool:
     return bool(row and str(row.value).lower() == "true")
 
 
-def _decrement_source_inventory(
-    db, item_id: int, warehouse_id: int, qty: int,
-) -> None:
-    """Decrement quantity_allocated AND quantity_on_hand at source by
-    qty, distributing across bins in inventory_id ASC up to each row's
-    own quantity_allocated. Mirrors the import + cancel lock ordering
-    so concurrent operations stay deadlock-free."""
-    inv_rows = db.execute(
-        text(
-            """
-            SELECT inv.inventory_id, inv.quantity_on_hand,
-                   inv.quantity_allocated
-              FROM inventory inv
-             WHERE inv.item_id = :iid AND inv.warehouse_id = :wid
-               AND inv.quantity_allocated > 0
-             ORDER BY inv.inventory_id ASC
-             FOR UPDATE OF inv
-            """
-        ),
-        {"iid": item_id, "wid": warehouse_id},
-    ).fetchall()
-    remaining = qty
-    for ir in inv_rows:
-        if remaining <= 0:
-            break
-        give = min(remaining, ir.quantity_allocated, ir.quantity_on_hand)
-        if give == 0:
-            continue
-        db.execute(
-            text(
-                """
-                UPDATE inventory
-                   SET quantity_allocated = quantity_allocated - :delta,
-                       quantity_on_hand   = quantity_on_hand   - :delta,
-                       updated_at = NOW()
-                 WHERE inventory_id = :inv_id
-                """
-            ),
-            {"delta": give, "inv_id": ir.inventory_id},
-        )
-        remaining -= give
-    if remaining > 0:
-        # Source under-funded: import-time reservation must have been
-        # released by a concurrent cancel. Surface as 409 so the
-        # admin investigates rather than silently absorbing.
-        raise ValueError(
-            f"source inventory under-funded: still {remaining} units to "
-            f"deduct for item_id={item_id} at warehouse_id={warehouse_id}"
-        )
-
-
-def _credit_destination_inventory(
-    db, item_id: int, dest_warehouse_id: int, qty: int,
-) -> None:
-    """Add qty to the destination warehouse's inventory. Targets the
-    first Staging bin at the destination; INSERTs a new inventory
-    row if none exists for the (item, bin) pair. Raises ValueError
-    when the destination has no Staging bin (operator must add one).
-    """
-    bin_row = db.execute(
-        text(
-            """
-            SELECT bin_id FROM bins
-             WHERE warehouse_id = :wid
-               AND bin_type = 'Staging'
-             ORDER BY bin_id ASC LIMIT 1
-            """
-        ),
-        {"wid": dest_warehouse_id},
-    ).fetchone()
-    if not bin_row:
-        raise ValueError(
-            f"destination warehouse_id={dest_warehouse_id} has no "
-            f"Staging bin; add one before approving the transfer."
-        )
-    bin_id = bin_row.bin_id
-    existing = db.execute(
-        text(
-            """
-            SELECT inventory_id FROM inventory
-             WHERE item_id = :iid AND bin_id = :bid AND lot_number IS NULL
-             FOR UPDATE
-            """
-        ),
-        {"iid": item_id, "bid": bin_id},
-    ).fetchone()
-    if existing:
-        db.execute(
-            text(
-                "UPDATE inventory "
-                "   SET quantity_on_hand = quantity_on_hand + :qty, "
-                "       updated_at = NOW() "
-                " WHERE inventory_id = :inv_id"
-            ),
-            {"qty": qty, "inv_id": existing.inventory_id},
-        )
-    else:
-        db.execute(
-            text(
-                "INSERT INTO inventory "
-                "(item_id, bin_id, warehouse_id, quantity_on_hand) "
-                "VALUES (:iid, :bid, :wid, :qty)"
-            ),
-            {
-                "iid": item_id, "bid": bin_id,
-                "wid": dest_warehouse_id, "qty": qty,
-            },
-        )
-
-
 @admin_bp.route(
     "/transfer-orders/<int:to_id>/approvals/<int:approval_id>/approve",
     methods=["POST"],
@@ -1151,6 +1081,10 @@ def _credit_destination_inventory(
 @require_admin_or_page_permission("transfer-orders")
 @with_db
 def approve_transfer_order_approval(to_id, approval_id):
+    try:
+        validated = TransferApprovalRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as exc:
+        return jsonify({"error": "invalid_transfer_allocations", "detail": str(exc)}), 422
     approval = g.db.execute(
         text(
             """
@@ -1165,6 +1099,31 @@ def approve_transfer_order_approval(to_id, approval_id):
     ).fetchone()
     if not approval:
         return jsonify({"error": "Approval row not found"}), 404
+    header = g.db.execute(
+        text(
+            "SELECT to_id, to_number, status, source_warehouse_id, "
+            "       destination_warehouse_id, external_id "
+            "  FROM transfer_orders WHERE to_id = :tid FOR UPDATE"
+        ),
+        {"tid": to_id},
+    ).fetchone()
+    if not header:
+        return jsonify({"error": "Transfer order not found"}), 404
+
+    for warehouse_id in sorted({header.source_warehouse_id, header.destination_warehouse_id}):
+        allowed, denial = check_warehouse_access(warehouse_id)
+        if not allowed:
+            return denial
+    if approval.status == TO_APPROVAL_APPROVED:
+        stored = (approval.lines_snapshot or {}).get("allocations", [])
+        supplied = [entry.model_dump() for entry in validated.allocations] if validated.allocations is not None else None
+        keys = ("to_line_id", "source_bin_id", "destination_bin_id", "quantity", "lot_number", "serial_number")
+        def canonical(rows):
+            return sorted(json.dumps([(row.get(key) or "").strip() or None if key in ("lot_number", "serial_number") else row.get(key) for key in keys]) for row in rows)
+        if (not stored or (supplied is None and any(row.get("lot_number") or row.get("serial_number") for row in stored))
+                or (supplied is not None and canonical(stored) != canonical(supplied))):
+            return jsonify({"error": "approved_allocation_mismatch"}), 409
+        return jsonify({"to_approval_id": approval_id, "status": "APPROVED", "replayed": True, "allocations": stored}), 200
     if approval.status != TO_APPROVAL_PENDING:
         return jsonify({
             "error": "approval_not_pending",
@@ -1183,17 +1142,8 @@ def approve_transfer_order_approval(to_id, approval_id):
             ),
         }), 403
 
-    header = g.db.execute(
-        text(
-            "SELECT to_id, to_number, status, source_warehouse_id, "
-            "       destination_warehouse_id, external_id "
-            "  FROM transfer_orders WHERE to_id = :tid FOR UPDATE"
-        ),
-        {"tid": to_id},
-    ).fetchone()
-    if not header:
-        return jsonify({"error": "Transfer order not found"}), 404
-
+    if header.status not in (TO_STATUS_AWAITING_APPROVAL, TO_STATUS_PARTIALLY_PICKED):
+        return jsonify({"error": "transfer_not_awaiting_approval", "status": header.status}), 409
     snapshot_lines = (approval.lines_snapshot or {}).get("lines", []) or []
     if not snapshot_lines:
         return jsonify({
@@ -1201,57 +1151,31 @@ def approve_transfer_order_approval(to_id, approval_id):
             "detail": "Approval row has no line snapshot; nothing to approve.",
         }), 422
 
-    # Process lines in item_id ASC for deterministic inventory locking.
-    snapshot_lines.sort(key=lambda r: r["item_id"])
-
     event_lines = []
     try:
-        for snap in snapshot_lines:
-            line_id = snap["to_line_id"]
-            item_id = snap["item_id"]
-            qty = int(snap["picked_in_snapshot"])
-            if qty <= 0:
-                continue
-            g.db.execute(
-                text(
-                    """
-                    UPDATE transfer_order_lines
-                       SET approved_qty = approved_qty + :qty,
-                           status = CASE
-                               WHEN approved_qty + :qty = picked_qty
-                                    AND picked_qty = committed_qty
-                                    THEN 'APPROVED'
-                               ELSE status
-                           END
-                     WHERE to_line_id = :lid
-                    """
-                ),
-                {"qty": qty, "lid": line_id},
-            )
-            _decrement_source_inventory(
-                g.db, item_id, header.source_warehouse_id, qty,
-            )
-            _credit_destination_inventory(
-                g.db, item_id, header.destination_warehouse_id, qty,
-            )
-            item_external = g.db.execute(
-                text("SELECT external_id FROM items WHERE item_id = :iid"),
-                {"iid": item_id},
-            ).fetchone()
-            # Resolve canonical UUID to source-system external_id for the
-            # outbound payload. Canonical UUID fallback when no upstream
-            # mapping exists. See resolve_source_external_id docstring.
-            item_source_external_id = (
-                resolve_source_external_id(g.db, "item", item_external.external_id)
-                or str(item_external.external_id)
-            )
-            event_lines.append({
-                "item_external_id": item_source_external_id,
-                "quantity": qty,
-            })
+        allocations, stock_total, stock_ids = prepare_transfer_allocations(g.db, header, snapshot_lines, validated.allocations)
+        apply_transfer_allocations(g.db, header, allocations, stock_total, stock_ids)
+        for snap in sorted(snapshot_lines, key=lambda row: (row["item_id"], row["to_line_id"])):
+            updated = g.db.execute(text("""
+                UPDATE transfer_order_lines SET approved_qty = approved_qty + :qty,
+                    status = CASE WHEN approved_qty + :qty = picked_qty AND picked_qty = committed_qty THEN 'APPROVED' ELSE status END
+                WHERE to_line_id = :line_id AND to_id = :to_id AND item_id = :item_id
+                  AND approved_qty + :qty <= picked_qty RETURNING to_line_id
+            """), {"qty": snap["picked_in_snapshot"], "line_id": snap["to_line_id"], "to_id": to_id, "item_id": snap["item_id"]}).fetchone()
+            if updated is None:
+                raise ValueError("The transfer line changed during approval")
+        external = {}
+        for allocation in allocations:
+            item_id = allocation["item_id"]
+            if item_id not in external:
+                item = g.db.execute(text("SELECT external_id FROM items WHERE item_id = :item_id"), {"item_id": item_id}).fetchone()
+                external[item_id] = resolve_source_external_id(g.db, "item", item.external_id) or str(item.external_id)
+            event_lines.append({"item_external_id": external[item_id], **{key: allocation[key] for key in ("to_line_id", "source_bin_id", "destination_bin_id", "quantity", "lot_number", "serial_number")}})
     except ValueError as exc:
         g.db.rollback()
         return jsonify({"error": "approval_failed", "detail": str(exc)}), 409
+    allocation_snapshot = {**approval.lines_snapshot, "allocations": allocations}
+    g.db.execute(text("UPDATE transfer_order_approvals SET lines_snapshot = CAST(:snapshot AS JSONB) WHERE to_approval_id = :approval_id AND status = :pending"), {"snapshot": json.dumps(allocation_snapshot), "approval_id": approval_id, "pending": TO_APPROVAL_PENDING})
 
     approved_at = datetime.now(timezone.utc)
     g.db.execute(

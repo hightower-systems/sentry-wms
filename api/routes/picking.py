@@ -112,6 +112,7 @@ def create_batch(validated):
             warehouse_id=validated.warehouse_id,
             username=g.current_user["username"],
             exclude_so_ids=validated.exclude_so_ids,
+            resume_existing=validated.resume_existing,
         )
         return jsonify(result)
     except InsufficientCoverageError as e:
@@ -173,6 +174,7 @@ def create_wave(validated):
                 warehouse_id=validated.warehouse_id,
                 username=username,
                 exclude_so_ids=validated.exclude_so_ids,
+                resume_existing=validated.resume_existing,
             )
             return jsonify(result)
         except InsufficientCoverageError as e:
@@ -186,7 +188,7 @@ def create_wave(validated):
             }), 409
         except AlreadyInBatchError as e:
             g.db.rollback()
-            if attempt == 0 and cancel_stale_self_batch(g.db, e.batch_id, username):
+            if not validated.resume_existing and attempt == 0 and cancel_stale_self_batch(g.db, e.batch_id, username):
                 continue
             return jsonify({
                 "error_type": "already_in_batch",

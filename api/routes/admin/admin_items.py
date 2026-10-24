@@ -126,7 +126,7 @@ def list_items():
 @with_db
 def get_item(item_id):
     item = g.db.execute(
-        text("SELECT item_id, sku, item_name, description, upc, mpn, barcode_aliases, category, weight_lbs, length_in, width_in, height_in, default_bin_id, reorder_point, reorder_qty, is_lot_tracked, is_serial_tracked, is_active, created_at, updated_at FROM items WHERE item_id = :iid"),
+        text("SELECT item_id, external_id, sku, item_name, description, upc, mpn, barcode_aliases, category, weight_lbs, length_in, width_in, height_in, default_bin_id, reorder_point, reorder_qty, is_lot_tracked, is_serial_tracked, is_active, created_at, updated_at FROM items WHERE item_id = :iid"),
         {"iid": item_id},
     ).fetchone()
     if not item:
@@ -153,7 +153,7 @@ def get_item(item_id):
 
     return jsonify({
         "item": {
-            "item_id": item.item_id, "sku": item.sku, "item_name": item.item_name,
+            "item_id": item.item_id, "external_id": str(item.external_id), "sku": item.sku, "item_name": item.item_name,
             "description": item.description, "upc": item.upc, "mpn": item.mpn, "barcode_aliases": item.barcode_aliases,
             "category": item.category, "weight_lbs": float(item.weight_lbs) if item.weight_lbs else None,
             "length_in": float(item.length_in) if item.length_in else None,

@@ -62,10 +62,14 @@ class CreateRmaRequest(BaseModel):
 class ReceiveRmaRequest(BaseModel):
     """Receive one item into one bin against a return SO (the <orig>-RMA)."""
     item_id: int = Field(..., gt=0)
+    so_line_id: Optional[int] = Field(None, gt=0)
+    expected_quantity_received: Optional[int] = Field(None, ge=0)
     quantity: int = Field(..., gt=0, le=1000000)
     warehouse_id: int = Field(..., gt=0)
     bin_id: int = Field(..., gt=0)
     notes: Optional[str] = Field(None, max_length=500)
+    lot_number: Optional[str] = Field(None, max_length=50)
+    serial_number: Optional[str] = Field(None, max_length=100)
     # Idempotency anchor -- a stable UUID the handheld generates once per receive
     # action and re-sends on retry. Dedups on item_receipts.external_id (UNIQUE)
     # so a double-tap doesn't double-restock. Optional for back-compat; when

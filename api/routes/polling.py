@@ -27,10 +27,12 @@ from typing import Dict, List, Optional
 
 from flask import Blueprint, Response, g, jsonify, request
 from sqlalchemy import text
+from pydantic import ValidationError
 
 from middleware.auth_middleware import require_wms_token
 from middleware.db import with_db
 from schemas.polling import AckBody, PollQuery
+from schemas.consumer_groups import SubscriptionFilter
 from services import events_schema_registry
 from services.rate_limit import limiter
 from utils.validation import validate_body
@@ -71,6 +73,7 @@ def _build_events_query(
     subscription_warehouse_ids: Optional[List[int]],
     subscription_event_types: Optional[List[str]],
     limit: int,
+    source_txn_id: Optional[str] = None,
 ):
     """Produce the SELECT + params pair. Filters are conjunctive:
     token scope ∧ request filter ∧ subscription filter. Empty token
@@ -92,6 +95,9 @@ def _build_events_query(
     if request_warehouse_id is not None:
         clauses.append("warehouse_id = :request_warehouse_id")
         params["request_warehouse_id"] = request_warehouse_id
+    if source_txn_id is not None:
+        clauses.append("source_txn_id = CAST(:source_txn_id AS UUID)")
+        params["source_txn_id"] = source_txn_id
     if request_types:
         clauses.append("event_type = ANY(:request_types)")
         params["request_types"] = request_types
@@ -183,6 +189,7 @@ def poll_events():
             consumer_group=request.args.get("consumer_group") or None,
             types=request.args.get("types") or None,
             warehouse_id=request.args.get("warehouse_id", type=int),
+            source_txn_id=request.args.get("source_txn_id") or None,
             limit=request.args.get("limit", default=500, type=int),
         )
     except Exception as e:  # noqa: BLE001 -- Pydantic validation error
@@ -241,6 +248,7 @@ def poll_events():
         subscription_warehouse_ids=subscription_warehouse_ids,
         subscription_event_types=subscription_event_types,
         limit=query.limit,
+        source_txn_id=str(query.source_txn_id) if query.source_txn_id else None,
     )
     rows = g.db.execute(text(sql), params).fetchall()
     events = [_row_to_envelope(r) for r in rows]
@@ -271,11 +279,10 @@ def ack_cursor(validated: AckBody):
       greatest event_id in the outbox (``cursor_beyond_horizon``).
       Impossible-future cursors were previously accepted and advanced
       the group past every future event, causing silent data loss.
-    - v1.5.1 V-202 (#143): 403 ``ack_scope_violation`` when any event
-      in (last_cursor, cursor] falls outside the token's warehouse_ids
-      or event_types scope. "You can only ack what you can read"
-      applies on both axes; a NULL-connector admin token cannot use
-      ack to jump past events it could not have polled.
+    - 403 ``ack_scope_violation`` when the group's subscription exceeds
+      the token scope, the target is unreadable, or an event in the
+      subscribed interval exceeds the token scope. Other subscriptions'
+      events do not belong to this consumer's acknowledgement.
     - UPDATE with ``WHERE last_cursor <= :cursor`` so an out-of-order
       ack lower than the current stored value is a no-op. The
       response always returns the row's current ``last_cursor`` so
@@ -283,8 +290,8 @@ def ack_cursor(validated: AckBody):
     """
     cg_row = g.db.execute(
         text(
-            "SELECT consumer_group_id, connector_id, last_cursor "
-            "  FROM consumer_groups WHERE consumer_group_id = :cgid"
+            "SELECT consumer_group_id, connector_id, last_cursor, subscription "
+            "  FROM consumer_groups WHERE consumer_group_id = :cgid FOR UPDATE"
         ),
         {"cgid": validated.consumer_group},
     ).fetchone()
@@ -314,12 +321,45 @@ def ack_cursor(validated: AckBody):
 
         allowed_warehouses = list(g.current_token.get("warehouse_ids") or [])
         allowed_event_types = list(g.current_token.get("event_types") or [])
-        # "You can only ack what you can read": if any event in
-        # (last_cursor, cursor] falls outside the token's scope on
-        # either axis, the ack would implicitly claim the consumer
-        # processed an event it could not have polled. Reject 403.
-        # Empty scope arrays match no rows on ANY(...) so the check
-        # naturally triggers for deny-all tokens.
+        try:
+            subscription = cg_row.subscription or {}
+            if isinstance(subscription, str):
+                subscription = json.loads(subscription)
+            filters = SubscriptionFilter.model_validate(subscription)
+        except (ValidationError, ValueError, TypeError):
+            return jsonify({"error": "subscription_invalid"}), 409
+        if _scope_violation(filters.warehouse_ids, allowed_warehouses) or _scope_violation(
+            filters.event_types, allowed_event_types
+        ):
+            return jsonify({"error": "ack_scope_violation"}), 403
+        subscription_clauses = []
+        scope_params = {
+            "last_cursor": cg_row.last_cursor,
+            "cursor": validated.cursor,
+            "allowed_warehouses": allowed_warehouses,
+            "allowed_event_types": allowed_event_types,
+        }
+        if filters.warehouse_ids:
+            subscription_clauses.append("warehouse_id = ANY(:sub_warehouse_ids)")
+            scope_params["sub_warehouse_ids"] = filters.warehouse_ids
+        if filters.event_types:
+            subscription_clauses.append("event_type = ANY(:sub_event_types)")
+            scope_params["sub_event_types"] = filters.event_types
+        subscription_sql = "".join(" AND " + clause for clause in subscription_clauses)
+        readable_target = g.db.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM integration_events "
+                "WHERE event_id = :cursor "
+                "AND visible_at IS NOT NULL "
+                "AND visible_at <= NOW() - INTERVAL '2 seconds' "
+                "AND warehouse_id = ANY(:allowed_warehouses) "
+                "AND event_type = ANY(:allowed_event_types)"
+                + subscription_sql + ")"
+            ),
+            scope_params,
+        ).scalar()
+        if not readable_target:
+            return jsonify({"error": "ack_scope_violation"}), 403
         out_of_scope = g.db.execute(
             text(
                 """
@@ -327,6 +367,7 @@ def ack_cursor(validated: AckBody):
                     SELECT 1 FROM integration_events
                      WHERE event_id > :last_cursor
                        AND event_id <= :cursor
+                """ + subscription_sql + """
                        AND NOT (
                              warehouse_id = ANY(:allowed_warehouses)
                          AND event_type  = ANY(:allowed_event_types)
@@ -334,12 +375,7 @@ def ack_cursor(validated: AckBody):
                 )
                 """
             ),
-            {
-                "last_cursor": cg_row.last_cursor,
-                "cursor": validated.cursor,
-                "allowed_warehouses": allowed_warehouses,
-                "allowed_event_types": allowed_event_types,
-            },
+            scope_params,
         ).scalar()
         if out_of_scope:
             return jsonify({"error": "ack_scope_violation"}), 403

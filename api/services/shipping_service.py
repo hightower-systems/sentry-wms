@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from services.audit_service import write_audit_log
 from services.events_service import emit_event, get_user_external_id, resolve_source_external_id
+from services.shipping_allocations import prepare_shipping_allocations
 
 from constants import (
     SO_PICKED,
@@ -135,6 +136,7 @@ def _emit_ship_confirmed(
     source_txn_id,
     username,
     shipped_at,
+    fulfillment_id,
 ):
     """Emit the single ship.confirmed/1 event for a fulfilled SO onto the
     integration_events outbox. Shared by record_ship and record_admin_ship so
@@ -155,33 +157,34 @@ def _emit_ship_confirmed(
             """
             SELECT
                 COALESCE(csm.source_id, CAST(i.external_id AS TEXT)) AS item_external_id,
-                -- Units in the package = what shipped. quantity_shipped is set
-                -- to quantity_picked, and a ship from PICKED (no pack step)
-                -- leaves quantity_packed at 0. Report the picked floor so the
-                -- wire payload never under-reports; identical to quantity_packed
-                -- in the normal pack-first flow where packed == picked.
-                GREATEST(COALESCE(sol.quantity_packed, 0), COALESCE(sol.quantity_picked, 0)) AS quantity_packed
-              FROM sales_order_lines sol
+                fulfillment.quantity_shipped AS quantity_packed,
+                sol.so_line_id, fulfillment.bin_id,
+                fulfillment.lot_number, fulfillment.serial_number
+              FROM item_fulfillment_lines fulfillment
+              JOIN sales_order_lines sol ON sol.so_line_id = fulfillment.so_line_id
               JOIN items i ON i.item_id = sol.item_id
-              LEFT JOIN cross_system_mappings csm
-                ON csm.canonical_id = i.external_id
-                AND csm.source_type = 'item'
-             WHERE sol.so_id = :sid
-             ORDER BY sol.line_number
+              LEFT JOIN LATERAL (
+                  SELECT source_id FROM cross_system_mappings
+                  WHERE canonical_id = i.external_id AND source_type = 'item'
+                  ORDER BY last_updated_at DESC LIMIT 1
+              ) csm ON TRUE
+             WHERE sol.so_id = :sid AND fulfillment.fulfillment_id = :fulfillment_id
+             ORDER BY sol.line_number, fulfillment.fulfillment_line_id
             """
         ),
-        {"sid": so_id},
+        {"sid": so_id, "fulfillment_id": fulfillment_id},
     ).fetchall()
     stats = db.execute(
         text(
             """
-            SELECT COALESCE(SUM(i.weight_lbs * sol.quantity_picked), 0) AS total_weight
+            SELECT COALESCE(SUM(i.weight_lbs * sol.quantity_picked), 0) AS total_weight,
+                   (SELECT external_id FROM item_fulfillments WHERE fulfillment_id = :fulfillment_id) AS fulfillment_external_id
               FROM sales_order_lines sol
               JOIN items i ON i.item_id = sol.item_id
              WHERE sol.so_id = :sid
             """
         ),
-        {"sid": so_id},
+        {"sid": so_id, "fulfillment_id": fulfillment_id},
     ).fetchone()
     # Resolve the SO's source-system identifier for the outbound payload.
     # Falls back to the canonical UUID when no cross_system_mappings row exists
@@ -204,6 +207,7 @@ def _emit_ship_confirmed(
         source_txn_id=source_txn_id,
         payload={
             "sales_order_external_id": so_source_external_id,
+            "fulfillment_external_id": str(stats.fulfillment_external_id),
             # Local-pickup orders ship without a carrier label, so
             # tracking_number may be None. Emit [] instead of [None] so the
             # payload is valid string-array shaped.
@@ -221,6 +225,10 @@ def _emit_ship_confirmed(
                         {
                             "item_external_id": str(line.item_external_id),
                             "quantity_packed": line.quantity_packed,
+                            "so_line_id": line.so_line_id,
+                            "bin_id": line.bin_id,
+                            "lot_number": line.lot_number,
+                            "serial_number": line.serial_number,
                         }
                         for line in pack_lines
                     ],
@@ -248,6 +256,7 @@ def record_ship(
     shipping_cost=None,
     shipped_at_override=None,
     audit_details_extra=None,
+    allocations=None,
 ):
     """Record a ship event on an already-locked sales order.
 
@@ -322,59 +331,40 @@ def record_ship(
     so_lines = db.execute(
         text(
             """
-            SELECT sol.so_line_id, sol.item_id, sol.quantity_picked
+            SELECT sol.so_line_id, sol.item_id, sol.quantity_picked,
+                   item.is_lot_tracked, item.is_serial_tracked
             FROM sales_order_lines sol
+            JOIN items item ON item.item_id = sol.item_id
             WHERE sol.so_id = :so_id AND sol.quantity_picked > 0
             """
         ),
         {"so_id": so_id},
     ).fetchall()
 
-    lines_shipped = 0
-    total_quantity = 0
-
-    for line in so_lines:
-        # Find bin_id from pick_tasks
-        pick_task = db.execute(
-            text(
-                """
-                SELECT bin_id FROM pick_tasks
-                WHERE so_id = :so_id AND item_id = :item_id AND status IN (:task_picked, :task_short)
-                ORDER BY pick_task_id ASC
-                LIMIT 1
-                """
-            ),
-            {"so_id": so_id, "item_id": line.item_id, "task_picked": TASK_PICKED, "task_short": TASK_SHORT},
-        ).fetchone()
-
-        bin_id = pick_task.bin_id if pick_task else 1  # fallback shouldn't happen
-
+    resolved_allocations = prepare_shipping_allocations(db, so_id, warehouse_id, so_lines, allocations)
+    lines_shipped = len(so_lines)
+    total_quantity = sum(line.quantity_picked for line in so_lines)
+    for allocation in resolved_allocations:
         db.execute(
             text(
                 """
-                INSERT INTO item_fulfillment_lines (fulfillment_id, so_line_id, item_id, quantity_shipped, bin_id)
-                VALUES (:fid, :sol_id, :item_id, :qty, :bin_id)
+                INSERT INTO item_fulfillment_lines (fulfillment_id, so_line_id, item_id, quantity_shipped, bin_id, lot_number, serial_number)
+                VALUES (:fid, :so_line_id, :item_id, :quantity, :bin_id, :lot_number, :serial_number)
                 """
             ),
             {
                 "fid": fulfillment_id,
-                "sol_id": line.so_line_id,
-                "item_id": line.item_id,
-                "qty": line.quantity_picked,
-                "bin_id": bin_id,
+                **allocation,
             },
         )
 
-        # 3. Update SO line
+    for line in so_lines:
         db.execute(
             text(
                 "UPDATE sales_order_lines SET quantity_shipped = quantity_picked, status = :status WHERE so_line_id = :sol_id"
             ),
             {"sol_id": line.so_line_id, "status": SO_SHIPPED},
         )
-
-        lines_shipped += 1
-        total_quantity += line.quantity_picked
 
     # 4. Update SO status with carrier and tracking
     db.execute(
@@ -434,6 +424,7 @@ def record_ship(
         source_txn_id=source_txn_id,
         username=username,
         shipped_at=shipped_at,
+        fulfillment_id=fulfillment_id,
     )
 
     return {
@@ -711,6 +702,7 @@ def record_admin_ship(db, *, so_id, username, source_txn_id, acknowledge_shortfa
             source_txn_id=source_txn_id,
             username=username,
             shipped_at=shipped_at,
+            fulfillment_id=fulfillment_id,
         )
 
     return {

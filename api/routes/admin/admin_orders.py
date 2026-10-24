@@ -170,7 +170,7 @@ def list_purchase_orders():
 @with_db
 def get_purchase_order(po_id):
     po = g.db.execute(
-        text("SELECT po_id, po_number, po_barcode, vendor_name, vendor_id, status, expected_date, warehouse_id, notes, created_at, received_at, created_by FROM purchase_orders WHERE po_id = :pid"),
+        text("SELECT po_id, external_id, latest_inbound_id, po_number, po_barcode, vendor_name, vendor_id, status, expected_date, warehouse_id, notes, created_at, received_at, created_by FROM purchase_orders WHERE po_id = :pid"),
         {"pid": po_id},
     ).fetchone()
     if not po:
@@ -188,7 +188,7 @@ def get_purchase_order(po_id):
 
     return jsonify({
         "purchase_order": {
-            "po_id": po.po_id, "po_number": po.po_number, "po_barcode": po.po_barcode,
+            "po_id": po.po_id, "external_id": str(po.external_id), "latest_inbound_id": po.latest_inbound_id, "po_number": po.po_number, "po_barcode": po.po_barcode,
             "vendor_name": po.vendor_name, "status": po.status,
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "warehouse_id": po.warehouse_id, "notes": po.notes,
@@ -692,13 +692,36 @@ def delete_purchase_order_line(po_id, po_line_id):
     return jsonify({"po_line_id": po_line_id, "deleted": True, "po_status": new_po_status})
 
 
+def _inbound_lifecycle_error(table, identity_column, identity):
+    body = request.get_json() if request.is_json else None
+    if body is None or body == {}:
+        return None
+    if not isinstance(body, dict) or set(body) != {"expected_inbound_id"}:
+        return jsonify({"error": "Choose a valid source version"}), 400
+    expected = body["expected_inbound_id"]
+    if type(expected) is not int or expected <= 0:
+        return jsonify({"error": "Choose a valid source version"}), 400
+    row = g.db.execute(
+        text(f"SELECT latest_inbound_id FROM {table} WHERE {identity_column} = :identity FOR UPDATE"),
+        {"identity": identity},
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Order not found"}), 404
+    if row.latest_inbound_id != expected:
+        return jsonify({"error": "The source version has changed"}), 409
+    return None
+
+
 @admin_bp.route("/purchase-orders/<int:po_id>/close", methods=["POST"])
 @require_auth
 @require_admin_or_page_permission("purchase-orders")
 @with_db
 def close_purchase_order(po_id):
+    source_error = _inbound_lifecycle_error("purchase_orders", "po_id", po_id)
+    if source_error:
+        return source_error
     po = g.db.execute(
-        text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"),
+        text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid FOR UPDATE"),
         {"pid": po_id},
     ).fetchone()
     if not po:
@@ -719,8 +742,11 @@ def close_purchase_order(po_id):
 @require_admin_or_page_permission("purchase-orders")
 @with_db
 def reopen_purchase_order(po_id):
+    source_error = _inbound_lifecycle_error("purchase_orders", "po_id", po_id)
+    if source_error:
+        return source_error
     po = g.db.execute(
-        text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid"),
+        text("SELECT po_id, status FROM purchase_orders WHERE po_id = :pid FOR UPDATE"),
         {"pid": po_id},
     ).fetchone()
     if not po:
@@ -1028,7 +1054,7 @@ def list_sales_orders():
         """
     rows = g.db.execute(
         text(f"""
-            SELECT so.so_id, so.so_number, so.so_barcode, so.customer_name, so.customer_phone, so.customer_address,
+            SELECT so.so_id, so.external_id, so.so_number, so.so_barcode, so.customer_name, so.customer_phone, so.customer_address,
                    so.status, so.priority, so.warehouse_id, so.order_type, so.parent_so_id,
                    so.ship_method, so.ship_address, so.order_date, so.ship_by_date, so.created_at, so.created_by,
                    so.carrier, so.tracking_number, so.shipped_at,
@@ -1050,7 +1076,7 @@ def list_sales_orders():
 
     def _row_to_dict(r):
         out = {
-            "so_id": r.so_id, "so_number": r.so_number, "so_barcode": r.so_barcode,
+            "so_id": r.so_id, "external_id": str(r.external_id), "so_number": r.so_number, "so_barcode": r.so_barcode,
             "customer_name": r.customer_name, "customer_phone": r.customer_phone,
             "customer_address": r.customer_address,
             "status": r.status, "priority": r.priority,
@@ -1098,7 +1124,7 @@ def list_sales_orders():
 def get_sales_order(so_id):
     so = g.db.execute(
         text("""
-            SELECT so_id, so_number, so_barcode,
+            SELECT so_id, external_id, latest_inbound_id, so_number, so_barcode,
                    customer_name, customer_phone, customer_email, customer_address,
                    status, priority,
                    warehouse_id, ship_method, ship_address,
@@ -1131,7 +1157,7 @@ def get_sales_order(so_id):
 
     lines = g.db.execute(
         text("""
-            SELECT sol.so_line_id, sol.line_number, sol.item_id, i.sku, i.item_name, i.upc,
+            SELECT sol.so_line_id, sol.original_so_line_id, sol.line_number, sol.item_id, i.sku, i.item_name, i.upc,
                    sol.quantity_ordered, sol.quantity_allocated, sol.quantity_picked, sol.quantity_packed, sol.quantity_shipped, sol.quantity_received, sol.status
             FROM sales_order_lines sol JOIN items i ON i.item_id = sol.item_id
             WHERE sol.so_id = :sid ORDER BY sol.line_number
@@ -1158,9 +1184,73 @@ def get_sales_order(so_id):
         {"sid": so_id},
     ).fetchall()
 
+    receipts = g.db.execute(
+        text("""
+            SELECT ir.external_id, ir.so_line_id, ir.item_id, i.sku,
+                   ir.warehouse_id, ir.bin_id, ir.quantity_received,
+                   ir.lot_number, ir.serial_number
+              FROM item_receipts ir
+              JOIN items i ON i.item_id = ir.item_id
+             WHERE ir.so_id = :sid
+             ORDER BY ir.receipt_id
+             LIMIT 1001
+        """),
+        {"sid": so_id},
+    ).fetchall()
+    if len(receipts) > 1000:
+        return jsonify({"error": "Receipt detail exceeds the supported limit"}), 409
+
+    picking_batches = g.db.execute(text("""
+        SELECT batch.batch_id
+        FROM pick_batch_orders membership
+        JOIN pick_batches batch ON batch.batch_id = membership.batch_id
+        WHERE membership.so_id = :sid AND batch.warehouse_id = :warehouse_id
+        ORDER BY batch.batch_id
+        LIMIT 501
+    """), {"sid": so_id, "warehouse_id": so.warehouse_id}).fetchall()
+    if len(picking_batches) > 500:
+        return jsonify({"error": "Picking batch detail exceeds the supported limit"}), 409
+
+    shipment_rows = g.db.execute(text("""
+        SELECT shipment.fulfillment_id, shipment.external_id, shipment.status,
+               shipment.carrier, shipment.tracking_number, shipment.shipped_at, shipment.voided_at,
+               line.so_line_id, line.item_id, line.bin_id, line.quantity_shipped,
+               line.lot_number, line.serial_number
+        FROM item_fulfillments shipment
+        JOIN item_fulfillment_lines line ON line.fulfillment_id = shipment.fulfillment_id
+        WHERE shipment.so_id = :sid
+        ORDER BY shipment.shipped_at DESC, shipment.fulfillment_id DESC, line.fulfillment_line_id
+        LIMIT 1001
+    """), {"sid": so_id}).fetchall()
+    if len(shipment_rows) > 1000:
+        return jsonify({"error": "Shipment detail exceeds the supported limit"}), 409
+    shipments = {}
+    for row in shipment_rows:
+        shipment = shipments.setdefault(row.fulfillment_id, {
+            "fulfillment_id": row.fulfillment_id, "external_id": str(row.external_id),
+            "status": row.status, "carrier": row.carrier, "tracking_number": row.tracking_number,
+            "shipped_at": row.shipped_at.isoformat() if row.shipped_at else None,
+            "voided_at": row.voided_at.isoformat() if row.voided_at else None, "allocations": [],
+        })
+        shipment["allocations"].append({"so_line_id": row.so_line_id, "item_id": row.item_id,
+            "bin_id": row.bin_id, "quantity_shipped": row.quantity_shipped,
+            "lot_number": row.lot_number, "serial_number": row.serial_number})
+    latest_shipment = next((entry for entry in shipments.values()
+                            if entry["status"] == "SHIPPED" and entry["voided_at"] is None), None)
+
     return jsonify({
+        "picking_batch_ids": [batch.batch_id for batch in picking_batches],
+        "shipments": list(shipments.values()),
+        "shipment_allocations": latest_shipment["allocations"] if latest_shipment else [],
+        "receipts": [
+            {"external_id": str(r.external_id), "so_line_id": r.so_line_id,
+             "item_id": r.item_id, "sku": r.sku, "warehouse_id": r.warehouse_id,
+             "bin_id": r.bin_id, "quantity_received": r.quantity_received,
+             "lot_number": r.lot_number, "serial_number": r.serial_number}
+            for r in receipts
+        ],
         "sales_order": {
-            "so_id": so.so_id, "so_number": so.so_number, "so_barcode": so.so_barcode,
+            "so_id": so.so_id, "external_id": str(so.external_id), "latest_inbound_id": so.latest_inbound_id, "so_number": so.so_number, "so_barcode": so.so_barcode,
             "customer_name": so.customer_name,
             # customer_phone + customer_address were previously missing
             # from this response, so the edit modal reloaded with the
@@ -1225,7 +1315,7 @@ def get_sales_order(so_id):
             **{name: getattr(so, name) for name in ADDRESS_FIELD_NAMES},
         },
         "lines": [
-            {"so_line_id": l.so_line_id, "line_number": l.line_number, "item_id": l.item_id,
+            {"so_line_id": l.so_line_id, "original_so_line_id": l.original_so_line_id, "line_number": l.line_number, "item_id": l.item_id,
              "sku": l.sku, "item_name": l.item_name, "upc": l.upc,
              "quantity_ordered": l.quantity_ordered, "quantity_allocated": l.quantity_allocated,
              "quantity_picked": l.quantity_picked, "quantity_packed": l.quantity_packed,
@@ -1344,7 +1434,7 @@ def get_sales_order_related(so_id):
                   JOIN family f ON c.parent_so_id = f.so_id
                  WHERE f.depth < :max_depth
             )
-            SELECT so.so_id, so.so_number, so.order_type, so.status,
+            SELECT so.so_id, so.external_id, so.so_number, so.order_type, so.status,
                    so.warehouse_id, so.customer_name, so.parent_so_id,
                    so.created_at, so.voided_at, so.cancellation_reason,
                    f.depth
@@ -1394,6 +1484,7 @@ def get_sales_order_related(so_id):
         "records": [
             {
                 "so_id":          r.so_id,
+                "external_id":    str(r.external_id),
                 "so_number":      r.so_number,
                 "order_type":     r.order_type,
                 "status":         r.status,
@@ -2251,6 +2342,9 @@ def cancel_sales_order(so_id):
     """Operator-initiated cancel. Delegates to the shared
     sales_order_service.cancel_sales_order so audit-log writing,
     per-status unwind, and SHIPPED rejection match the inbound path."""
+    source_error = _inbound_lifecycle_error("sales_orders", "so_id", so_id)
+    if source_error:
+        return source_error
     username = g.current_user["username"]
     try:
         result = _cancel_so(
@@ -2775,19 +2869,22 @@ def partial_fulfill_sales_order(so_id, validated):
 
     # 4. BO lines: one per shorted entry, line_number sequential.
     for idx, shrink in enumerate(short_summary, 1):
-        g.db.execute(
+        backorder_line = g.db.execute(
             text(
                 "INSERT INTO sales_order_lines "
-                "  (so_id, item_id, quantity_ordered, line_number, status) "
-                "VALUES (:sid, :iid, :qty, :ln, 'PENDING')"
+                "  (so_id, item_id, quantity_ordered, line_number, status, original_so_line_id) "
+                "VALUES (:sid, :iid, :qty, :ln, 'PENDING', :original_line_id) "
+                "RETURNING so_line_id"
             ),
             {
                 "sid": bo_so_id,
                 "iid": shrink["item_id"],
                 "qty": shrink["short_qty"],
                 "ln": idx,
+                "original_line_id": None if shrink["line_deleted"] else shrink["so_line_id"],
             },
-        )
+        ).fetchone()
+        shrink["backorder_so_line_id"] = backorder_line.so_line_id
 
     # 5. Audit log. Two rows in the same transaction:
     #    - Original SO: shrink summary + BO pointer.
@@ -2855,6 +2952,9 @@ def partial_fulfill_sales_order(so_id, validated):
                 "sku": s["sku"],
                 "item_name": s["item_name"],
                 "qty": s["short_qty"],
+                "backorder_so_line_id": s["backorder_so_line_id"],
+                "parent_so_line_id": s["so_line_id"],
+                "parent_line_number": s["line_number"],
             }
             for s in short_summary
         ],
@@ -3283,6 +3383,10 @@ def receive_return_route(so_id, validated):
             source_txn_id=g.source_txn_id,
             notes=validated.notes,
             idempotency_key=validated.idempotency_key,
+            so_line_id=validated.so_line_id,
+            expected_quantity_received=validated.expected_quantity_received,
+            lot_number=validated.lot_number,
+            serial_number=validated.serial_number,
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

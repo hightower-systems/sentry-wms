@@ -13,22 +13,69 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "transfer_external_id": { "type": "string", "format": "uuid" },
-    "from_warehouse_id": { "type": "integer", "minimum": 1 },
-    "to_warehouse_id": { "type": "integer", "minimum": 1 },
+    "transfer_external_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "from_warehouse_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "to_warehouse_id": {
+      "type": "integer",
+      "minimum": 1
+    },
     "lines": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["item_external_id", "quantity"],
+        "required": [
+          "item_external_id",
+          "quantity"
+        ],
         "additionalProperties": false,
         "properties": {
-          "item_external_id": { "type": "string", "format": "uuid" },
-          "quantity": { "type": "integer", "minimum": 1 }
+          "item_external_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "to_line_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_bin_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "destination_bin_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "lot_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 50
+          },
+          "serial_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100
+          }
         }
       }
     },
-    "completed_at": { "type": "string", "format": "date-time" }
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
   }
 }

@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 
 class ReceiveItemEntry(BaseModel):
     item_id: int = Field(..., gt=0)
+    # Optional for older clients; required by the route when a SKU occurs twice.
+    po_line_id: Optional[int] = Field(None, gt=0)
+    # Under-lock optimistic guard for partial-receipt retries/concurrent submits.
+    expected_quantity_received: Optional[int] = Field(None, ge=0)
     quantity: int = Field(..., gt=0, le=100000)
     bin_id: int = Field(..., gt=0)
     lot_number: Optional[str] = Field(None, max_length=100)

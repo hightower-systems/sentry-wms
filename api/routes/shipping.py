@@ -155,6 +155,7 @@ def fulfill(validated):
             ship_method=ship_method,
             username=username,
             source_txn_id=g.source_txn_id,
+            allocations=validated.allocations,
         )
     except ValueError as e:
         # Layer 2C guard rejected the ship (silently under-picked lines).
