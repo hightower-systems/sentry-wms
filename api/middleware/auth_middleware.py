@@ -66,7 +66,7 @@ def require_auth(f):
 
         payload = decode_token(token)
         if payload is None:
-            return jsonify({"error": "Token expired"}), 401
+            return jsonify({"error": "Token invalid or expired"}), 401
 
         # Verify the user is still active and refresh role/warehouse_ids from DB.
         # This ensures that deactivated accounts and role/warehouse changes take

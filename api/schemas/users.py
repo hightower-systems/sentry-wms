@@ -4,7 +4,9 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-VALID_ROLES = ("ADMIN", "USER")
+from constants import USER_ROLES
+
+VALID_ROLES = USER_ROLES
 
 
 class UpdateUserPagePermissionsRequest(BaseModel):

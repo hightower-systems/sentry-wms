@@ -1,0 +1,46 @@
+<view class="page login-page">
+  <view class="hero">
+    <view class="chip">SHIPYARD WMS</view>
+    <view class="hero-title">船厂仓储现场作业</view>
+    <view class="hero-meta">收货、整票出库、吊牌留证与装车确认</view>
+  </view>
+
+  <view class="card login-card">
+    <view class="title">账号登录</view>
+    <view class="subtitle">账号、角色和仓库权限由 Sentry WMS 后台统一管理。</view>
+
+    <view class="field">
+      <view class="label">API 地址</view>
+      <input
+        class="input"
+        value="{{apiBase}}"
+        placeholder="https://wms.example.com/api"
+        data-field="apiBase"
+        bindinput="onApiBaseInput"
+      />
+    </view>
+    <view class="field">
+      <view class="label">账号</view>
+      <input
+        class="input"
+        value="{{username}}"
+        placeholder="员工账号"
+        bindinput="onUsernameInput"
+      />
+    </view>
+    <view class="field">
+      <view class="label">密码</view>
+      <input
+        class="input"
+        password
+        value="{{password}}"
+        placeholder="登录密码"
+        bindinput="onPasswordInput"
+        bindconfirm="login"
+      />
+    </view>
+    <button class="button-primary" loading="{{busy}}" disabled="{{busy}}" bindtap="login">
+      登录
+    </button>
+  </view>
+</view>

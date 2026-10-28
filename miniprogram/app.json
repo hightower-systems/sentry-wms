@@ -1,0 +1,18 @@
+{
+  "pages": [
+    "pages/login/index",
+    "pages/home/index",
+    "pages/receive/index",
+    "pages/outbound/index",
+    "pages/outbound/task"
+  ],
+  "window": {
+    "navigationBarTitleText": "船厂仓储",
+    "navigationBarBackgroundColor": "#17324d",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f4f6f8",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

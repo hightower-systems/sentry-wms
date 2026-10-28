@@ -1,0 +1,133 @@
+<view class="page">
+  <view class="hero">
+    <view class="chip">INBOUND</view>
+    <view class="hero-title">到货验收</view>
+    <view class="hero-meta">选择待收货票货，逐托拍吊牌并自动识别打印字段。</view>
+  </view>
+
+  <view class="section-title">待收货清单</view>
+  <view wx:if="{{loading}}" class="empty">正在读取到货清单…</view>
+  <view wx:elif="{{!manifests.length}}" class="empty">当前仓库没有到货清单</view>
+  <view
+    wx:for="{{manifests}}"
+    wx:key="manifest_id"
+    class="card {{selectedManifestId === item.manifest_id ? 'card-active' : ''}}"
+    data-id="{{item.manifest_id}}"
+    bindtap="onManifestTap"
+  >
+    <view class="row-start">
+      <view class="grow">
+        <view class="title">{{item.manifest_no}}</view>
+        <view class="subtitle">{{item.source_file_name}}</view>
+      </view>
+      <view class="chip {{item.status_class}}">{{item.status_label}}</view>
+    </view>
+    <view class="grid-2 manifest-metrics">
+      <view><view class="label">票数</view><view class="value">{{item.line_count}}</view></view>
+      <view><view class="label">创建时间</view><view class="value time">{{item.created_at}}</view></view>
+    </view>
+  </view>
+
+  <block wx:if="{{selectedManifest}}">
+    <view class="section-title">票货任务 · {{selectedManifest.manifest.manifest_no}}</view>
+    <view wx:if="{{!selectedManifest.tickets.length}}" class="empty">该清单尚未生成票货任务</view>
+    <view wx:for="{{selectedManifest.tickets}}" wx:key="ticket_id" class="card">
+      <view class="row-start">
+        <view class="grow">
+          <view class="title">{{item.ticket_no}}</view>
+          <view class="subtitle">{{item.item_name}} · {{item.item_spec || '无规格'}}</view>
+        </view>
+        <view class="chip {{item.status_class}}">{{item.status_label}}</view>
+      </view>
+      <view class="divider"></view>
+      <view class="grid-3">
+        <view><view class="label">整票计划</view><view class="value">{{item.declared_quantity}}</view></view>
+        <view><view class="label">已收</view><view class="value">{{item.received_quantity}}</view></view>
+        <view><view class="label">剩余应收</view><view class="value">{{item.remaining_quantity_text}}</view></view>
+      </view>
+      <view class="pallet-progress">{{item.pallet_progress_text}}</view>
+      <view class="area">
+        <view class="label">指定区域</view>
+        <view class="area-value">{{item.location_path_snapshot}}</view>
+      </view>
+      <button
+        class="button-primary"
+        data-id="{{item.ticket_id}}"
+        bindtap="startTicket"
+        disabled="{{!item.can_receive}}"
+      >
+        {{item.status === 'PARTIAL' ? '继续补收货' : '开始收货'}}
+      </button>
+    </view>
+  </block>
+
+  <view wx:if="{{selectedTicket}}" id="ticket-workbench">
+    <view class="section-title">正在收货 · {{selectedTicket.ticket_no}}</view>
+    <view class="card workbench">
+      <view class="title">{{selectedTicket.item_name}}</view>
+      <view class="subtitle">{{selectedTicket.item_spec || '无规格'}}</view>
+      <view class="area">
+        <view class="label">指定区域（只读）</view>
+        <view class="area-value">{{selectedTicket.location_path_snapshot}}</view>
+      </view>
+      <view class="grid-2">
+        <view><view class="label">整票计划</view><view class="value">{{selectedTicket.declared_quantity}} 件</view></view>
+        <view><view class="label">预计托盘</view><view class="value">{{selectedTicket.expected_pallet_count || '未配置'}}</view></view>
+      </view>
+      <view class="grid-2 workbench-metrics">
+        <view><view class="label">已收 / 剩余</view><view class="value">{{selectedTicket.received_quantity}} / {{remainingQuantityText}}</view></view>
+        <view><view class="label">本次已识别托盘</view><view class="value">{{palletProgressText}}</view></view>
+      </view>
+
+      <view class="notice">
+        每托只拍一张吊牌。系统识别船号、图号、物料和托盘后缀；少于剩余应收时必须填写差异原因，
+        整票数量收满时，全部托盘必须齐套。
+      </view>
+      <view class="ocr-note">原图用于留证，并上传云端识别吊牌打印字段。</view>
+      <view wx:if="{{nextSuffix}}" class="next-suffix">{{nextSuffix}}</view>
+      <button
+        class="button-secondary"
+        loading="{{busy}}"
+        disabled="{{busy}}"
+        bindtap="captureLabel"
+      >
+        拍摄识别吊牌
+      </button>
+
+      <view wx:if="{{scans.length}}" class="scans">
+        <view wx:for="{{scans}}" wx:key="suffix" class="scan-row">
+          <view>
+            <view class="value">托盘 {{item.suffix}}</view>
+            <view class="muted">{{item.recognized.item_name || '已识别吊牌'}} · 照片 {{item.photo.file_name}}</view>
+          </view>
+          <button class="mini-action" data-suffix="{{item.suffix}}" bindtap="removeScan">移除</button>
+        </view>
+      </view>
+
+      <view class="field">
+        <view class="label">本次实收数量（剩余应收 {{remainingQuantityText}}）</view>
+        <input class="input" type="digit" value="{{quantity}}" bindinput="onQuantityInput" />
+      </view>
+      <view class="field">
+        <view class="label">差异原因（本次少于剩余应收时必填）</view>
+        <textarea
+          class="textarea"
+          maxlength="500"
+          value="{{differenceReason}}"
+          bindinput="onDifferenceReasonInput"
+          placeholder="例如：少 1 件，已联系工厂补货"
+        />
+      </view>
+    </view>
+    <view class="sticky-actions">
+      <button
+        class="button-primary"
+        loading="{{busy}}"
+        disabled="{{busy}}"
+        bindtap="confirmReceipt"
+      >
+        确认整票收货
+      </button>
+    </view>
+  </view>
+</view>

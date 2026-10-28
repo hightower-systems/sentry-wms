@@ -1207,6 +1207,372 @@ a {
   color: var(--danger);
 }
 
+/* ── Shipyard outbound documents ──────────────── */
+
+.shipyard-page {
+  max-width: 1500px;
+}
+
+.shipyard-page .settings-section {
+  scroll-margin-top: 84px;
+}
+
+.shipyard-workspace-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.shipyard-workspace-switch button {
+  display: flex;
+  min-height: 64px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shipyard-workspace-switch button:hover {
+  background: var(--white);
+}
+
+.shipyard-workspace-switch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.shipyard-workspace-switch button.is-active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  color: var(--text);
+  background: var(--white);
+  box-shadow: 0 3px 12px rgb(30 41 59 / 8%);
+}
+
+.shipyard-workspace-switch strong {
+  font-size: 14px;
+}
+
+.shipyard-workspace-switch span {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.shipyard-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--white);
+  font-size: 13px;
+}
+
+.shipyard-notice-success {
+  border-color: #b9ddbe;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.shipyard-notice-warning {
+  border-color: #eadb9b;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.shipyard-notice-error {
+  border-color: #efc1ba;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.shipyard-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.shipyard-section-heading h3 {
+  margin-bottom: 4px;
+}
+
+.shipyard-section-heading .settings-note {
+  margin-bottom: 0;
+}
+
+.shipyard-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shipyard-error-text {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.shipyard-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 18px;
+  border: 1px dashed var(--border-dark);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #fffefb, var(--surface));
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.shipyard-dropzone.is-dragging {
+  border-color: var(--accent);
+  background: var(--cream);
+}
+
+.shipyard-dropzone > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.shipyard-dropzone > label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.shipyard-dropzone > label strong {
+  font-size: 14px;
+}
+
+.shipyard-dropzone > label span {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.shipyard-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--white);
+}
+
+.shipyard-page table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.shipyard-page th,
+.shipyard-page td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.shipyard-page th {
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.shipyard-page tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.shipyard-page tbody tr:nth-child(even) {
+  background: #fdfcf9;
+}
+
+.shipyard-page .empty-state {
+  padding: 26px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.shipyard-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.shipyard-status-parsed,
+.shipyard-status-ambiguous,
+.shipyard-status-unmatched {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.shipyard-status-confirmed,
+.shipyard-status-matched,
+.shipyard-status-manual,
+.shipyard-status-issued,
+.shipyard-status-active {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.shipyard-status-void,
+.shipyard-status-cancelled,
+.shipyard-status-inactive {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.shipyard-warning-list {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #eadb9b;
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.shipyard-inline-input {
+  width: 180px;
+}
+
+.shipyard-page .input {
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-dark);
+  border-radius: var(--radius);
+  background: var(--white);
+  color: var(--text);
+  font: inherit;
+}
+
+.shipyard-page .input:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  outline-offset: 1px;
+}
+
+.shipyard-match-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 230px;
+}
+
+.shipyard-match-control .input {
+  min-width: 150px;
+  flex: 1;
+}
+
+.shipyard-note-builder {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.shipyard-note-builder h4 {
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+
+.shipyard-note-builder label {
+  display: flex;
+  min-width: 160px;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.shipyard-settings-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.shipyard-settings-form label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.shipyard-settings-form .shipyard-checkbox {
+  flex-direction: row;
+  align-items: center;
+  min-height: 34px;
+  padding-bottom: 7px;
+}
+
+@media (max-width: 900px) {
+  .shipyard-workspace-switch {
+    grid-template-columns: 1fr;
+  }
+
+  .shipyard-section-heading,
+  .shipyard-note-builder,
+  .shipyard-dropzone {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shipyard-actions {
+    justify-content: flex-start;
+  }
+
+  .shipyard-inline-input {
+    width: 100%;
+  }
+}
+
 /* ── Placeholder ──────────────────────────────── */
 
 .placeholder-section {

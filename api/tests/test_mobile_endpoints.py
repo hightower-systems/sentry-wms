@@ -52,7 +52,17 @@ def test_me_admin_all_functions(client, auth_headers):
     data = resp.get_json()
     assert data["username"] == "admin"
     assert data["role"] == "ADMIN"
-    assert set(data["allowed_functions"]) == {"receive", "putaway", "pick", "pack", "ship", "count", "transfer"}
+    assert set(data["allowed_functions"]) == {
+        "receive",
+        "putaway",
+        "pick",
+        "pack",
+        "ship",
+        "count",
+        "transfer",
+        "shipyard_receive",
+        "shipyard_outbound",
+    }
     assert data["require_packing"] is True
 
 

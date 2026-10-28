@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import text
 
+from constants import ALL_MOBILE_FUNCTIONS
 from middleware.auth_middleware import require_auth
 from middleware.db import with_db
 from schemas.auth import ChangePasswordRequest, LoginRequest
@@ -21,7 +22,7 @@ from services.cookie_auth import (
 )
 from utils.validation import validate_body
 
-ALL_FUNCTIONS = ["receive", "putaway", "pick", "pack", "ship", "count", "transfer"]
+ALL_FUNCTIONS = list(ALL_MOBILE_FUNCTIONS)
 
 # #35: env-configurable so a shared-IP deployment can raise the ceiling
 # without a code change. Defaults preserve the historical 5 / 15.

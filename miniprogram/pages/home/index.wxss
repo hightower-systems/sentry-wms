@@ -1,0 +1,79 @@
+.hero-logout {
+  margin: 0;
+  padding: 0 20rpx;
+  min-height: 58rpx;
+  color: #f7fbff;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  line-height: 58rpx;
+}
+
+.hero-logout::after {
+  border: 0;
+}
+
+.picker-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 82rpx;
+  margin-top: 10rpx;
+  padding: 0 22rpx;
+  border-radius: 14rpx;
+  background: #f3f6f8;
+}
+
+.work-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20rpx;
+}
+
+.work-card {
+  position: relative;
+  min-height: 300rpx;
+  padding: 28rpx;
+  overflow: hidden;
+  border-radius: 22rpx;
+  color: #ffffff;
+}
+
+.receive-card {
+  background: linear-gradient(145deg, #1f6a57, #2f8c73);
+}
+
+.outbound-card {
+  background: linear-gradient(145deg, #7b4c1c, #a56b2d);
+}
+
+.work-kicker {
+  font-size: 20rpx;
+  letter-spacing: 4rpx;
+  opacity: 0.7;
+}
+
+.work-title {
+  margin-top: 24rpx;
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.work-desc {
+  margin-top: 18rpx;
+  font-size: 24rpx;
+  line-height: 1.65;
+  opacity: 0.82;
+}
+
+.work-arrow {
+  position: absolute;
+  right: 24rpx;
+  bottom: 18rpx;
+  font-size: 50rpx;
+  opacity: 0.66;
+}
+
+.info-card {
+  margin-top: 28rpx;
+}

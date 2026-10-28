@@ -1,0 +1,91 @@
+<view class="page">
+  <view class="hero">
+    <view class="chip">OUTBOUND</view>
+    <view class="hero-title">整票出库</view>
+    <view class="hero-meta">每张任务对应一个不可拆票货或托组，全部吊牌拍齐后才扣库。</view>
+  </view>
+
+  <view class="section-title">正式出库单</view>
+  <view wx:if="{{loading}}" class="empty">正在读取出库任务…</view>
+  <view wx:elif="{{!orders.length}}" class="empty">当前仓库没有正式出库单</view>
+  <view
+    wx:for="{{orders}}"
+    wx:key="outbound_order_id"
+    class="card {{selectedOrderId === item.outbound_order_id ? 'card-active' : ''}}"
+    data-id="{{item.outbound_order_id}}"
+    bindtap="onOrderTap"
+  >
+    <view class="row-start">
+      <view class="grow">
+        <view class="title">{{item.outbound_order_no}}</view>
+        <view class="subtitle">船厂出货单 {{item.factory_shipment_no}}</view>
+      </view>
+      <view class="chip {{item.status_class}}">{{item.status_label}}</view>
+    </view>
+    <view class="grid-3 summary-row">
+      <view><view class="label">整票任务</view><view class="value">{{item.task_count}}</view></view>
+      <view><view class="label">待出库</view><view class="value">{{item.pending_task_count}}</view></view>
+      <view><view class="label">已出 / 应出</view><view class="value">{{item.progress_text}}</view></view>
+    </view>
+  </view>
+
+  <block wx:if="{{selectedOrder}}">
+    <view class="order-panel">
+      <view class="section-title">{{selectedOrder.order.outbound_order_no}}</view>
+      <view class="grid-3">
+        <view><view class="label">整票任务</view><view class="value">{{selectedOrder.summary.task_count}}</view></view>
+        <view><view class="label">待出库</view><view class="value">{{selectedOrder.summary.pending_task_count}}</view></view>
+        <view><view class="label">库存缺口行</view><view class="value">{{selectedOrder.summary.shortage_line_count}}</view></view>
+      </view>
+      <view class="filter-row">
+        <view class="filter {{filter === 'pending' ? 'active' : ''}}" data-filter="pending" bindtap="setFilter">待出库</view>
+        <view class="filter {{filter === 'outbound' ? 'active' : ''}}" data-filter="outbound" bindtap="setFilter">已完成</view>
+        <view class="filter {{filter === 'all' ? 'active' : ''}}" data-filter="all" bindtap="setFilter">全部</view>
+      </view>
+    </view>
+
+    <view wx:if="{{!visibleTasks.length}}" class="empty">当前筛选下没有任务</view>
+    <view wx:for="{{visibleTasks}}" wx:key="task_id" class="card task-card">
+      <view class="row-start">
+        <view class="grow">
+          <view class="title">{{item.ticket_no || item.task_no}}</view>
+          <view class="subtitle">{{item.material_code}} · {{item.item_name}} · {{item.item_spec || '无规格'}}</view>
+        </view>
+        <view class="chip {{item.status_class}}">{{item.status_label}}</view>
+      </view>
+      <view class="area">
+        <view class="label">存放区域</view>
+        <view class="area-value">{{item.location_path_snapshot}}</view>
+      </view>
+      <view class="grid-3 task-metrics">
+        <view><view class="label">整票件数</view><view class="value">{{item.planned_quantity}}</view></view>
+        <view><view class="label">托盘数</view><view class="value">{{item.expected_pallet_count}}</view></view>
+        <view><view class="label">批次</view><view class="value small-value">{{item.batch_text}}</view></view>
+      </view>
+      <view class="suffix-list">托盘后缀：{{item.suffix_text}}</view>
+      <button
+        class="button-primary"
+        data-id="{{item.task_id}}"
+        bindtap="openTask"
+        disabled="{{!item.can_outbound}}"
+      >
+        {{item.can_outbound ? '开始整票出库' : '查看核销记录'}}
+      </button>
+      <view wx:if="{{item.confirmation}}" class="confirmation">
+        {{item.confirmation.outbound_by}} · {{item.confirmation.outbound_at}}
+      </view>
+    </view>
+
+    <view wx:if="{{selectedOrder.order.status === 'OUTBOUND'}}" class="sticky-actions">
+      <button class="button-primary" bindtap="confirmLoading" loading="{{busy}}" disabled="{{busy}}">
+        确认整单装车
+      </button>
+    </view>
+    <view wx:elif="{{selectedOrder.order.status === 'LOADED'}}" class="loading-done">
+      已由 {{selectedOrder.order.loading.loaded_by}} 于 {{selectedOrder.order.loading.loaded_at}} 确认装车
+    </view>
+    <view wx:elif="{{selectedOrder.summary.shortage_line_count > 0}}" class="notice">
+      该出库单仍有库存缺口，补齐前不能确认整单装车。
+    </view>
+  </block>
+</view>

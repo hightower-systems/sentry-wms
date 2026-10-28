@@ -430,6 +430,38 @@ class TestJwtClaims:
         p2 = jwt.decode(resp2.get_json()["token"], os.environ["JWT_SECRET"], algorithms=["HS256"])
         assert p1["jti"] != p2["jti"]
 
+    def test_decode_token_tolerates_small_clock_skew(self):
+        from services.auth_service import decode_token
+
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "user_id": 1,
+                "iat": int((now + timedelta(seconds=2)).timestamp()),
+                "exp": now + timedelta(hours=1),
+            },
+            os.environ["JWT_SECRET"],
+            algorithm="HS256",
+        )
+
+        assert decode_token(token) is not None
+
+    def test_decode_token_still_rejects_large_future_clock_skew(self):
+        from services.auth_service import decode_token
+
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "user_id": 1,
+                "iat": int((now + timedelta(seconds=30)).timestamp()),
+                "exp": now + timedelta(hours=1),
+            },
+            os.environ["JWT_SECRET"],
+            algorithm="HS256",
+        )
+
+        assert decode_token(token) is None
+
 
 class TestTokenInvalidation:
     """M1: old tokens rejected after password change."""

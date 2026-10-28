@@ -1,7 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { api } from '../api.js';
-import { useAuth } from '../auth.jsx';
 import { useWarehouse } from '../warehouse.jsx';
 
 // Each NAV item carries a page_key matching api/constants.py
@@ -32,6 +31,7 @@ const NAV = [
     label: 'Outbound',
     items: [
       { to: '/sales-orders', label: 'Sales Orders', pageKey: 'sales-orders' },
+      { to: '/shipyard-outbound', label: 'Shipyard Outbound', pageKey: 'shipyard-outbound' },
       { to: '/pos-activity', label: 'POS Activity' },
       { to: '/fraud', label: 'Fraud', pageKey: 'fraud' },
       // Partial-fulfill / backorders dashboard.
@@ -54,6 +54,7 @@ const NAV = [
       // pages (Warehouses / Bins / Zones / Preferred Bins) collapse
       // into a single Data link with a tab strip.
       { to: '/items', label: 'Items', pageKey: 'items' },
+      { to: '/shipyard-settings', label: 'Shipyard Settings', pageKey: 'shipyard-settings' },
       { to: '/vendors', label: 'Vendors', pageKey: 'vendors' },
       { to: '/adjustments', label: 'Inventory Adjustments', pageKey: 'adjustments' },
       { to: '/inter-warehouse-transfers', label: 'Inventory Transfers', pageKey: 'inter-warehouse-transfers' },
@@ -85,7 +86,6 @@ const NAV = [
 
 export default function Sidebar() {
   const location = useLocation();
-  const { user } = useAuth();
   const { warehouseId } = useWarehouse();
   const [counts, setCounts] = useState({});
   // The POS Activity tab is opt-in via the pos_activity_enabled setting

@@ -9,11 +9,13 @@ import logging
 from flask import Blueprint, g, jsonify
 from sqlalchemy.exc import IntegrityError
 
+from constants import USER_ROLES
+
 admin_bp = Blueprint("admin", __name__)
 
 VALID_ZONE_TYPES = ("RECEIVING", "STORAGE", "PICKING", "STAGING", "SHIPPING")
 VALID_BIN_TYPES = ("Staging", "PickableStaging", "Pickable")
-VALID_ROLES = ("ADMIN", "USER")
+VALID_ROLES = USER_ROLES
 
 
 _LOGGER = logging.getLogger(__name__)

@@ -1,0 +1,80 @@
+.manifest-metrics {
+  margin-top: 24rpx;
+}
+
+.pallet-progress {
+  margin-top: 16rpx;
+  color: #4d6476;
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.workbench-metrics {
+  margin-top: 18rpx;
+}
+
+.time {
+  font-size: 22rpx;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.area {
+  margin-top: 22rpx;
+  padding: 20rpx 22rpx;
+  border-radius: 14rpx;
+  background: #eef5f9;
+}
+
+.area-value {
+  margin-top: 6rpx;
+  color: #174b70;
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.workbench {
+  border-color: #32749d;
+}
+
+.next-suffix {
+  margin-top: 18rpx;
+  color: #215c83;
+  font-weight: 700;
+  text-align: center;
+}
+
+.scans {
+  margin-top: 20rpx;
+  border-top: 1rpx solid #e8edf1;
+}
+
+.scan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #e8edf1;
+}
+
+.mini-action {
+  margin: 0;
+  padding: 0 16rpx;
+  min-height: 56rpx;
+  color: #8a3030;
+  background: #fbeaea;
+  border-radius: 10rpx;
+  font-size: 22rpx;
+  line-height: 56rpx;
+}
+
+.mini-action::after {
+  border: 0;
+}
+
+.ocr-note {
+  margin-top: 12rpx;
+  color: #647684;
+  font-size: 22rpx;
+  line-height: 1.5;
+}

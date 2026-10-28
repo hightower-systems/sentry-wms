@@ -2,9 +2,10 @@
 Authentication business logic: login, JWT generation, and token decoding.
 """
 
+import logging
 import os
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 
@@ -15,6 +16,12 @@ if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required")
 JWT_ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 8
+MAX_JWT_CLOCK_SKEW_SECONDS = 60
+JWT_CLOCK_SKEW_SECONDS = min(
+    MAX_JWT_CLOCK_SKEW_SECONDS,
+    max(0, int(os.getenv("JWT_CLOCK_SKEW_SECONDS", "5"))),
+)
+_LOGGER = logging.getLogger(__name__)
 
 
 def validate_password(password):
@@ -67,8 +74,15 @@ def generate_token(user_dict):
 
 def decode_token(token):
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            leeway=JWT_CLOCK_SKEW_SECONDS,
+        )
     except jwt.ExpiredSignatureError:
+        _LOGGER.debug("JWT rejected: expired")
         return None
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as exc:
+        _LOGGER.debug("JWT rejected: %s", type(exc).__name__)
         return None

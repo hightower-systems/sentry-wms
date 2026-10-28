@@ -9,6 +9,7 @@ async function apiFetch(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const needsCsrf = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
   const csrfToken = needsCsrf ? getCsrfToken() : null;
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   // Page permissions (mig 061): callers can pass silentPermissionDenied:true
   // to opt OUT of the global Permissions Error popup for background
   // fetches (sidebar badges, navshell settings probes). Without it
@@ -16,7 +17,7 @@ async function apiFetch(path, options = {}) {
   // page mount before they did anything explicit.
   const { silentPermissionDenied = false, ...fetchOptions } = options;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(!isFormData && { 'Content-Type': 'application/json' }),
     ...(csrfToken && { 'X-CSRF-Token': csrfToken }),
     ...fetchOptions.headers,
   };
@@ -43,7 +44,7 @@ async function apiFetch(path, options = {}) {
           detail: { page_key: peek.page_key, path },
         }));
       }
-    } catch (_) { /* non-JSON 403 (legacy / unrelated) */ }
+    } catch { /* non-JSON 403 (legacy / unrelated) */ }
   }
   return res;
 }
@@ -51,6 +52,7 @@ async function apiFetch(path, options = {}) {
 export const api = {
   get: (path, opts) => apiFetch(path, { ...(opts || {}) }),
   post: (path, body, opts) => apiFetch(path, { method: 'POST', body: JSON.stringify(body), ...(opts || {}) }),
+  postForm: (path, formData, opts) => apiFetch(path, { method: 'POST', body: formData, ...(opts || {}) }),
   put: (path, body, opts) => apiFetch(path, { method: 'PUT', body: JSON.stringify(body), ...(opts || {}) }),
   patch: (path, body, opts) => apiFetch(path, { method: 'PATCH', body: JSON.stringify(body), ...(opts || {}) }),
   delete: (path, opts) => apiFetch(path, { method: 'DELETE', ...(opts || {}) }),

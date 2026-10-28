@@ -40,6 +40,7 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sentry}:${POSTGRES_PASSWORD:-sentry}@db:5432/${POSTGRES_DB:-sentry}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env -- see .env.example}
+      JWT_CLOCK_SKEW_SECONDS: ${JWT_CLOCK_SKEW_SECONDS:-5}
       FLASK_ENV: ${FLASK_ENV:-production}
       FLASK_PORT: 5000
       # #136 / #107 follow-up: explicitly forward TRUST_PROXY into the
@@ -57,6 +58,14 @@ services:
       # applies the bind at the host level.
       API_BIND_HOST: ${API_BIND_HOST:-127.0.0.1}
       CORS_ORIGINS: "http://localhost:3000,http://localhost:5000,http://localhost:8080,http://localhost:8081"
+      # Shipyard label photos are sent to the configured public OCR
+      # provider. Keep credentials in .env and never in source control.
+      SHIPYARD_OCR_PROVIDER: ${SHIPYARD_OCR_PROVIDER:-baidu}
+      BAIDU_OCR_API_KEY: ${BAIDU_OCR_API_KEY:-}
+      BAIDU_OCR_SECRET_KEY: ${BAIDU_OCR_SECRET_KEY:-}
+      SHIPYARD_OCR_REQUIRED_FIELDS: ${SHIPYARD_OCR_REQUIRED_FIELDS:-material_code,item_name,tag_suffix}
+      SHIPYARD_OCR_TOKEN_TIMEOUT_S: ${SHIPYARD_OCR_TOKEN_TIMEOUT_S:-10}
+      SHIPYARD_OCR_TIMEOUT_S: ${SHIPYARD_OCR_TIMEOUT_S:-20}
       SENTRY_ENCRYPTION_KEY: ${SENTRY_ENCRYPTION_KEY:?Set SENTRY_ENCRYPTION_KEY in .env -- see .env.example}
       # v1.5.0 #128: pepper for the X-WMS-Token SHA-256 hash. The app
       # fails to boot without it so a misconfigured deployment never

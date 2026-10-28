@@ -15,6 +15,12 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# Keep packaging tools current enough to clear advisories inherited from the
+# Python base image. These are not application runtime dependencies.
+RUN python -m pip install --no-cache-dir --upgrade \
+    pip==26.2.2 \
+    setuptools==84.2.1
+
 # Build context is the repo root (so we can COPY db/mappings alongside
 # the api source). The repo-root .dockerignore strips admin/, mobile/,
 # docs/, .git, etc. so the context stays small.

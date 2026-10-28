@@ -15,10 +15,12 @@ from constants import (
     BIN_STAGING, ACTION_ADJUST,
     ALL_OVERRIDE_KEYS,
     ALL_PAGE_KEYS,
+    USER_ROLE_TEMPLATES,
+    USER_ROLES,
 )
 from middleware.auth_middleware import require_admin_or_page_permission, require_auth
 from middleware.db import with_db
-from routes.admin import VALID_ROLES, admin_bp
+from routes.admin import admin_bp
 from schemas.inventory_adjustments import DirectAdjustmentRequest, ReviewAdjustmentsRequest
 from schemas.settings import UpdateSettingsRequest
 from schemas.users import (
@@ -43,6 +45,22 @@ from utils.validation import validate_body
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
+
+@admin_bp.route("/users/role-templates", methods=["GET"])
+@require_auth
+@require_admin_or_page_permission("users")
+@with_db
+def list_user_role_templates():
+    return jsonify({
+        "roles": list(USER_ROLES),
+        "templates": {
+            role: {
+                "page_keys": list(template["page_keys"]),
+                "functions": list(template["functions"]),
+            }
+            for role, template in USER_ROLE_TEMPLATES.items()
+        },
+    })
 
 @admin_bp.route("/users", methods=["GET"])
 @require_auth
@@ -92,7 +110,12 @@ def create_user(validated):
 
     warehouse_ids = data.get("warehouse_ids", [])
     warehouse_id = warehouse_ids[0] if warehouse_ids else data.get("warehouse_id")
-    allowed_functions = data.get("allowed_functions", [])
+    if "allowed_functions" in validated.model_fields_set:
+        allowed_functions = data.get("allowed_functions", [])
+    else:
+        allowed_functions = list(
+            USER_ROLE_TEMPLATES[data["role"]]["functions"]
+        )
 
     pw_hash = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     result = g.db.execute(

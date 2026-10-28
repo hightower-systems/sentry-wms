@@ -1,0 +1,83 @@
+.summary-row {
+  margin-top: 24rpx;
+}
+
+.order-panel {
+  margin-top: 28rpx;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #ffffff;
+  border: 1rpx solid #dce4ea;
+}
+
+.filter-row {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 24rpx;
+}
+
+.filter {
+  flex: 1;
+  padding: 14rpx 0;
+  border-radius: 12rpx;
+  color: #5f7080;
+  background: #eef2f5;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.filter.active {
+  color: #ffffff;
+  background: #285e83;
+}
+
+.task-card {
+  margin-top: 20rpx;
+}
+
+.task-metrics {
+  margin-top: 20rpx;
+}
+
+.small-value {
+  font-size: 22rpx;
+}
+
+.suffix-list {
+  margin-top: 20rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 12rpx;
+  color: #4b5c6b;
+  background: #f4f7f9;
+  font-size: 24rpx;
+}
+
+.area {
+  margin-top: 20rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 14rpx;
+  background: #eef5f9;
+}
+
+.area-value {
+  margin-top: 4rpx;
+  color: #174b70;
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.confirmation {
+  margin-top: 16rpx;
+  color: #667787;
+  font-size: 22rpx;
+  text-align: center;
+}
+
+.loading-done {
+  margin-top: 28rpx;
+  padding: 24rpx;
+  border-radius: 16rpx;
+  color: #17613a;
+  background: #e5f5ec;
+  text-align: center;
+}

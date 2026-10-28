@@ -1,0 +1,95 @@
+<view class="page" wx:if="{{task}}">
+  <view class="hero">
+    <view class="chip">{{order.order.outbound_order_no}}</view>
+    <view class="hero-title">整票吊牌核验</view>
+    <view class="hero-meta">{{task.ticket_no || task.task_no}} · 共 {{task.expected_tag_suffixes.length}} 托，每托拍一张吊牌</view>
+  </view>
+
+  <view class="card detail-card">
+    <view class="title">{{task.material_code}} · {{task.item_name}}</view>
+    <view class="subtitle">{{task.item_spec || '无规格'}}</view>
+    <view class="area">
+      <view class="label">唯一存放区域</view>
+      <view class="area-value">{{task.location_path_snapshot}}</view>
+    </view>
+    <view class="grid-3">
+      <view><view class="label">整票数量</view><view class="value">{{task.planned_quantity}}</view></view>
+      <view><view class="label">已识别</view><view class="value">{{scans.length}}</view></view>
+      <view><view class="label">托盘总数</view><view class="value">{{task.expected_pallet_count}}</view></view>
+    </view>
+    <view class="suffixes">全部托盘：{{task.suffix_text}}</view>
+  </view>
+
+  <view wx:if="{{task.status !== 'PENDING'}}" class="notice">
+    该票已完成出库，不能重复扣库。
+  </view>
+  <block wx:else>
+    <view class="card">
+      <view class="row">
+        <view>
+          <view class="label">下一托</view>
+          <view class="next-suffix">{{nextSuffix || '已拍齐'}}</view>
+        </view>
+        <view class="progress">{{scans.length}} / {{task.expected_tag_suffixes.length}}</view>
+      </view>
+      <button
+        class="button-secondary"
+        bindtap="captureLabel"
+        loading="{{busy}}"
+        disabled="{{busy || !nextSuffix}}"
+      >
+        拍摄识别当前吊牌
+      </button>
+      <view class="ocr-note">原图用于留证，并上传云端识别吊牌打印字段。</view>
+    </view>
+
+    <view class="section-title">已识别吊牌</view>
+    <view wx:if="{{!scans.length}}" class="empty">尚未拍摄吊牌</view>
+    <view wx:for="{{scans}}" wx:key="suffix" class="card scan-card">
+      <view class="row-start">
+        <view>
+          <view class="title">托盘 {{item.suffix}}</view>
+          <view class="subtitle">{{item.recognized.batch_no || '无批次'}} · {{item.recognized.factory_pallet_no || '无托盘号'}}</view>
+        </view>
+        <view class="chip chip-success">已匹配</view>
+      </view>
+      <view class="checks">
+        <text>照片 OCR 已读取物料编码、品名和托盘后缀</text>
+        <text>原照片已上传并绑定当前任务</text>
+      </view>
+      <button class="remove-button" data-suffix="{{item.suffix}}" bindtap="removeScan">重拍此托</button>
+    </view>
+
+    <view class="sticky-actions">
+      <button
+        class="button-primary"
+        bindtap="confirmOutbound"
+        loading="{{busy}}"
+        disabled="{{busy || !can_confirm}}"
+      >
+        确认整票已出库
+      </button>
+    </view>
+  </block>
+
+  <view wx:if="{{suffixPickerVisible}}" class="picker-mask">
+    <view class="suffix-picker">
+      <view class="picker-title">OCR 未读到托盘后缀</view>
+      <view class="picker-copy">照片已留证。请选择当前这托的实际后缀，系统会再次核对字段。</view>
+      <scroll-view scroll-y class="suffix-list">
+        <button
+          wx:for="{{suffixChoices}}"
+          wx:key="*this"
+          class="suffix-choice"
+          data-suffix="{{item}}"
+          bindtap="selectSuffix"
+        >
+          托盘 {{item}}
+        </button>
+      </scroll-view>
+      <button class="button-secondary picker-cancel" bindtap="cancelSuffixPicker">
+        取消，本次不核销
+      </button>
+    </view>
+  </view>
+</view>

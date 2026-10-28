@@ -5,7 +5,7 @@ import DataTable from '../components/DataTable.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Modal from '../components/Modal.jsx';
 
-const ROLES = ['ADMIN', 'USER'];
+const FALLBACK_ROLES = ['ADMIN', 'USER'];
 
 const ALL_FUNCTIONS = [
   { key: 'pick', label: 'Pick' },
@@ -15,6 +15,8 @@ const ALL_FUNCTIONS = [
   { key: 'putaway', label: 'Put-Away' },
   { key: 'count', label: 'Count' },
   { key: 'transfer', label: 'Transfer' },
+  { key: 'shipyard_receive', label: 'Shipyard Receive' },
+  { key: 'shipyard_outbound', label: 'Shipyard Outbound' },
   // Retail POS: the register gates login on this grant (ADMIN exempt). Grant it
   // to retail / customer-service accounts that should be able to sell.
   { key: 'sell', label: 'Sell (POS)' },
@@ -46,6 +48,7 @@ const PAGE_GROUPS = [
     label: 'Outbound',
     pages: [
       { key: 'sales-orders', label: 'Sales Orders' },
+      { key: 'shipyard-outbound', label: 'Shipyard Outbound' },
       { key: 'fraud', label: 'Fraud' },
       // picking/packing/shipping retired in favour of the mobile flow;
       // their page_keys are gone from ALL_PAGE_KEYS so a stale grant
@@ -78,6 +81,7 @@ const PAGE_GROUPS = [
       { key: 'imports', label: 'Imports' },
       { key: 'integrations', label: 'Integrations' },
       { key: 'settings', label: 'Settings' },
+      { key: 'shipyard-settings', label: 'Shipyard Settings' },
     ],
   },
   // Override grants (mig 062): feature-flag grants. Not pages in the
@@ -110,10 +114,13 @@ export default function Users() {
   // the rest of the user form and saved via a follow-up PUT once the
   // user record itself lands.
   const [pagePermissions, setPagePermissions] = useState([]);
+  const [roles, setRoles] = useState(FALLBACK_ROLES);
+  const [roleTemplates, setRoleTemplates] = useState({});
 
   useEffect(() => {
     loadUsers();
     loadWarehouses();
+    loadRoleTemplates();
   }, []);
 
   async function loadUsers() {
@@ -129,6 +136,34 @@ export default function Users() {
     if (res?.ok) {
       const data = await res.json();
       setWarehouses(data.warehouses || []);
+    }
+  }
+
+  async function loadRoleTemplates() {
+    const res = await api.get('/admin/users/role-templates', {
+      silentPermissionDenied: true,
+    });
+    if (!res?.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.roles) && data.roles.length) {
+      setRoles(data.roles);
+    }
+    setRoleTemplates(data.templates || {});
+  }
+
+  function applyRoleTemplate(role) {
+    const template = roleTemplates[role];
+    setForm((current) => ({
+      ...current,
+      role,
+      ...(template
+        ? { allowed_functions: template.functions || [] }
+        : {}),
+    }));
+    if (template && role !== 'ADMIN') {
+      setPagePermissions(template.page_keys || []);
+    } else if (role === 'ADMIN') {
+      setPagePermissions([]);
     }
   }
 
@@ -357,8 +392,8 @@ export default function Users() {
           </div>
           <div className="form-group">
             <label>Role</label>
-            <select className="form-select" value={form.role || ''} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+            <select className="form-select" value={form.role || ''} onChange={(e) => applyRoleTemplate(e.target.value)}>
+              {roles.map((r) => <option key={r} value={r}>{r.replaceAll('_', ' ')}</option>)}
             </select>
           </div>
           <div className="form-group">
